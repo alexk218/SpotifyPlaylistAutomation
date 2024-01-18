@@ -1,43 +1,35 @@
 # SpotifyPlaylistAutomation
 
-**Overview**
+## Overview
 
-SpotifyPlaylistAutomation is a Python-based tool designed to streamline and automate the process of managing and downloading tracks from Spotify playlists. It uses the Spotify API to authenticate, fetch playlist details, track changes in playlists, and notify users of updates by email. This tool is intended for music enthusiasts/DJs who regularly update and manage Spotify playlists, allowing users to keep track of the changes made to their playlists.
+SpotifyPlaylistAutomation is a Python-based tool designed to streamline and automate the process of managing and downloading tracks from Spotify playlists. It uses the Spotify API to authenticate, fetch playlist details, track changes in playlists, and notify users of playlist changes by email. This tool is intended for music enthusiasts/DJs who regularly update and manage Spotify playlists, allowing users to keep track of the changes made to their playlists.
+This Medication Management System is an engineering capstone project designed to assist elderly users with their medication intake. It is intended to be used in conjunction with a robot that autonomously navigates to the user, dispensing medication and water as scheduled. This robot also serves as a companion, including AI-driven conversational abilities, allowing for real-time communication between the robot and user. This website provides an interface between the caregiver and robot, managing medication dispensing times and quantities.
 
-**Features**
+## Features
 
-Authentication with Spotify API
+- Authentication with Spotify API
+- Fetches all private playlists
+- Tracks changes in playlists (new additions)
+- Sends email notifications on playlist updates
+- Automated and scheduled checks for playlist changes
 
-Fetches all private playlists
+## Future Features
 
-Tracks changes in playlists (new additions)
+- **Automatic Detection of Unsorted Liked Songs:** Will sift through your Liked Songs on Spotify and detect tracks that haven't been added to any of your playlists yet, ensuring that every no songs are left unsorted.
+- **Automated Download of New Playlist Additions:** Newly added songs will be automatically downloaded using Deemix, and sorted according to your Spotify playlists.
+- **Integration with RekordBox:** Newly downloaded songs from your Spotify playlists will be directly dragged into RekordBox.
 
-Sends email notifications on playlist updates
-
-Automated and scheduled checks for playlist changes
-
-**Future Features**
-
-**Automatic Detection of Unsorted Liked Songs:** Will sift through your Liked Songs on Spotify and detect tracks that haven't been added to any of your playlists yet, ensuring that every no songs are left unsorted.
-
-**Automated Download of New Playlist Additions:** Newly added songs will be automatically downloaded using Deemix, and sorted according to your Spotify playlists.
-
-**Integration with RekordBox:** Newly downloaded songs from your Spotify playlists will be directly dragged into RekordBox.
-
-# Getting Started
+## Getting Started
 **Prerequisites**
 
-spotipy (A lightweight Python library for the Spotify Web API)
-
-Access to Spotify API (Client ID and Client Secret)
-
-A mail server setup for sending notifications (e.g., Gmail)
+- spotipy (A lightweight Python library for the Spotify Web API)
+- Access to Spotify API (Client ID and Client Secret)
+- A mail server setup for sending notifications (e.g., Gmail)
 
 **Setup**
 
-Register your application on the Spotify Developer Dashboard to get your Client ID and Client Secret.
-
-Set up environment variables for Spotify credentials and email configuration. Create a .env file in the root directory with the following contents:
+- Register your application on the Spotify Developer Dashboard to get your Client ID and Client Secret.
+- Set up environment variables for Spotify credentials and email configuration. Create a .env file in the root directory with the following contents:
 
 SPOTIFY_CLIENT_ID=your_spotify_client_id
 
