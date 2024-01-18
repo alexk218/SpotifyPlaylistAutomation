@@ -3,7 +3,6 @@
 ## Overview
 
 SpotifyPlaylistAutomation is a Python-based tool designed to streamline and automate the process of managing and downloading tracks from Spotify playlists. It uses the Spotify API to authenticate, fetch playlist details, track changes in playlists, and notify users of playlist changes by email. This tool is intended for music enthusiasts/DJs who regularly update and manage Spotify playlists, allowing users to keep track of the changes made to their playlists.
-This Medication Management System is an engineering capstone project designed to assist elderly users with their medication intake. It is intended to be used in conjunction with a robot that autonomously navigates to the user, dispensing medication and water as scheduled. This robot also serves as a companion, including AI-driven conversational abilities, allowing for real-time communication between the robot and user. This website provides an interface between the caregiver and robot, managing medication dispensing times and quantities.
 
 ## Features
 
