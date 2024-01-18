@@ -15,7 +15,7 @@ This Medication Management System is an engineering capstone project designed to
 
 ## Future Features
 
-- **Automatic Detection of Unsorted Liked Songs:** Will sift through your Liked Songs on Spotify and detect tracks that haven't been added to any of your playlists yet, ensuring that every no songs are left unsorted.
+- **Automatic Detection of Unsorted Liked Songs:** Will sift through your Liked Songs on Spotify and detect tracks that haven't been added to any of your playlists yet, ensuring that no songs are left unsorted.
 - **Automated Download of New Playlist Additions:** Newly added songs will be automatically downloaded using Deemix, and sorted according to your Spotify playlists.
 - **Integration with RekordBox:** Newly downloaded songs from your Spotify playlists will be directly dragged into RekordBox.
 
