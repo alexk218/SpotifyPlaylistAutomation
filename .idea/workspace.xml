@@ -4,9 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/debug/debug.py" beforeDir="false" afterPath="$PROJECT_DIR$/debug/debug.py" afterDir="false" />
+    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="fetch_my_playlists returns list of my playlists with forbidden playlists and words excluded">
+      <change afterPath="$PROJECT_DIR$/sql/myplaylists/refresh_my_playlists.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/drivers/spotify_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/drivers/spotify_client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/sql/program.py" beforeDir="false" afterPath="$PROJECT_DIR$/sql/program.py" afterDir="false" />
     </list>
@@ -41,24 +40,26 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Python.debug.executor&quot;: &quot;Run&quot;,
-    &quot;Python.main.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;last_opened_file_path&quot;: &quot;C:/Users/Alex Kepekci/PycharmProjects/spotifystuff&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python.debug.executor": "Run",
+    "Python.main.executor": "Run",
+    "Python.program.executor": "Run",
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "git-widget-placeholder": "main",
+    "last_opened_file_path": "C:/Users/Alex Kepekci/PycharmProjects/spotifystuff",
+    "settings.editor.selected.configurable": "preferences.keymap"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\sql\myplaylists" />
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\controllers" />
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\TxtFiles" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.debug">
+  <component name="RunManager" selected="Python.program">
     <configuration name="debug" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="spotifystuff" />
       <option name="ENV_FILES" value="" />
@@ -103,8 +104,31 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="program" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="spotifystuff" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/sql" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/sql/program.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.program" />
         <item itemvalue="Python.debug" />
       </list>
     </recent_temporary>
@@ -149,7 +173,15 @@
       <option name="project" value="LOCAL" />
       <updated>1720839047019</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="fetch_my_playlists returns list of my playlists with forbidden playlists and words excluded">
+      <option name="closed" value="true" />
+      <created>1720841141733</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1720841141733</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -168,6 +200,7 @@
     <MESSAGE value="Update README.md" />
     <MESSAGE value="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists" />
     <MESSAGE value="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS" />
-    <option name="LAST_COMMIT_MESSAGE" value="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS" />
+    <MESSAGE value="fetch_my_playlists returns list of my playlists with forbidden playlists and words excluded" />
+    <option name="LAST_COMMIT_MESSAGE" value="fetch_my_playlists returns list of my playlists with forbidden playlists and words excluded" />
   </component>
 </project>

@@ -1,11 +1,18 @@
 # Database connection function
 import logging
+import os
 
 import pyodbc
+from dotenv import load_dotenv
 
 from drivers.spotify_client import authenticate_spotify, fetch_my_playlists
 
-# from drivers.
+load_dotenv()
+
+SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
+SENDER_EMAIL = os.getenv('SENDER_EMAIL')
+EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 
 logging.basicConfig(filename='spotify_script.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,13 +24,11 @@ def get_db_connection():
         'SERVER=DESKTOP-9GSEQH4\SQL_SERVER;'
         'DATABASE=Playlists;'
         'Trusted_Connection=yes;'
-        # 'UID=your_username;'
-        # 'PWD=your_password'
     )
     return connection
 
 
-def save_to_master_tracks():
+def post_my_playlists():
     spotify_client = authenticate_spotify()
     my_playlists = fetch_my_playlists(spotify_client)
     connection = get_db_connection()
@@ -37,10 +42,27 @@ def save_to_master_tracks():
                     VALUES (?, GETDATE())
                 """, (playlist_name,))
 
-        connection.commit()
-        cursor.close()
-        connection.close()
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+
+def clear_my_playlists():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    logging.info("Clearing the MyPlaylists table")
+    cursor.execute("DELETE FROM MyPlaylists")
+    connection.commit()
+
+    # Reset the identity column
+    logging.info("Resetting Id identity seed")
+    cursor.execute("DBCC CHECKIDENT ('MyPlaylists', RESEED, 0)")
+    connection.commit()
+
+    cursor.close()
+    connection.close()
 
 
 if __name__ == "__main__":
-    save_to_master_tracks()
+    clear_my_playlists()
+    post_my_playlists()

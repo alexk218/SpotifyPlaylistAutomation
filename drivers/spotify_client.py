@@ -16,7 +16,8 @@ logging.basicConfig(filename='spotify_script.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 # create 'forbidden_playlists' list
-forbidden_playlists = ["Discover Weekly", "Release Radar"]
+forbidden_playlists = ["Discover Weekly", "Release Radar", "M.O.S. Picks Organic & Progressive",
+                       "John Digweed Live In Tokyo"]
 forbidden_words = ["daylist"]
 
 
@@ -52,7 +53,7 @@ def fetch_my_playlists(spotify_client, total_limit=500):
         offset += limit
 
     def is_forbidden_playlist(name):
-        return any(word in name.lower() for word in forbidden_words) or name in forbidden_playlists
+        return any(word in name for word in forbidden_words) or name in forbidden_playlists
 
     my_playlists = [
         (playlist['name'], playlist['id'])
