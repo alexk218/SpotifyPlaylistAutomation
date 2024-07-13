@@ -41,4 +41,6 @@ def save_to_master_tracks():
         cursor.close()
         connection.close()
 
-        # return my_playlists
+
+if __name__ == "__main__":
+    save_to_master_tracks()

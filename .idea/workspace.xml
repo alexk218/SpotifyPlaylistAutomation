@@ -4,13 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists">
-      <change afterPath="$PROJECT_DIR$/debug/debug.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/drivers/spotify_client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/sql/program.py" afterDir="false" />
+    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/drivers/action_steps.py" beforeDir="false" afterPath="$PROJECT_DIR$/controllers/action_steps.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/debug/debug.py" beforeDir="false" afterPath="$PROJECT_DIR$/debug/debug.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/drivers/spotify_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/drivers/spotify_client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/sql/program.py" beforeDir="false" afterPath="$PROJECT_DIR$/sql/program.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -28,6 +26,7 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="HighlightingSettingsPerFile">
+    <setting file="file://$USER_HOME$/AppData/Local/JetBrains/PyCharmCE2023.3/python_stubs/-2012065726/pyodbc.py" root0="SKIP_INSPECTION" />
     <setting file="file://$USER_HOME$/AppData/Local/Programs/Python/Python312/Lib/site-packages/spotipy/client.py" root0="SKIP_INSPECTION" />
     <setting file="file://$USER_HOME$/AppData/Local/Programs/Python/Python312/Lib/site-packages/spotipy/oauth2.py" root0="SKIP_INSPECTION" />
   </component>
@@ -42,17 +41,17 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.debug.executor": "Run",
-    "Python.main.executor": "Run",
-    "RunOnceActivity.OpenProjectViewOnStart": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "main",
-    "last_opened_file_path": "C:/Users/Alex Kepekci/PycharmProjects/spotifystuff",
-    "settings.editor.selected.configurable": "MTConfigurable"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.debug.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/Alex Kepekci/PycharmProjects/spotifystuff&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\controllers" />
@@ -142,7 +141,15 @@
       <option name="project" value="LOCAL" />
       <updated>1720833314367</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS">
+      <option name="closed" value="true" />
+      <created>1720839047019</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1720839047019</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -160,17 +167,7 @@
     <MESSAGE value="Email notifications sent outlining changes to each private playlist" />
     <MESSAGE value="Update README.md" />
     <MESSAGE value="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists" />
-    <option name="LAST_COMMIT_MESSAGE" value="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists" />
-  </component>
-  <component name="XDebuggerManager">
-    <breakpoint-manager>
-      <breakpoints>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/drivers/spotify_client.py</url>
-          <line>38</line>
-          <option name="timeStamp" value="16" />
-        </line-breakpoint>
-      </breakpoints>
-    </breakpoint-manager>
+    <MESSAGE value="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS" />
+    <option name="LAST_COMMIT_MESSAGE" value="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS" />
   </component>
 </project>
