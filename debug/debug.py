@@ -22,8 +22,8 @@ class Debug:
     def debug_fetch_my_playlists(self):
         my_playlists = fetch_my_playlists(self.spotify_client)
         print("My Playlists:")
-        for name, playlist_id in my_playlists:
-            print(f"Name: {name}, ID: {playlist_id}")
+        for name, playlist_id, description in my_playlists:
+            print(f"Name: {name}, ID: {playlist_id}, File path: {description}")
 
     def debug_fetch_master_tracks(self):
         master_tracks = fetch_master_tracks(self.spotify_client)
@@ -34,5 +34,5 @@ class Debug:
 
 if __name__ == "__main__":
     debugger = Debug()
-    # debugger.debug_fetch_my_playlists()
-    debugger.debug_fetch_master_tracks()
+    debugger.debug_fetch_my_playlists()
+    # debugger.debug_fetch_master_tracks()

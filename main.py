@@ -3,7 +3,8 @@ from controllers.action_steps import *
 from helpers.playlist_helper import *
 from drivers.spotify_client import *
 
-load_dotenv()  # load environment variables
+load_dotenv()
+
 
 def main():
     spotify_client = authenticate_spotify()

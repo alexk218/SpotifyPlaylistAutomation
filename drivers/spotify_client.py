@@ -1,13 +1,10 @@
+import html
 import logging
 import os
 
 import spotipy
-from dotenv import load_dotenv
 from spotipy import SpotifyOAuth
 from typing import List, Tuple
-
-logging.basicConfig(filename='spotify_script.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 forbidden_playlists = ["Discover Weekly", "Release Radar", "M.O.S. Picks Organic & Progressive",
                        "John Digweed Live In Tokyo"]
@@ -27,9 +24,9 @@ def authenticate_spotify():
     return sp
 
 
-# Fetch all private playlists
-# Returns a list of tuples containing playlist's name and its unique ID
-def fetch_my_playlists(spotify_client, total_limit=500):
+# Fetch all user's private playlists (self-created). Excludes playlists with forbidden words in their name.
+# Returns a list of tuples containing playlist's name, its unique ID, and description (file path).
+def fetch_my_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, str]]:
     logging.info("Fetching all my playlists")
     user_id = spotify_client.current_user()['id']
 
@@ -49,7 +46,7 @@ def fetch_my_playlists(spotify_client, total_limit=500):
         return any(word in name for word in forbidden_words) or name in forbidden_playlists
 
     my_playlists = [
-        (playlist['name'], playlist['id'])
+        (playlist['name'], playlist['id'], html.unescape(playlist['description']))
         for playlist in all_playlists
         if playlist['owner']['id'] == user_id and not is_forbidden_playlist(playlist['name'])
     ]
@@ -57,15 +54,15 @@ def fetch_my_playlists(spotify_client, total_limit=500):
     return my_playlists
 
 
-# Fetch Liked Songs
+# Fetch user's Liked Songs
 def fetch_liked_songs(spotify_client):
     logging.info("Fetching Liked Songs")
     results = spotify_client.current_user_saved_tracks()
     return [(results['track']['name'], item['track']['id']) for item in results['items']]
 
 
+# Fetch ALL unique tracks from all user's playlists. Gets track title and artist name.
 def fetch_master_tracks(spotify_client) -> List[Tuple[str, str]]:
-    # Fetch ALL unique tracks from all my playlists. Get track title and artist name
     logging.info("Fetching all unique tracks from all my playlists")
     my_playlists = fetch_my_playlists(spotify_client)
     all_tracks = []

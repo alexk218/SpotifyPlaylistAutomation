@@ -1,11 +1,8 @@
-# Send notification
 import logging
 import os
 import smtplib
 
 # Load environment variables
-SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
-SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 SENDER_EMAIL = os.getenv('SENDER_EMAIL')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 
