@@ -4,121 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Email notifications sent outlining changes to each private playlist">
-      <change afterPath="$PROJECT_DIR$/.cache" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/encodings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/spotifystuff.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/drivers/action_steps.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/drivers/notification_client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/helpers/track_helper.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/8-bit_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Archives_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Bootz n Clapz_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Builders_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Car Sing-alongs _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Chillax _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Ciel Rose_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Classic Physique_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Club - BouncySexy_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Cottage Ribz_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Dark Downtempo_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Defected 2023_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Downtempo - Body Bouncing_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Downtempo - Ketamine_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Downtempo - Progressive_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Downtempo - Slow_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Downtempo - feely _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Feels - Peak cottage_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Feels - Peak_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Freedom_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Fun - Specials_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Grab the soul _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Groove - in your face _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Homewerk_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Jungle - Body bouncing_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Jungle - Dark_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Jungle - Feely_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Ketamine - Peak feel_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Late Night - Victory_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Little helpers_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Loungy Rap_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Low bpm_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Lyrics to mix_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Openers - Abstract_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Openers - build to epic_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Openers_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Organic - Progressive_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Peak - Victory_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Programming Brain Juice_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Progressive Openers _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Random goods, sort later_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Revived_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Afro_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Ciel Rose_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Cottage Ribz_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Dark Disco (Indie Dance)_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Francescos_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Heart Mind Portal_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Hōm Final_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - NewHaus Pt2_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - NewHaus_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Set - Velvet_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Summer outdoor daytime _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Sunrise_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Tangram - The Bright End_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Techno 2023_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/The Morning After_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Tickle the soul_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/USB Shuffles _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Unique finds_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Weapons_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/Yes_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/audacious dark progressive_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/blippity bounce_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/chill - emotional_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/classic house_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/current favourites_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/dark indie_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/darker downtempo_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/daylist • conga sharp monday evening_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/daylist • minimal house bangers saturday afternoon_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/deep progressive_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/deep sexy_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/disco acapellas_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/discoteca _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/easy groovy listens_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/etch a sketch - peak_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/feels_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/funk no vocals_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/groovy chill_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/kellerkind's favorite tunes_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/ketamine - low energy_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/ketamine _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/late night fun_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/lyrical mirical _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/mean minimalish_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/new groove _count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/opener progressive stuff_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/organic - high energy_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/organic - mid_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/organic downtempo_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/pattern breakers_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/peak time emotion_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/riff raffs_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/saucy_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/scallywags_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/spotify_script.log" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/storytelling progressive_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/techno_count.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/txtfiles/tribal bangers_count.txt" afterDir="false" />
+    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists">
+      <change afterPath="$PROJECT_DIR$/debug/debug.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/drivers/spotify_client.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/sql/program.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/drivers/action_steps.py" beforeDir="false" afterPath="$PROJECT_DIR$/controllers/action_steps.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -152,6 +44,7 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Python.debug.executor": "Run",
     "Python.main.executor": "Run",
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
@@ -162,10 +55,33 @@
 }]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\controllers" />
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\TxtFiles" />
     </key>
   </component>
-  <component name="RunManager">
+  <component name="RunManager" selected="Python.debug">
+    <configuration name="debug" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="spotifystuff" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/debug" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/debug/debug.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <configuration name="main" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="spotifystuff" />
       <option name="ENV_FILES" value="" />
@@ -188,6 +104,11 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.debug" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="SharedIndexes">
     <attachedChunks>
@@ -213,11 +134,43 @@
       <option name="project" value="LOCAL" />
       <updated>1705613769381</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists">
+      <option name="closed" value="true" />
+      <created>1720833314367</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1720833314367</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Email notifications sent outlining changes to each private playlist" />
-    <option name="LAST_COMMIT_MESSAGE" value="Email notifications sent outlining changes to each private playlist" />
+    <MESSAGE value="Update README.md" />
+    <MESSAGE value="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists" />
+    <option name="LAST_COMMIT_MESSAGE" value="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/drivers/spotify_client.py</url>
+          <line>38</line>
+          <option name="timeStamp" value="16" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
   </component>
 </project>
