@@ -4,9 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="fetch_my_playlists returns list of my playlists with forbidden playlists and words excluded">
-      <change afterPath="$PROJECT_DIR$/sql/myplaylists/refresh_my_playlists.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/drivers/spotify_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/drivers/spotify_client.py" afterDir="false" />
+    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Db cleared before seeded">
+      <change beforePath="$PROJECT_DIR$/sql/myplaylists/refresh_my_playlists.py" beforeDir="false" afterPath="$PROJECT_DIR$/sql/helpers/db_helper.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/sql/program.py" beforeDir="false" afterPath="$PROJECT_DIR$/sql/program.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -54,6 +53,7 @@
 }]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\sql\helpers" />
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\sql\myplaylists" />
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\controllers" />
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\TxtFiles" />
@@ -181,7 +181,15 @@
       <option name="project" value="LOCAL" />
       <updated>1720841141733</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="Db cleared before seeded">
+      <option name="closed" value="true" />
+      <created>1720842514491</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1720842514491</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -201,6 +209,7 @@
     <MESSAGE value="Organizing project structure&#10;Added fetch_liked_songs&#10;Now fetch_my_playlists only fetches playlists that I created, rather than playlists saved from other artists" />
     <MESSAGE value="Added debug class.&#10;Implemented ability to fetch my own playlists.&#10;Implementing connection with SSMS" />
     <MESSAGE value="fetch_my_playlists returns list of my playlists with forbidden playlists and words excluded" />
-    <option name="LAST_COMMIT_MESSAGE" value="fetch_my_playlists returns list of my playlists with forbidden playlists and words excluded" />
+    <MESSAGE value="Db cleared before seeded" />
+    <option name="LAST_COMMIT_MESSAGE" value="Db cleared before seeded" />
   </component>
 </project>
