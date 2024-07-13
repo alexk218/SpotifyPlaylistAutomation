@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 
 from controllers.action_steps import *
-from drivers.spotify_client import authenticate_spotify, fetch_my_playlists
+from drivers.spotify_client import authenticate_spotify, fetch_my_playlists, fetch_master_tracks
 
 load_dotenv()
 
@@ -25,7 +25,14 @@ class Debug:
         for name, playlist_id in my_playlists:
             print(f"Name: {name}, ID: {playlist_id}")
 
+    def debug_fetch_master_tracks(self):
+        master_tracks = fetch_master_tracks(self.spotify_client)
+        print("Master Tracks:")
+        for track in master_tracks:
+            print(track)
+
 
 if __name__ == "__main__":
     debugger = Debug()
-    debugger.debug_fetch_my_playlists()
+    # debugger.debug_fetch_my_playlists()
+    debugger.debug_fetch_master_tracks()

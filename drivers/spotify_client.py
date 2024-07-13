@@ -4,18 +4,11 @@ import os
 import spotipy
 from dotenv import load_dotenv
 from spotipy import SpotifyOAuth
-
-# Load environment variables
-# SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
-# SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
-# SENDER_EMAIL = os.getenv('SENDER_EMAIL')
-# EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
-
+from typing import List, Tuple
 
 logging.basicConfig(filename='spotify_script.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-# create 'forbidden_playlists' list
 forbidden_playlists = ["Discover Weekly", "Release Radar", "M.O.S. Picks Organic & Progressive",
                        "John Digweed Live In Tokyo"]
 forbidden_words = ["daylist"]
@@ -69,3 +62,35 @@ def fetch_liked_songs(spotify_client):
     logging.info("Fetching Liked Songs")
     results = spotify_client.current_user_saved_tracks()
     return [(results['track']['name'], item['track']['id']) for item in results['items']]
+
+
+def fetch_master_tracks(spotify_client) -> List[Tuple[str, str]]:
+    # Fetch ALL unique tracks from all my playlists. Get track title and artist name
+    logging.info("Fetching all unique tracks from all my playlists")
+    my_playlists = fetch_my_playlists(spotify_client)
+    all_tracks = []
+
+    for playlist_name, playlist_id in my_playlists:
+        logging.info(f"Fetching tracks for playlist: {playlist_name} (ID: {playlist_id})")
+        offset = 0
+        limit = 100
+        while True:
+            try:
+                tracks = spotify_client.playlist_tracks(playlist_id, offset=offset, limit=limit)
+                if not tracks['items']:
+                    break
+                all_tracks.extend(
+                    (track['track']['name'], ", ".join([artist['name'] for artist in track['track']['artists']]))
+                    for track in tracks['items']
+                )
+                offset += limit
+                if not tracks['next']:
+                    break
+            except Exception as e:
+                logging.error(f"Error fetching tracks for playlist {playlist_name} (ID: {playlist_id}): {e}")
+                break
+
+    # Return unique tracks
+    unique_tracks = list(set(all_tracks))
+    logging.info(f"Fetched {len(unique_tracks)} unique tracks from all playlists")
+    return unique_tracks
