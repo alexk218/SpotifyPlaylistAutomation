@@ -57,8 +57,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    # clear_master_tracks()
-    # insert_master_tracks()
+    # main()
+    clear_master_tracks()
+    insert_master_tracks()
     # clear_my_playlists()
     # insert_my_playlists()

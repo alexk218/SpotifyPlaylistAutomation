@@ -1,8 +1,5 @@
 import logging
 import os
-import smtplib
-import spotipy
-from spotipy import SpotifyOAuth
 
 # Fetch tracks from a playlist
 def fetch_playlist_tracks(spotify_client, playlist_id):

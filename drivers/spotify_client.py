@@ -7,7 +7,9 @@ from spotipy import SpotifyOAuth
 from typing import List, Tuple
 
 forbidden_playlists = ["Discover Weekly", "Release Radar", "M.O.S. Picks Organic & Progressive",
-                       "John Digweed Live In Tokyo"]
+                       "John Digweed Live In Tokyo", "UK RAP", "The OGs", "🗿🗿👺", "Summer house 2021🏠😎", "☁️",
+                       "Indie Dance by Sweet", "Set 1", "Set 3", "Set 5", "🌵🌵", "👨‍🚀🌚", "Spacewalk 👾", "Set - Dungeon",
+                       "DEEMIX"]
 forbidden_words = ["daylist"]
 
 

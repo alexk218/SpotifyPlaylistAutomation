@@ -12,6 +12,7 @@ load_dotenv()
 SERVER_CONNECTION_STRING = os.getenv('SERVER_CONNECTION_STRING')
 DATABASE_NAME = os.getenv('DATABASE_NAME')
 
+
 def get_db_connection():
     connection = pyodbc.connect(
         r'DRIVER={SQL Server};'
@@ -116,3 +117,13 @@ def insert_master_tracks():
     finally:
         cursor.close()
         connection.close()
+
+
+def fetch_master_tracks_db():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("SELECT * FROM MasterTracks")
+    tracks = cursor.fetchall()
+    cursor.close()
+    connection.close()
+    return tracks
