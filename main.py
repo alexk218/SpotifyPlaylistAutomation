@@ -1,5 +1,5 @@
 from dotenv import load_dotenv
-from controllers.action_steps import *
+from scripts.action_steps import *
 from helpers.playlist_helper import *
 from drivers.spotify_client import *
 

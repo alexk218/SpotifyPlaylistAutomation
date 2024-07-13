@@ -2,15 +2,15 @@ import logging
 
 import pyodbc
 
-from drivers.spotify_client import authenticate_spotify, fetch_my_playlists, fetch_master_tracks
+from ..drivers.spotify_client import authenticate_spotify, fetch_my_playlists, fetch_master_tracks
 
 
 def get_db_connection():
     connection = pyodbc.connect(
-        'DRIVER={SQL Server};'
-        'SERVER=DESKTOP-9GSEQH4\SQL_SERVER;'
-        'DATABASE=Playlists;'
-        'Trusted_Connection=yes;'
+        r'DRIVER={SQL Server};'
+        r'SERVER=DESKTOP-9GSEQH4\SQL_SERVER;'
+        r'DATABASE=Playlists;'
+        r'Trusted_Connection=yes;'
     )
     return connection
 
@@ -66,13 +66,13 @@ def insert_my_playlists():
     connection = get_db_connection()
     cursor = connection.cursor()
 
-    for playlist_name, playlist_id in my_playlists:
+    for playlist_name, file_path, playlist_id in my_playlists:
         logging.info(f"Inserting playlist: {playlist_name}")
 
         cursor.execute("""
-                      INSERT INTO MyPlaylists (PlaylistName, AddedDate)
-                      VALUES (?, GETDATE())
-                  """, (playlist_name,))
+                      INSERT INTO MyPlaylists (PlaylistName, FilePath, PlaylistId, AddedDate)
+                      VALUES (?, ?, ?, GETDATE())
+                  """, (playlist_name, file_path, playlist_id))
 
     connection.commit()
     cursor.close()

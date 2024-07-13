@@ -4,9 +4,6 @@ import smtplib
 import spotipy
 from spotipy import SpotifyOAuth
 
-logging.basicConfig(filename='spotify_script.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Fetch tracks from a playlist
 def fetch_playlist_tracks(spotify_client, playlist_id):
     logging.info(f"Fetching tracks for playlist ID {playlist_id}")

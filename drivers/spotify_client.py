@@ -46,7 +46,7 @@ def fetch_my_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, 
         return any(word in name for word in forbidden_words) or name in forbidden_playlists
 
     my_playlists = [
-        (playlist['name'], playlist['id'], html.unescape(playlist['description']))
+        (playlist['name'], html.unescape(playlist['description']), playlist['id'])
         for playlist in all_playlists
         if playlist['owner']['id'] == user_id and not is_forbidden_playlist(playlist['name'])
     ]
