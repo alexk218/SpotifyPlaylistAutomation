@@ -23,7 +23,8 @@ class Debug:
             print(f"Name: {name}, File path: {description}, ID: {playlist_id}")
 
     def debug_fetch_master_tracks(self):
-        master_tracks = fetch_master_tracks(self.spotify_client)
+        my_playlists = fetch_my_playlists(self.spotify_client)
+        master_tracks = fetch_master_tracks(self.spotify_client, my_playlists)
         print("Master Tracks:")
         for track in master_tracks:
             print(track)
@@ -31,5 +32,5 @@ class Debug:
 
 if __name__ == "__main__":
     debugger = Debug()
-    debugger.debug_fetch_my_playlists()
-    # debugger.debug_fetch_master_tracks()
+    # debugger.debug_fetch_my_playlists()
+    debugger.debug_fetch_master_tracks()

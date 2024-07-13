@@ -4,7 +4,9 @@ import os
 import pyodbc
 from dotenv import load_dotenv
 
-from drivers.spotify_client import authenticate_spotify, fetch_my_playlists, fetch_master_tracks
+from drivers.spotify_client import authenticate_spotify, fetch_my_playlists, fetch_master_tracks, \
+    find_playlists_for_tracks
+
 load_dotenv()
 
 SERVER_CONNECTION_STRING = os.getenv('SERVER_CONNECTION_STRING')
@@ -87,18 +89,25 @@ def insert_my_playlists():
 def insert_master_tracks():
     print("Inserting MasterTracks...")
     spotify_client = authenticate_spotify()
-    master_tracks = fetch_master_tracks(spotify_client)
+
+    my_playlists = fetch_my_playlists(spotify_client)
+    master_tracks = fetch_master_tracks(spotify_client, my_playlists)
+    tracks_with_playlists = find_playlists_for_tracks(spotify_client, master_tracks, my_playlists)
+
+    # master_tracks = fetch_master_tracks(spotify_client)
+    # tracks_with_playlists = find_playlists_for_tracks(spotify_client, master_tracks)
     connection = get_db_connection()
     cursor = connection.cursor()
 
     try:
-        for track_name, artist_name in master_tracks:
-            logging.info(f"Inserting track: {track_name} by {artist_name}")
+        for track_name, artist_name, playlists in tracks_with_playlists:
+            playlist_str = ", ".join(playlists)
+            logging.info(f"Inserting track: {track_name} by {artist_name}, Playlists: {playlist_str}")
 
             cursor.execute("""
-                              INSERT INTO MasterTracks (TrackTitle, Artists, AddedDate)
-                              VALUES (?, ?, GETDATE())
-                          """, (track_name, artist_name))
+                   INSERT INTO MasterTracks (TrackTitle, Artists, InPlaylists, AddedDate)
+                   VALUES (?, ?, ?, GETDATE())
+               """, (track_name, artist_name, playlist_str))
 
         connection.commit()
     except Exception as e:
