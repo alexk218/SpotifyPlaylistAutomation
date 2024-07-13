@@ -1,15 +1,20 @@
 import logging
+import os
 
 import pyodbc
+from dotenv import load_dotenv
 
-from ..drivers.spotify_client import authenticate_spotify, fetch_my_playlists, fetch_master_tracks
+from drivers.spotify_client import authenticate_spotify, fetch_my_playlists, fetch_master_tracks
+load_dotenv()
 
+SERVER_CONNECTION_STRING = os.getenv('SERVER_CONNECTION_STRING')
+DATABASE_NAME = os.getenv('DATABASE_NAME')
 
 def get_db_connection():
     connection = pyodbc.connect(
         r'DRIVER={SQL Server};'
-        r'SERVER=DESKTOP-9GSEQH4\SQL_SERVER;'
-        r'DATABASE=Playlists;'
+        fr'SERVER={SERVER_CONNECTION_STRING}'
+        fr'DATABASE={DATABASE_NAME}'
         r'Trusted_Connection=yes;'
     )
     return connection
@@ -91,7 +96,7 @@ def insert_master_tracks():
             logging.info(f"Inserting track: {track_name} by {artist_name}")
 
             cursor.execute("""
-                              INSERT INTO MasterTracks (TrackTitle, Artist, AddedDate)
+                              INSERT INTO MasterTracks (TrackTitle, Artists, AddedDate)
                               VALUES (?, ?, GETDATE())
                           """, (track_name, artist_name))
 

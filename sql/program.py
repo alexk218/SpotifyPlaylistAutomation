@@ -5,7 +5,7 @@ import argparse
 
 from dotenv import load_dotenv
 
-from sql.helpers.db_helper import clear_db, insert_db, clear_my_playlists, insert_my_playlists, clear_master_tracks, \
+from helpers.db_helper import clear_db, insert_db, clear_my_playlists, insert_my_playlists, clear_master_tracks, \
     insert_master_tracks
 
 load_dotenv()
@@ -57,4 +57,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    clear_my_playlists()
+    insert_my_playlists()
