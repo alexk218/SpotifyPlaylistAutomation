@@ -4,11 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Changes to deemix_client.py">
-      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/debug/debug.py" beforeDir="false" afterPath="$PROJECT_DIR$/debug/debug.py" afterDir="false" />
-    </list>
+    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="added .gitignore" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -23,6 +19,7 @@
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="ROOT_SYNC" value="SYNC" />
   </component>
   <component name="HighlightingSettingsPerFile">
     <setting file="file://$USER_HOME$/AppData/Local/JetBrains/PyCharmCE2023.3/python_stubs/-2012065726/pyodbc.py" root0="SKIP_INSPECTION" />
@@ -277,7 +274,15 @@
       <option name="project" value="LOCAL" />
       <updated>1720916589835</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="added .gitignore">
+      <option name="closed" value="true" />
+      <created>1720918926647</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1720918926647</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -305,7 +310,8 @@
     <MESSAGE value="Removed redundant calling of fetch_my_playlist. Reduces amount of API calls made" />
     <MESSAGE value="Added deemix_client.py to download tracks" />
     <MESSAGE value="Changes to deemix_client.py" />
-    <option name="LAST_COMMIT_MESSAGE" value="Changes to deemix_client.py" />
+    <MESSAGE value="added .gitignore" />
+    <option name="LAST_COMMIT_MESSAGE" value="added .gitignore" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
