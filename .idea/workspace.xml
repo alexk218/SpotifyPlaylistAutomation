@@ -4,12 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Added deemix_client.py to download tracks">
-      <change afterPath="$PROJECT_DIR$/helpers/file_helper.py" afterDir="false" />
+    <list default="true" id="df35ed25-e40e-4cb6-97f4-9235b77c98b0" name="Changes" comment="Changes to deemix_client.py">
+      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/drivers/deemix_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/drivers/deemix_client.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/helpers/track_helper.py" beforeDir="false" afterPath="$PROJECT_DIR$/helpers/track_helper.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/sql/helpers/db_helper.py" beforeDir="false" afterPath="$PROJECT_DIR$/sql/helpers/db_helper.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/debug/debug.py" beforeDir="false" afterPath="$PROJECT_DIR$/debug/debug.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -70,7 +68,7 @@
       <recent name="C:\Users\Alex Kepekci\PycharmProjects\spotifystuff\TxtFiles" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.deemix_client">
+  <component name="RunManager" selected="Python.debug">
     <configuration name="debug" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="spotifystuff" />
       <option name="ENV_FILES" value="" />
@@ -161,9 +159,9 @@
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.debug" />
         <item itemvalue="Python.deemix_client" />
         <item itemvalue="Python.program" />
-        <item itemvalue="Python.debug" />
       </list>
     </recent_temporary>
   </component>
@@ -271,7 +269,15 @@
       <option name="project" value="LOCAL" />
       <updated>1720913983547</updated>
     </task>
-    <option name="localTasksCounter" value="12" />
+    <task id="LOCAL-00012" summary="Changes to deemix_client.py">
+      <option name="closed" value="true" />
+      <created>1720916589835</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1720916589835</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -298,7 +304,8 @@
     <MESSAGE value="Loads server connection string and database name from .env" />
     <MESSAGE value="Removed redundant calling of fetch_my_playlist. Reduces amount of API calls made" />
     <MESSAGE value="Added deemix_client.py to download tracks" />
-    <option name="LAST_COMMIT_MESSAGE" value="Added deemix_client.py to download tracks" />
+    <MESSAGE value="Changes to deemix_client.py" />
+    <option name="LAST_COMMIT_MESSAGE" value="Changes to deemix_client.py" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -307,6 +314,16 @@
           <url>file://$PROJECT_DIR$/drivers/spotify_client.py</url>
           <line>55</line>
           <option name="timeStamp" value="23" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/drivers/spotify_client.py</url>
+          <line>32</line>
+          <option name="timeStamp" value="28" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/drivers/spotify_client.py</url>
+          <line>17</line>
+          <option name="timeStamp" value="29" />
         </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>

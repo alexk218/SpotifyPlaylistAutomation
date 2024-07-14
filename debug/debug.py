@@ -32,5 +32,5 @@ class Debug:
 
 if __name__ == "__main__":
     debugger = Debug()
-    # debugger.debug_fetch_my_playlists()
-    debugger.debug_fetch_master_tracks()
+    debugger.debug_fetch_my_playlists()
+    # debugger.debug_fetch_master_tracks()
