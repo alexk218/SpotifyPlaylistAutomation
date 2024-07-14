@@ -95,8 +95,6 @@ def insert_master_tracks():
     master_tracks = fetch_master_tracks(spotify_client, my_playlists)
     tracks_with_playlists = find_playlists_for_tracks(spotify_client, master_tracks, my_playlists)
 
-    # master_tracks = fetch_master_tracks(spotify_client)
-    # tracks_with_playlists = find_playlists_for_tracks(spotify_client, master_tracks)
     connection = get_db_connection()
     cursor = connection.cursor()
 
