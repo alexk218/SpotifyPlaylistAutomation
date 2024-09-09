@@ -1,13 +1,36 @@
 import logging
 import os
+from typing import List, Tuple
 
 # Fetch tracks from a playlist
-def fetch_playlist_tracks(spotify_client, playlist_id):
-    logging.info(f"Fetching tracks for playlist ID {playlist_id}")
-    tracks = spotify_client.playlist_tracks(playlist_id)
-    return [(" - ".join([track['track']['name'], ", ".join([artist['name'] for artist in track['track']['artists']])]))
-            for track in tracks['items']]
+# def fetch_playlist_tracks(spotify_client, playlist_id):
+#     logging.info(f"Fetching tracks for playlist ID {playlist_id}")
+#     tracks = spotify_client.playlist_tracks(playlist_id)
+#     return [(" - ".join([track['track']['name'], ", ".join([artist['name'] for artist in track['track']['artists']])]))
+#             for track in tracks['items']]
 
+def fetch_playlist_tracks(spotify_client, playlist_id: str) -> List[Tuple[str, str, str]]:
+    logging.info(f"Fetching tracks for playlist: {playlist_id}")
+
+    tracks = []
+    offset = 0
+    limit = 100  # Spotify API limit per request
+
+    while True:
+        response = spotify_client.playlist_tracks(playlist_id, limit=limit, offset=offset)
+        if not response['items']:
+            break
+
+        for item in response['items']:
+            track = item['track']
+            track_name = track['name']
+            artist_name = track['artists'][0]['name']
+            album_name = track['album']['name']
+            tracks.append((track_name, artist_name, album_name))
+
+        offset += limit
+
+    return tracks
 
 def load_stored_tracks(playlist_name):
     logging.info(f"Loading stored tracks for {playlist_name}")
