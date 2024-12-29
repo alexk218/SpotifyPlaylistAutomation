@@ -15,6 +15,9 @@ SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 SENDER_EMAIL = os.getenv('SENDER_EMAIL')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 
+with open('db.log', 'w'):
+    pass
+
 logging.basicConfig(filename='db.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 

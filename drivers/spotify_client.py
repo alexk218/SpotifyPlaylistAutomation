@@ -64,7 +64,7 @@ def fetch_liked_songs(spotify_client):
 
 
 # Fetch ALL unique tracks from all user's playlists. Gets track title and artist name.
-def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str]]:
+def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, str]]:
     logging.info("Fetching all unique tracks from all my playlists")
     all_tracks = []
 
@@ -78,7 +78,11 @@ def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str]]:
                 if not tracks['items']:
                     break
                 all_tracks.extend(
-                    (track['track']['name'], ", ".join([artist['name'] for artist in track['track']['artists']]))
+                    (
+                        track['track']['name'],
+                        ", ".join([artist['name'] for artist in track['track']['artists']]),
+                        track['track']['album']['name']
+                    )
                     for track in tracks['items']
                 )
                 offset += limit
@@ -95,8 +99,8 @@ def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str]]:
 
 
 # Find which playlists each track belongs to
-def find_playlists_for_tracks(spotify_client, tracks: List[Tuple[str, str]], my_playlists) -> (
-        List)[Tuple[str, str, List[str]]]:
+def find_playlists_for_tracks(spotify_client, tracks: List[Tuple[str, str, str]], my_playlists) -> List[
+    Tuple[str, str, str, List[str]]]:
     logging.info("Finding playlists for each track")
     track_to_playlists = {track: [] for track in tracks}
 
@@ -112,7 +116,8 @@ def find_playlists_for_tracks(spotify_client, tracks: List[Tuple[str, str]], my_
                 for track in playlist_tracks['items']:
                     track_name = track['track']['name']
                     track_artists = ", ".join([artist['name'] for artist in track['track']['artists']])
-                    track_key = (track_name, track_artists)
+                    track_album = track['track']['album']['name']
+                    track_key = (track_name, track_artists, track_album)
                     if track_key in track_to_playlists:
                         track_to_playlists[track_key].append(playlist_name)
                 offset += limit
@@ -122,5 +127,5 @@ def find_playlists_for_tracks(spotify_client, tracks: List[Tuple[str, str]], my_
                 logging.error(f"Error checking tracks for playlist {playlist_name} (ID: {playlist_id}): {e}")
                 break
 
-    tracks_with_playlists = [(track[0], track[1], track_to_playlists[track]) for track in tracks]
+    tracks_with_playlists = [(track[0], track[1], track[2], track_to_playlists[track]) for track in tracks]
     return tracks_with_playlists

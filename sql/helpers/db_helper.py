@@ -99,14 +99,15 @@ def insert_master_tracks():
     cursor = connection.cursor()
 
     try:
-        for track_name, artist_name, playlists in tracks_with_playlists:
+        for track_name, artist_name, album_name, playlists in tracks_with_playlists:
             playlist_str = ", ".join(playlists)
-            logging.info(f"Inserting track: {track_name} by {artist_name}, Playlists: {playlist_str}")
+            logging.info(
+                f"Inserting track: {track_name} by {artist_name}, Album: {album_name}, Playlists: {playlist_str}")
 
             cursor.execute("""
-                   INSERT INTO MasterTracks (TrackTitle, Artists, InPlaylists, AddedDate)
-                   VALUES (?, ?, ?, GETDATE())
-               """, (track_name, artist_name, playlist_str))
+                    INSERT INTO MasterTracks (TrackTitle, Artists, Album, InPlaylists, AddedDate)
+                    VALUES (?, ?, ?, ?, GETDATE())
+                """, (track_name, artist_name, album_name, playlist_str))
 
         connection.commit()
     except Exception as e:
@@ -120,7 +121,7 @@ def insert_master_tracks():
 def fetch_master_tracks_db():
     connection = get_db_connection()
     cursor = connection.cursor()
-    cursor.execute("SELECT * FROM MasterTracks")
+    cursor.execute("SELECT TrackTitle, Artists, Album FROM MasterTracks")
     tracks = cursor.fetchall()
     cursor.close()
     connection.close()
