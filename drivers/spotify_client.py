@@ -1,19 +1,28 @@
 import html
 import logging
 import os
-
+import json
+import re
 import spotipy
 from spotipy import SpotifyOAuth
+from pathlib import Path
 from typing import List, Tuple
 
-forbidden_playlists = ["Discover Weekly", "Release Radar", "M.O.S. Picks Organic & Progressive",
-                       "John Digweed Live In Tokyo", "UK RAP", "The OGs", "🗿🗿👺", "Summer house 2021🏠😎", "☁️",
-                       "Indie Dance by Sweet", "Set 1", "Set 3", "Set 5", "🌵🌵", "👨‍🚀🌚", "Spacewalk 👾", "Set - Dungeon",
-                       "DEEMIX"]
-forbidden_words = ["daylist"]
+# Get the path to the current file (spotify_client.py)
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+config_path = project_root / 'exclusion_config.json'
 
+with config_path.open('r', encoding='utf-8') as config_file:
+    config = json.load(config_file)
 
-# Authentication with Spotify
+forbidden_playlists = config.get('forbidden_playlists', [])
+forbidden_words = config.get('forbidden_words', [])
+description_keywords = config.get('description_keywords', [])
+forbidden_patterns = [
+    r'\b' + re.escape(word.lower()) + r'\b' for word in forbidden_words
+]
+
 def authenticate_spotify():
     SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
     SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
@@ -24,7 +33,6 @@ def authenticate_spotify():
                                                    redirect_uri="http://localhost:8888/callback",
                                                    scope="playlist-read-private user-library-read"))
     return sp
-
 
 # Fetch all user's private playlists (self-created). Excludes playlists with forbidden words in their name.
 # Returns a list of tuples containing playlist's name, its unique ID, and description (file path).
@@ -44,24 +52,47 @@ def fetch_my_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, 
         all_playlists.extend(playlists['items'])
         offset += limit
 
-    def is_forbidden_playlist(name):
-        return any(word in name for word in forbidden_words) or name in forbidden_playlists
+    logging.info(f"Total playlists fetched: {len(all_playlists)}")
 
     my_playlists = [
-        (playlist['name'], html.unescape(playlist['description']), playlist['id'])
+        # creates row in db with these 3 columns
+        (playlist['name'], html.unescape(playlist['description'] or ""), playlist['id'])
         for playlist in all_playlists
-        if playlist['owner']['id'] == user_id and not is_forbidden_playlist(playlist['name'])
+        if (
+            playlist['owner']['id'] == user_id and
+            not is_forbidden_playlist(playlist['name'], playlist['description'] or "")
+        )
     ]
 
+    logging.info(f"Total playlists after exclusion: {len(my_playlists)}")
     return my_playlists
 
+def is_forbidden_playlist(name: str, description: str) -> bool:
+    name_lower = name.lower()
+    description_lower = description.lower()
+
+    if any(word.lower() in name_lower for word in forbidden_words):
+        logging.info(f"Excluding playlist '{name}' due to forbidden word in name.")
+        return True
+
+    if name in forbidden_playlists:
+        logging.info(f"Excluding playlist '{name}' as it is in forbidden_playlists.")
+        return True
+
+    for keyword in description_keywords:
+        # Create a regex pattern to match whole words (case-insensitive)
+        pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
+        if re.search(pattern, description_lower):
+            logging.info(f"Excluding playlist '{name}' because description contains '{keyword}'.")
+            return True
+
+    return False
 
 # Fetch user's Liked Songs
 def fetch_liked_songs(spotify_client):
     logging.info("Fetching Liked Songs")
     results = spotify_client.current_user_saved_tracks()
     return [(results['track']['name'], item['track']['id']) for item in results['items']]
-
 
 # Fetch ALL unique tracks from all user's playlists. Gets track title and artist name.
 def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, str]]:
@@ -96,7 +127,6 @@ def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, st
     unique_tracks = list(set(all_tracks))
     logging.info(f"Fetched {len(unique_tracks)} unique tracks from all playlists")
     return unique_tracks
-
 
 # Find which playlists each track belongs to
 def find_playlists_for_tracks(spotify_client, tracks: List[Tuple[str, str, str]], my_playlists) -> List[
