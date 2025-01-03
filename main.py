@@ -10,7 +10,7 @@ load_dotenv()
 
 def main():
     spotify_client = authenticate_spotify()
-    all_playlists = fetch_my_playlists(spotify_client)
+    all_playlists = fetch_playlists(spotify_client)
     for playlist_name, playlist_description, playlist_id in all_playlists:
         current_song_count = fetch_playlist_song_count(spotify_client, playlist_id)
         stored_song_count = load_stored_playlist_song_count(playlist_name)

@@ -23,6 +23,7 @@ forbidden_patterns = [
     r'\b' + re.escape(word.lower()) + r'\b' for word in forbidden_words
 ]
 
+
 def authenticate_spotify():
     SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
     SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
@@ -34,9 +35,10 @@ def authenticate_spotify():
                                                    scope="playlist-read-private user-library-read"))
     return sp
 
+
 # Fetch all user's private playlists (self-created). Excludes playlists with forbidden words in their name.
-# Returns a list of tuples containing playlist's name, its unique ID, and description (file path).
-def fetch_my_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, str]]:
+# Returns: List of tuples containing (PlaylistName, PlaylistDescription, PlaylistId)
+def fetch_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, str]]:
     logging.info("Fetching all my playlists")
     user_id = spotify_client.current_user()['id']
 
@@ -55,17 +57,21 @@ def fetch_my_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, 
     logging.info(f"Total playlists fetched: {len(all_playlists)}")
 
     my_playlists = [
-        # creates row in db with these 3 columns
-        (playlist['name'], html.unescape(playlist['description'] or ""), playlist['id'])
+        (
+            playlist['name'],
+            html.unescape(playlist['description'] or ""),
+            playlist['id']
+        )
         for playlist in all_playlists
         if (
-            playlist['owner']['id'] == user_id and
-            not is_forbidden_playlist(playlist['name'], playlist['description'] or "")
+                playlist['owner']['id'] == user_id and
+                not is_forbidden_playlist(playlist['name'], playlist['description'] or "")
         )
     ]
 
     logging.info(f"Total playlists after exclusion: {len(my_playlists)}")
     return my_playlists
+
 
 def is_forbidden_playlist(name: str, description: str) -> bool:
     name_lower = name.lower()
@@ -88,14 +94,53 @@ def is_forbidden_playlist(name: str, description: str) -> bool:
 
     return False
 
+
 # Fetch user's Liked Songs
 def fetch_liked_songs(spotify_client):
     logging.info("Fetching Liked Songs")
     results = spotify_client.current_user_saved_tracks()
     return [(results['track']['name'], item['track']['id']) for item in results['items']]
 
-# Fetch ALL unique tracks from all user's playlists. Gets track title and artist name.
-def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, str]]:
+
+# Fetch all unique tracks from 'MASTER' playlist
+# Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album)
+def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[str, str, str, str]]:
+    logging.info(f"Fetching all unique tracks from 'MASTER' playlist (ID: {master_playlist_id})")
+    all_tracks = []
+
+    offset = 0
+    limit = 100  # Maximum allowed by Spotify API per request
+
+    while True:
+        try:
+            tracks = spotify_client.playlist_tracks(master_playlist_id, offset=offset, limit=limit)
+            if not tracks['items']:
+                break
+            all_tracks.extend(
+                (
+                    track['track']['id'],
+                    track['track']['name'],
+                    ", ".join([artist['name'] for artist in track['track']['artists']]),
+                    track['track']['album']['name']
+                )
+                for track in tracks['items']
+            )
+            offset += limit
+            if not tracks['next']:
+                break
+        except Exception as e:
+            logging.error(f"Error fetching tracks for 'MASTER' playlist (ID: {master_playlist_id}): {e}")
+            break
+
+    # Remove duplicates based on TrackId
+    unique_tracks = list({track[0]: track for track in all_tracks}.values())
+    logging.info(f"Fetched {len(unique_tracks)} unique tracks from 'MASTER' playlist")
+    return unique_tracks
+
+
+# Fetch ALL unique tracks from all user's playlists. (NOT NEEDED)
+# Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album)
+def fetch_all_unique_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, str, str]]:
     logging.info("Fetching all unique tracks from all my playlists")
     all_tracks = []
 
@@ -110,6 +155,7 @@ def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, st
                     break
                 all_tracks.extend(
                     (
+                        track['track']['id'],
                         track['track']['name'],
                         ", ".join([artist['name'] for artist in track['track']['artists']]),
                         track['track']['album']['name']
@@ -123,39 +169,75 @@ def fetch_master_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, st
                 logging.error(f"Error fetching tracks for playlist {playlist_name} (ID: {playlist_id}): {e}")
                 break
 
-    # Return unique tracks
-    unique_tracks = list(set(all_tracks))
+    # Remove duplicates based on TrackId
+    unique_tracks = list({track[0]: track for track in all_tracks}.values())
     logging.info(f"Fetched {len(unique_tracks)} unique tracks from all playlists")
     return unique_tracks
 
-# Find which playlists each track belongs to
-def find_playlists_for_tracks(spotify_client, tracks: List[Tuple[str, str, str]], my_playlists) -> List[
-    Tuple[str, str, str, List[str]]]:
-    logging.info("Finding playlists for each track")
-    track_to_playlists = {track: [] for track in tracks}
 
-    for playlist_name, playlist_description, playlist_id in my_playlists:
+# Find which playlists each track from 'MASTER' belongs to
+# Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album, [Playlists])
+def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str]], master_playlist_id) -> (
+        List)[Tuple[str, str, str, str, List[str]]]:
+    logging.info("Finding playlists for each track in 'MASTER'")
+
+    # Extract TrackIds from master_tracks for quick lookup
+    master_track_ids = set(track[0] for track in master_tracks)
+
+    # Fetch all playlists excluding the 'MASTER' playlist
+    all_playlists = fetch_playlists(spotify_client)
+    other_playlists = [pl for pl in all_playlists if pl[2] != master_playlist_id]
+
+    logging.info(f"Total other playlists to check: {len(other_playlists)}")
+
+    # Initialize a dictionary to map TrackId to playlists
+    track_to_playlists = {track_id: [] for track_id in master_track_ids}
+
+    for playlist_name, playlist_description, playlist_id in other_playlists:
         logging.info(f"Checking tracks for playlist: {playlist_name} (ID: {playlist_id})")
         offset = 0
         limit = 100
+
         while True:
             try:
-                playlist_tracks = spotify_client.playlist_tracks(playlist_id, offset=offset, limit=limit)
-                if not playlist_tracks['items']:
-                    break
-                for track in playlist_tracks['items']:
-                    track_name = track['track']['name']
-                    track_artists = ", ".join([artist['name'] for artist in track['track']['artists']])
-                    track_album = track['track']['album']['name']
-                    track_key = (track_name, track_artists, track_album)
-                    if track_key in track_to_playlists:
-                        track_to_playlists[track_key].append(playlist_name)
-                offset += limit
-                if not playlist_tracks['next']:
-                    break
-            except Exception as e:
-                logging.error(f"Error checking tracks for playlist {playlist_name} (ID: {playlist_id}): {e}")
-                break
+                response = spotify_client.playlist_tracks(playlist_id, offset=offset, limit=limit)
+                items = response.get('items', [])
 
-    tracks_with_playlists = [(track[0], track[1], track[2], track_to_playlists[track]) for track in tracks]
+                if not items:
+                    break  # No more tracks to fetch in this playlist
+
+                for item in items:
+                    track = item.get('track')
+                    if track:
+                        track_id = track.get('id')
+                        if track_id in master_track_ids:
+                            track_to_playlists[track_id].append(playlist_name)
+
+                if not response.get('next'):
+                    break  # No next page
+                offset += limit
+            except Exception as e:
+                logging.error(f"Error fetching tracks for playlist '{playlist_name}' (ID: {playlist_id}): {e}")
+                break  # Skip to the next playlist in case of an error
+
+    # Prepare the final list with playlists associated to each track
+    tracks_with_playlists = []
+    for track in master_tracks:
+        track_id, track_title, artist_names, album_name = track
+        playlists = track_to_playlists.get(track_id, [])
+        tracks_with_playlists.append((track_id, track_title, artist_names, album_name, playlists))
+
+    logging.info("Completed finding playlists for all tracks in the 'MASTER' playlist")
     return tracks_with_playlists
+
+
+# Fetch PlaylistId of 'MASTER' playlist (NOT USED ANYMORE. MANUALLY USING PLAYLISTID).
+def fetch_master_playlist_id(spotify_client) -> str | None:
+    logging.info("Fetching 'MASTER' playlist ID")
+    playlists = fetch_playlists(spotify_client)
+    for playlist_name, playlist_description, playlist_id in playlists:
+        if playlist_name.upper() == "MASTER":
+            logging.info(f"'MASTER' playlist found with ID: {playlist_id}")
+            return playlist_id
+    logging.error("'MASTER' playlist not found.")
+    return None
