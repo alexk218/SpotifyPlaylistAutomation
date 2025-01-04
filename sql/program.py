@@ -1,8 +1,7 @@
 import argparse
-from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id
-from sql.helpers.db_helper import *
+from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks
 from helpers.playlist_helper import organize_songs_into_playlists
-from helpers.track_helper import find_track_id_fuzzy, extract_track_id_from_metadata
+from sql.helpers.db_helper import *
 from utils.logger import setup_logger
 
 load_dotenv()
@@ -13,6 +12,7 @@ SENDER_EMAIL = os.getenv('SENDER_EMAIL')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 MASTER_TRACKS_DIRECTORY = os.getenv("MASTER_TRACKS_DIRECTORY")
 PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
+QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
 
@@ -36,6 +36,7 @@ def main():
     parser.add_argument('--interactive', action='store_true', help='Enable interactive mode for fuzzy matching')
     parser.add_argument('--remove-track-ids', action='store_true', help='Remove TrackId from all MP3 files')
     parser.add_argument('--count-track-ids', action='store_true', help='Count MP3 files with TrackId')
+    parser.add_argument('--cleanup-tracks', action='store_true', help='Clean up unwanted files from tracks_master directory by moving them to quarantine')
 
     args = parser.parse_args()
 
@@ -81,6 +82,8 @@ def main():
         count_tracks_with_id(MASTER_TRACKS_DIRECTORY)
     if args.organize_songs:
         organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run, interactive=args.interactive)
+    if args.cleanup_tracks:
+        cleanup_tracks(MASTER_TRACKS_DIRECTORY, QUARANTINE_DIRECTORY)
 
 
 if __name__ == "__main__":
