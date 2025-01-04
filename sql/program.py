@@ -1,6 +1,6 @@
 import argparse
 from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks
-from helpers.playlist_helper import organize_songs_into_playlists
+from helpers.playlist_helper import organize_songs_into_playlists, validate_master_tracks
 from sql.helpers.db_helper import *
 from utils.logger import setup_logger
 
@@ -13,6 +13,9 @@ EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 MASTER_TRACKS_DIRECTORY = os.getenv("MASTER_TRACKS_DIRECTORY")
 PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
 QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
+VALIDATION_LOGS_DIR = os.getenv("VALIDATION_LOGS_DIR")
+METADATA_LOGS_DIR = os.getenv("METADATA_LOGS_DIR")
+
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
 
@@ -38,6 +41,7 @@ def main():
     parser.add_argument('--count-track-ids', action='store_true', help='Count MP3 files with TrackId')
     parser.add_argument('--cleanup-tracks', action='store_true', help='Clean up unwanted files from tracks_master directory by moving them to quarantine')
     parser.add_argument('--sync-master', action='store_true', help='Sync all tracks from all playlists to MASTER playlist')
+    parser.add_argument('--validate-tracks', action='store_true', help='Validate local tracks against MASTER playlist')
 
     args = parser.parse_args()
 
@@ -88,6 +92,11 @@ def main():
     if args.sync_master:
         spotify_client = authenticate_spotify()
         sync_to_master_playlist(spotify_client, MASTER_PLAYLIST_ID)
+    if args.validate_tracks:
+        validate_master_tracks(
+            MASTER_TRACKS_DIRECTORY,
+            VALIDATION_LOGS_DIR
+        )
 
 
 if __name__ == "__main__":

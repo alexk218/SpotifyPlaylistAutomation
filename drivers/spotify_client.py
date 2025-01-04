@@ -3,6 +3,7 @@ import logging
 import os
 import json
 import re
+from datetime import datetime
 import spotipy
 from spotipy import SpotifyOAuth
 from pathlib import Path
@@ -143,7 +144,55 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[s
     return unique_tracks
 
 
-# Fetch ALL unique tracks from all user's playlists. (NOT NEEDED)
+def fetch_master_tracks_for_validation(spotify_client, master_playlist_id):
+    spotify_logger.info(f"Fetching tracks with dates from 'MASTER' playlist for validation")
+    all_tracks = []
+
+    offset = 0
+    limit = 100
+
+    while True:
+        try:
+            tracks = spotify_client.playlist_tracks(
+                master_playlist_id,
+                offset=offset,
+                limit=limit,
+                fields='items(added_at,track(id,name,artists(name),album(name))),total'
+            )
+
+            if not tracks['items']:
+                break
+
+            for item in tracks['items']:
+                if not item['track']:
+                    continue
+
+                track = item['track']
+                added_at = datetime.strptime(item['added_at'], '%Y-%m-%dT%H:%M:%SZ')
+                all_tracks.append({
+                    'id': track['id'],
+                    'name': track['name'],
+                    'artists': ", ".join(artist['name'] for artist in track['artists']),
+                    'album': track['album']['name'],
+                    'added_at': added_at
+                })
+
+            offset += limit
+            # Continue until we've processed all tracks
+            if offset >= tracks.get('total', 0):
+                break
+
+        except Exception as e:
+            spotify_logger.error(f"Error fetching tracks for validation: {e}")
+            break
+
+    all_tracks.sort(key=lambda x: x['added_at'], reverse=True)
+    spotify_logger.info(f"Fetched {len(all_tracks)} tracks for validation")
+    return all_tracks
+
+
+# ! NOT NEEDED
+# Fetch ALL unique tracks from all user's playlists.
 # Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album)
 def fetch_all_unique_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, str, str]]:
     spotify_logger.info("Fetching all unique tracks from all my playlists")
