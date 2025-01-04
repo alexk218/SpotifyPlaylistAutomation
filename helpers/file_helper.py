@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 import Levenshtein
 import shutil
+from mutagen import File
 from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
 from helpers.track_helper import find_track_id_fuzzy, has_track_id
 from sql.helpers.db_helper import fetch_all_tracks
@@ -348,3 +349,99 @@ def cleanup_tracks(master_tracks_dir, quarantine_dir):
     db_logger.info(f"\nCleanup Complete! "
                    f"\nFiles Examined: {files_examined} "
                    f"\nFiles Moved to Quarantine: {files_moved}")
+
+
+def validate_song_lengths(master_tracks_dir, validation_logs_dir, min_length_minutes=5):
+    """
+    Validate song lengths in the master tracks directory.
+    Generates a report of songs shorter than the minimum length.
+
+    Args:
+        master_tracks_dir (str): Path to master tracks directory
+        validation_logs_dir (str): Path to save validation logs
+        min_length_minutes (int): Minimum song length in minutes
+    """
+    # Ensure log directory exists
+    if not os.path.exists(validation_logs_dir):
+        os.makedirs(validation_logs_dir)
+
+    # Track short songs
+    short_songs = []
+    total_files = 0
+    min_length_seconds = min_length_minutes * 60
+
+    print(f"\nValidating song lengths (minimum {min_length_minutes} minutes)...")
+
+    # Scan all MP3 files
+    for root, _, files in os.walk(master_tracks_dir):
+        for file in files:
+            if not file.lower().endswith('.mp3'):
+                continue
+
+            total_files += 1
+            file_path = os.path.join(root, file)
+
+            try:
+                audio = File(file_path)
+                if audio is None:
+                    db_logger.error(f"Could not read file: {file}")
+                    continue
+
+                # Get length in seconds
+                length = audio.info.length
+
+                if length < min_length_seconds:
+                    # Try to get TrackId if available
+                    track_id = None
+                    try:
+                        tags = ID3(file_path)
+                        if 'TXXX:TRACKID' in tags:
+                            track_id = tags['TXXX:TRACKID'].text[0]
+                    except:
+                        pass
+
+                    short_songs.append({
+                        'file': file,
+                        'length': length,
+                        'track_id': track_id
+                    })
+
+            except Exception as e:
+                db_logger.error(f"Error processing {file}: {e}")
+
+    # Generate report if short songs found
+    if short_songs:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = os.path.join(validation_logs_dir, f'short_songs_{timestamp}.txt')
+
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("Short Songs Report\n")
+            f.write("================\n\n")
+
+            f.write(f"Minimum length: {min_length_minutes} minutes\n")
+            f.write(f"Total files scanned: {total_files}\n")
+            f.write(f"Short songs found: {len(short_songs)}\n\n")
+
+            f.write("Songs to Replace with Extended Versions:\n")
+            f.write("=====================================\n\n")
+
+            # Sort by length
+            short_songs.sort(key=lambda x: x['length'])
+
+            for song in short_songs:
+                minutes = int(song['length'] // 60)
+                seconds = int(song['length'] % 60)
+                f.write(f"• {song['file']}\n")
+                f.write(f"  Length: {minutes}:{seconds:02d}\n")
+                if song['track_id']:
+                    f.write(f"  TrackId: {song['track_id']}\n")
+                f.write("\n")
+
+        print(f"\nValidation complete!")
+        print(f"Found {len(short_songs)} songs shorter than {min_length_minutes} minutes")
+        print(f"Report saved to: {report_path}")
+
+    else:
+        print(f"\nValidation complete! All songs are {min_length_minutes} minutes or longer.")
+
+    return len(short_songs), total_files

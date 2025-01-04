@@ -1,5 +1,6 @@
 import argparse
-from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks
+from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
+    validate_song_lengths
 from helpers.playlist_helper import organize_songs_into_playlists, validate_master_tracks
 from sql.helpers.db_helper import *
 from utils.logger import setup_logger
@@ -42,6 +43,7 @@ def main():
     parser.add_argument('--cleanup-tracks', action='store_true', help='Clean up unwanted files from tracks_master directory by moving them to quarantine')
     parser.add_argument('--sync-master', action='store_true', help='Sync all tracks from all playlists to MASTER playlist')
     parser.add_argument('--validate-tracks', action='store_true', help='Validate local tracks against MASTER playlist')
+    parser.add_argument('--validate-lengths', action='store_true', help='Validate song lengths and report songs shorter than 5 minutes')
 
     args = parser.parse_args()
 
@@ -97,6 +99,8 @@ def main():
             MASTER_TRACKS_DIRECTORY,
             VALIDATION_LOGS_DIR
         )
+    if args.validate_lengths:
+        validate_song_lengths(MASTER_TRACKS_DIRECTORY, VALIDATION_LOGS_DIR)
 
 
 if __name__ == "__main__":
