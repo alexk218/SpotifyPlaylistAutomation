@@ -1,11 +1,12 @@
 import os
+from datetime import datetime
 from os import PathLike
 from typing import Union
-from datetime import datetime
 from mutagen.id3 import ID3, ID3NoHeaderError
-from drivers.spotify_client import authenticate_spotify, fetch_master_tracks_for_validation
+from drivers.spotify_client import authenticate_spotify, fetch_master_tracks_for_validation, fetch_playlists, \
+    get_playlist_track_ids
 from helpers.file_helper import create_symlink
-from sql.helpers.db_helper import fetch_playlists_for_track, fetch_all_playlists_db, fetch_all_tracks
+from sql.helpers.db_helper import fetch_playlists_for_track, fetch_all_playlists_db
 from utils.logger import setup_logger
 
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
@@ -230,6 +231,330 @@ def validate_master_tracks(master_tracks_dir, validation_logs_dir):
         'files_without_trackid': len(files_without_trackid),
         'unmatched_files': len(unmatched_files),
         'missing_downloads': len(missing_downloads)
+    }
+
+
+def validate_playlist_symlinks(playlists_dir, validation_logs_dir):
+    """
+    Validate that symlinked playlist folders match Spotify playlists.
+    Compares both track count and actual tracks using TrackIds.
+
+    Args:
+        playlists_dir (str): Directory containing playlist symlink folders
+        validation_logs_dir (str): Directory to save validation logs
+    """
+    # Ensure log directory exists
+    if not os.path.exists(validation_logs_dir):
+        os.makedirs(validation_logs_dir)
+
+    print("\nValidating playlist symlinks against Spotify playlists...")
+
+    # Get Spotify client and fetch all playlists
+    spotify_client = authenticate_spotify()
+    spotify_playlists = fetch_playlists(spotify_client)
+
+    # Track validation results
+    mismatched_playlists = []
+    missing_playlists = []
+    extra_playlists = []
+
+    # Get local playlist folders and strip whitespace
+    local_playlist_folders = {
+        d.strip() for d in os.listdir(playlists_dir)
+        if os.path.isdir(os.path.join(playlists_dir, d)) and d.upper() != "MASTER"
+    }
+
+    # Get Spotify playlist names
+    spotify_playlist_names = {name.strip() for name, _, _ in spotify_playlists}
+
+    # Find missing and extra playlists
+    missing_playlists = spotify_playlist_names - local_playlist_folders
+    extra_playlists = local_playlist_folders - spotify_playlist_names
+
+    # Compare each playlist's contents
+    for playlist_name, _, playlist_id in spotify_playlists:
+        playlist_name = playlist_name.strip()
+
+        # Skip MASTER playlist
+        if playlist_name.upper() == "MASTER":
+            continue
+
+        # Look for the folder with or without trailing whitespace
+        matching_folder = None
+        for folder in local_playlist_folders:
+            if folder.strip() == playlist_name:
+                matching_folder = folder
+                break
+
+        if not matching_folder:
+            continue
+
+        local_folder = os.path.join(playlists_dir, matching_folder)
+
+        # Get Spotify track IDs for this playlist
+        spotify_track_ids = set(get_playlist_track_ids(spotify_client, playlist_id))
+
+        # Get local track IDs and filenames
+        local_track_ids = set()
+        missing_trackids = []
+        local_files = {}  # Maps track_id to filename
+
+        for file in os.listdir(local_folder):
+            if not file.lower().endswith('.mp3'):
+                continue
+
+            file_path = os.path.join(local_folder, file)
+
+            if not os.path.exists(os.path.realpath(file_path)):
+                db_logger.warning(f"Broken symlink found in {playlist_name}: {file}")
+                continue
+
+            try:
+                tags = ID3(os.path.realpath(file_path))
+                if 'TXXX:TRACKID' in tags:
+                    track_id = tags['TXXX:TRACKID'].text[0]
+                    local_track_ids.add(track_id)
+                    local_files[track_id] = file
+                else:
+                    missing_trackids.append(file)
+            except Exception as e:
+                db_logger.error(f"Error reading TrackId from {file}: {e}")
+                missing_trackids.append(file)
+
+        # Compare track sets
+        if len(spotify_track_ids) != len(local_track_ids) or spotify_track_ids != local_track_ids or missing_trackids:
+            missing_tracks = spotify_track_ids - local_track_ids
+            extra_tracks = {track_id: local_files[track_id] for track_id in (local_track_ids - spotify_track_ids)}
+
+            mismatched_playlists.append({
+                'name': playlist_name,
+                'spotify_count': len(spotify_track_ids),
+                'local_count': len(local_track_ids),
+                'missing_tracks': missing_tracks,
+                'extra_tracks': extra_tracks,
+                'files_without_trackid': missing_trackids
+            })
+
+    # Generate report
+    if mismatched_playlists or missing_playlists or extra_playlists:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = os.path.join(validation_logs_dir, f'playlist_validation_{timestamp}.txt')
+
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("Playlist Validation Report\n")
+            f.write("========================\n\n")
+
+            if missing_playlists:
+                f.write("\nMissing Playlist Folders:\n")
+                f.write("========================\n")
+                for playlist in sorted(missing_playlists):
+                    f.write(f"• {playlist}\n")
+
+            if extra_playlists:
+                f.write("\nExtra Playlist Folders:\n")
+                f.write("=====================\n")
+                for playlist in sorted(extra_playlists):
+                    f.write(f"• {playlist}\n")
+
+            if mismatched_playlists:
+                f.write("\nMismatched Playlists:\n")
+                f.write("===================\n")
+                for playlist in mismatched_playlists:
+                    f.write(f"\n{playlist['name']}:\n")
+                    f.write(f"  Spotify tracks: {playlist['spotify_count']}\n")
+                    f.write(f"  Local files: {playlist['local_count']}\n")
+
+                    if playlist['missing_tracks']:
+                        f.write("\n  Missing tracks (in Spotify but not local):\n")
+                        f.write("  ----------------------------------------\n")
+                        for track_id in sorted(playlist['missing_tracks']):
+                            try:
+                                track = spotify_client.track(track_id)
+                                f.write(f"  • {track['artists'][0]['name']} - {track['name']}\n")
+                                f.write(f"    Track ID: {track_id}\n\n")
+                            except:
+                                f.write(f"  • Track ID: {track_id}\n\n")
+
+                    if playlist['extra_tracks']:
+                        f.write("\n  Extra tracks (local but not in Spotify):\n")
+                        f.write("  ------------------------------------\n")
+                        for track_id, filename in sorted(playlist['extra_tracks'].items()):
+                            f.write(f"  • {filename}\n")
+                            f.write(f"    Track ID: {track_id}\n\n")
+
+                    if playlist['files_without_trackid']:
+                        f.write("\n  Files without TrackId:\n")
+                        f.write("  --------------------\n")
+                        for file in sorted(playlist['files_without_trackid']):
+                            f.write(f"  • {file}\n")
+                        f.write("\n")
+
+        print(f"\nValidation complete! Issues found:")
+        print(f"- Missing playlists: {len(missing_playlists)}")
+        print(f"- Extra playlists: {len(extra_playlists)}")
+        print(f"- Mismatched playlists: {len(mismatched_playlists)}")
+        print(f"Report saved to: {report_path}")
+
+    else:
+        print("\nValidation complete! All playlist folders match their Spotify playlists.")
+
+    return {
+        'missing_playlists': len(missing_playlists),
+        'extra_playlists': len(extra_playlists),
+        'mismatched_playlists': len(mismatched_playlists)
+    }
+
+
+def validate_playlist_symlinks_quick(playlists_dir, validation_logs_dir):
+    """
+    Quick validation of playlist symlinks against Spotify playlists.
+    Only checks TrackIds without fetching additional track details.
+    Skips the MASTER playlist.
+    """
+    # Ensure log directory exists
+    if not os.path.exists(validation_logs_dir):
+        os.makedirs(validation_logs_dir)
+
+    print("\nQuick validation of playlist symlinks...")
+
+    # Get Spotify client and fetch all playlists
+    spotify_client = authenticate_spotify()
+    spotify_playlists = fetch_playlists(spotify_client)
+
+    # Track validation results
+    mismatched_playlists = []
+    missing_playlists = []
+    extra_playlists = []
+
+    # Get local playlist folders
+    local_playlist_folders = {
+        d.strip() for d in os.listdir(playlists_dir)
+        if os.path.isdir(os.path.join(playlists_dir, d)) and d.upper() != "MASTER"
+    }
+
+    # Get Spotify playlist names, excluding MASTER
+    spotify_playlist_names = {
+        name.strip() for name, _, _ in spotify_playlists
+        if name.upper() != "MASTER"
+    }
+
+    # Find missing and extra playlists
+    missing_playlists = spotify_playlist_names - local_playlist_folders
+    extra_playlists = local_playlist_folders - spotify_playlist_names
+
+    # Compare each playlist's contents
+    for playlist_name, _, playlist_id in spotify_playlists:
+        playlist_name = playlist_name.strip()
+
+        # Skip MASTER playlist
+        if playlist_name.upper() == "MASTER":
+            continue
+
+        if playlist_name not in local_playlist_folders:
+            continue
+
+        local_folder = os.path.join(playlists_dir, playlist_name)
+
+        # Get Spotify track IDs for this playlist
+        spotify_track_ids = set(get_playlist_track_ids(spotify_client, playlist_id))
+
+        # Get local track IDs and filenames
+        local_track_ids = set()
+        missing_trackids = []
+
+        for file in os.listdir(local_folder):
+            if not file.lower().endswith('.mp3'):
+                continue
+
+            file_path = os.path.join(local_folder, file)
+
+            if not os.path.exists(os.path.realpath(file_path)):
+                missing_trackids.append(file)
+                continue
+
+            try:
+                tags = ID3(os.path.realpath(file_path))
+                if 'TXXX:TRACKID' in tags:
+                    track_id = tags['TXXX:TRACKID'].text[0]
+                    local_track_ids.add(track_id)
+                else:
+                    missing_trackids.append(file)
+            except Exception as e:
+                db_logger.error(f"Error reading TrackId from {file}: {e}")
+                missing_trackids.append(file)
+
+        # Compare track sets
+        if len(spotify_track_ids) != len(local_track_ids) or spotify_track_ids != local_track_ids or missing_trackids:
+            mismatched_playlists.append({
+                'name': playlist_name,
+                'spotify_count': len(spotify_track_ids),
+                'local_count': len(local_track_ids),
+                'missing_tracks': spotify_track_ids - local_track_ids,
+                'extra_tracks': local_track_ids - spotify_track_ids,
+                'files_without_trackid': missing_trackids
+            })
+
+    # Generate report
+    if mismatched_playlists or missing_playlists or extra_playlists:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = os.path.join(validation_logs_dir, f'playlist_validation_quick_{timestamp}.txt')
+
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("Quick Playlist Validation Report\n")
+            f.write("============================\n\n")
+
+            if missing_playlists:
+                f.write("\nMissing Playlist Folders:\n")
+                f.write("========================\n")
+                for playlist in sorted(missing_playlists):
+                    f.write(f"• {playlist}\n")
+
+            if extra_playlists:
+                f.write("\nExtra Playlist Folders:\n")
+                f.write("=====================\n")
+                for playlist in sorted(extra_playlists):
+                    f.write(f"• {playlist}\n")
+
+            if mismatched_playlists:
+                f.write("\nMismatched Playlists:\n")
+                f.write("===================\n")
+                for playlist in mismatched_playlists:
+                    f.write(f"\n{playlist['name']}:\n")
+                    f.write(f"  Spotify tracks: {playlist['spotify_count']}\n")
+                    f.write(f"  Local files: {playlist['local_count']}\n")
+
+                    if playlist['missing_tracks']:
+                        f.write("\n  Missing track IDs (in Spotify but not local):\n")
+                        f.write("  -----------------------------------------\n")
+                        for track_id in sorted(playlist['missing_tracks']):
+                            f.write(f"  • {track_id}\n")
+
+                    if playlist['extra_tracks']:
+                        f.write("\n  Extra track IDs (local but not in Spotify):\n")
+                        f.write("  -------------------------------------\n")
+                        for track_id in sorted(playlist['extra_tracks']):
+                            f.write(f"  • {track_id}\n")
+
+                    if playlist['files_without_trackid']:
+                        f.write("\n  Files without TrackId:\n")
+                        f.write("  --------------------\n")
+                        for file in sorted(playlist['files_without_trackid']):
+                            f.write(f"  • {file}\n")
+                        f.write("\n")
+
+        print(f"\nQuick validation complete! Issues found:")
+        print(f"- Missing playlists: {len(missing_playlists)}")
+        print(f"- Extra playlists: {len(extra_playlists)}")
+        print(f"- Mismatched playlists: {len(mismatched_playlists)}")
+        print(f"Report saved to: {report_path}")
+
+    else:
+        print("\nValidation complete! All playlist folders match their Spotify playlists.")
+
+    return {
+        'missing_playlists': len(missing_playlists),
+        'extra_playlists': len(extra_playlists),
+        'mismatched_playlists': len(mismatched_playlists)
     }
 
 

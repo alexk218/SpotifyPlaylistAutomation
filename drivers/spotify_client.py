@@ -43,7 +43,7 @@ def authenticate_spotify():
 
 
 # Fetch all user's private playlists (self-created). Excludes playlists with forbidden words in their name.
-# Returns: List of tuples containing (PlaylistName, PlaylistDescription, PlaylistId)
+# * Returns: List of tuples containing (PlaylistName, PlaylistDescription, PlaylistId)
 def fetch_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, str]]:
     spotify_logger.info("Fetching all my playlists")
     user_id = spotify_client.current_user()['id']
