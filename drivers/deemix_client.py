@@ -12,7 +12,7 @@ from sql.helpers.db_helper import fetch_master_tracks_db
 load_dotenv()
 
 DEEMIX_PATH = os.getenv('DEEMIX_PATH')
-MASTER_TRACKS_DOWNLOAD_DIRECTORY = os.getenv('MASTER_TRACKS_DOWNLOAD_DIRECTORY')
+MASTER_TRACKS_DIRECTORY = os.getenv('MASTER_TRACKS_DIRECTORY')
 
 with open('deemix.log', 'w'):
     pass
@@ -25,7 +25,7 @@ def download_track(track_title, artist_title, album_title, deezer_link):
     command = [
         DEEMIX_PATH,
         '-b', 'mp3_320',
-        '-p', MASTER_TRACKS_DOWNLOAD_DIRECTORY,
+        '-p', MASTER_TRACKS_DIRECTORY,
         deezer_link
     ]
 
@@ -40,11 +40,11 @@ def download_track(track_title, artist_title, album_title, deezer_link):
         logging.info(f"Successfully downloaded {artist_title} - {track_title}.")
 
         # Rename the downloaded file to match the expected filename
-        # downloaded_files = os.listdir(MASTER_TRACKS_DOWNLOAD_DIRECTORY)
+        # downloaded_files = os.listdir(MASTER_TRACKS_DIRECTORY)
         # for file in downloaded_files:
         #     if file.endswith(".mp3"):
-        #         original_file_path = os.path.join(MASTER_TRACKS_DOWNLOAD_DIRECTORY, file)
-        #         expected_file_path = os.path.join(MASTER_TRACKS_DOWNLOAD_DIRECTORY,
+        #         original_file_path = os.path.join(MASTER_TRACKS_DIRECTORY, file)
+        #         expected_file_path = os.path.join(MASTER_TRACKS_DIRECTORY,
         #                                           get_expected_filename(track_title, artist_name, album_name))
         #         if not os.path.isfile(expected_file_path):
         #             shutil.move(original_file_path, expected_file_path)
@@ -74,7 +74,7 @@ if __name__ == "__main__":
         # Extract the first artist's name
         first_artist_name = artist_name.split(',')[0].strip()
 
-        if track_exists(track_name, first_artist_name, MASTER_TRACKS_DOWNLOAD_DIRECTORY):
+        if track_exists(track_name, first_artist_name, MASTER_TRACKS_DIRECTORY):
             logging.info(
                 f"Track already exists: {track_name} by {first_artist_name}. Skipping download.")
             continue

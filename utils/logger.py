@@ -1,8 +1,14 @@
 import logging
 
-# Clear the log file
-with open('log_file.log', 'w'):
-    pass
+def setup_logger(name, log_file, level=logging.INFO):
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-logging.basicConfig(filename='log_file.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+    handler = logging.FileHandler(log_file)
+    handler.setFormatter(formatter)
+
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    if not logger.handlers:
+        logger.addHandler(handler)
+
+    return logger

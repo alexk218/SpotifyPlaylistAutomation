@@ -7,6 +7,9 @@ import spotipy
 from spotipy import SpotifyOAuth
 from pathlib import Path
 from typing import List, Tuple
+from utils.logger import setup_logger
+
+db_logger = setup_logger('db_logger', 'sql/db.log')
 
 # Get the path to the current file (spotify_client.py)
 current_file = Path(__file__).resolve()
@@ -176,7 +179,7 @@ def fetch_all_unique_tracks(spotify_client, my_playlists) -> List[Tuple[str, str
 
 
 # Find which playlists each track from 'MASTER' belongs to
-# Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album, [Playlists])
+# * Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album, [Playlists])
 def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str]], master_playlist_id) -> (
         List)[Tuple[str, str, str, str, List[str]]]:
     logging.info("Finding playlists for each track in 'MASTER'")
