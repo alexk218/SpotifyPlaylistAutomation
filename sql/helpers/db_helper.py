@@ -68,7 +68,7 @@ def insert_playlists():
 
         cursor.execute("""
             INSERT INTO Playlists (PlaylistId, PlaylistName, PlaylistDescription)
-            VALUES (?, ?, ?)
+            VALUES (?, RTRIM(?), ?)
         """, (playlist_id, playlist_name, playlist_description))
 
     connection.commit()
@@ -152,12 +152,12 @@ def fetch_playlists_for_track(track_id):
     cursor = connection.cursor()
     try:
         cursor.execute("""
-            SELECT p.PlaylistName
+            SELECT RTRIM(p.PlaylistName) as PlaylistName
             FROM TrackPlaylists tp
             JOIN Playlists p ON tp.PlaylistId = p.PlaylistId
             WHERE tp.TrackId = ?
         """, (track_id,))
-        playlists = [row.PlaylistName for row in cursor.fetchall()]
+        playlists = [row[0] for row in cursor.fetchall()]
         db_logger.info(f"Track ID '{track_id}' belongs to playlists: {playlists}")
         return playlists
     except pyodbc.Error as e:
@@ -173,8 +173,8 @@ def fetch_all_playlists_db():
     connection = get_db_connection()
     cursor = connection.cursor()
     try:
-        cursor.execute("SELECT PlaylistId, PlaylistName FROM Playlists")
-        playlists = cursor.fetchall()
+        cursor.execute("SELECT PlaylistId, RTRIM(PlaylistName) as PlaylistName FROM Playlists")
+        playlists = [(row[0], row[1]) for row in cursor.fetchall()]
         db_logger.info(f"Fetched {len(playlists)} playlists from the database.")
         return playlists
     except pyodbc.Error as e:
