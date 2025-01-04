@@ -37,6 +37,7 @@ def main():
     parser.add_argument('--remove-track-ids', action='store_true', help='Remove TrackId from all MP3 files')
     parser.add_argument('--count-track-ids', action='store_true', help='Count MP3 files with TrackId')
     parser.add_argument('--cleanup-tracks', action='store_true', help='Clean up unwanted files from tracks_master directory by moving them to quarantine')
+    parser.add_argument('--sync-master', action='store_true', help='Sync all tracks from all playlists to MASTER playlist')
 
     args = parser.parse_args()
 
@@ -84,6 +85,9 @@ def main():
         organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run, interactive=args.interactive)
     if args.cleanup_tracks:
         cleanup_tracks(MASTER_TRACKS_DIRECTORY, QUARANTINE_DIRECTORY)
+    if args.sync_master:
+        spotify_client = authenticate_spotify()
+        sync_to_master_playlist(spotify_client, MASTER_PLAYLIST_ID)
 
 
 if __name__ == "__main__":
