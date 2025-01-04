@@ -1,5 +1,5 @@
+from datetime import datetime
 import pyodbc
-import logging
 from dotenv import load_dotenv
 from drivers.spotify_client import *
 load_dotenv()
@@ -21,8 +21,25 @@ def get_db_connection():
 
 
 def clear_db():
-    clear_playlists()
-    clear_master_tracks()
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    try:
+        connection.autocommit = False  # Start transaction
+
+        clear_track_playlists(cursor)  # Pass cursor to reuse the same transaction
+        clear_playlists(cursor)
+        clear_master_tracks(cursor)
+
+        connection.commit()  # Commit all changes
+        db_logger.info("All tables cleared successfully.")
+        print("All tables cleared successfully.")
+    except pyodbc.Error as e:
+        connection.rollback()  # Rollback all changes on error
+        db_logger.error(f"Error clearing database: {e}")
+        print(f"Error clearing database: {e}")
+    finally:
+        cursor.close()
+        connection.close()
 
 
 def insert_db():
@@ -31,28 +48,88 @@ def insert_db():
 
 
 # ! CLEAR DB
-def clear_playlists():
-    print("Clearing Playlists...")
-    connection = get_db_connection()
-    cursor = connection.cursor()
-    db_logger.info("Clearing the Playlists table")
-    cursor.execute("DELETE FROM Playlists")
-    connection.commit()
+def clear_playlists(cursor=None):
+    connection = None
+    if cursor is None:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        close_conn = True
+    else:
+        close_conn = False
+    try:
+        print("Clearing Playlists...")
+        db_logger.info("Clearing the Playlists table at %s.", datetime.now())
+        cursor.execute("DELETE FROM Playlists")
+        if close_conn:
+            connection.commit()
+        db_logger.info("Playlists table cleared successfully at %s.", datetime.now())
+        print("Playlists table cleared successfully.")
+    except pyodbc.Error as e:
+        db_logger.error(f"Error clearing Playlists table at {datetime.now()}: {e}")
+        print(f"Error clearing Playlists table: {e}")
+        if close_conn:
+            connection.rollback()
+        raise
+    finally:
+        if close_conn and cursor and connection:
+            cursor.close()
+            connection.close()
 
-    cursor.close()
-    connection.close()
+
+def clear_master_tracks(cursor=None):
+    connection = None
+    if cursor is None:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        close_conn = True
+    else:
+        close_conn = False
+    try:
+        print("Clearing Tracks...")
+        db_logger.info("Clearing the Tracks table at %s.", datetime.now())
+        cursor.execute("DELETE FROM Tracks")
+        if close_conn:
+            connection.commit()
+        db_logger.info("Tracks table cleared successfully at %s.", datetime.now())
+        print("Tracks table cleared successfully.")
+    except pyodbc.Error as e:
+        db_logger.error(f"Error clearing Tracks table at {datetime.now()}: {e}")
+        print(f"Error clearing Tracks table: {e}")
+        if close_conn:
+            connection.rollback()
+        raise
+    finally:
+        if close_conn and cursor and connection:
+            cursor.close()
+            connection.close()
 
 
-def clear_master_tracks():
-    print("Clearing Tracks...")
-    connection = get_db_connection()
-    cursor = connection.cursor()
-    db_logger.info("Clearing the Tracks table")
-    cursor.execute("DELETE FROM Tracks")
-    connection.commit()
-
-    cursor.close()
-    connection.close()
+def clear_track_playlists(cursor=None):
+    connection = None
+    if cursor is None:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        close_conn = True
+    else:
+        close_conn = False
+    try:
+        print("Clearing TrackPlaylists...")
+        db_logger.info("Clearing the TrackPlaylists table at %s.", datetime.now())
+        cursor.execute("DELETE FROM TrackPlaylists")
+        if close_conn:
+            connection.commit()
+        db_logger.info("TrackPlaylists table cleared successfully at %s.", datetime.now())
+        print("TrackPlaylists table cleared successfully.")
+    except pyodbc.Error as e:
+        db_logger.error(f"Error clearing TrackPlaylists table at {datetime.now()}: {e}")
+        print(f"Error clearing TrackPlaylists table: {e}")
+        if close_conn:
+            connection.rollback()
+        raise
+    finally:
+        if close_conn and cursor and connection:
+            cursor.close()
+            connection.close()
 
 
 # ! INSERT DB
@@ -224,4 +301,3 @@ def fetch_track_details(track_id):
     finally:
         cursor.close()
         connection.close()
-
