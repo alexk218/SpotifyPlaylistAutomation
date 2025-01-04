@@ -1,7 +1,10 @@
 import Levenshtein
 import logging
 import os
+import re
 from mutagen import File
+from mutagen.id3 import ID3, ID3NoHeaderError
+
 from utils.logger import setup_logger
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
@@ -15,11 +18,20 @@ def find_new_tracks(current_tracks, stored_tracks):
 
 
 # Use fuzzy matching to find the best matching TrackId for a given filename.
-def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False):
-    # * If interactive is True, prompt the user for low-confidence matches
-    # * Change threshold to change sensitivity of matching
-    # * Returns str or None: The matched TrackId or None if no suitable match found
-    # Extract Artist and TrackTitle from filename
+def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, max_matches=5):
+    """
+    Find TrackId using fuzzy matching, now returning multiple potential matches
+
+    Args:
+        file_name (str): Name of the file to match
+        tracks_db (list): Database tracks to match against
+        threshold (float): Minimum similarity threshold
+        interactive (bool): Whether to enable interactive mode
+        max_matches (int): Maximum number of matches to consider
+
+    Returns:
+        str or None: The matched TrackId or None if no suitable match found
+    """
     try:
         name_part = os.path.splitext(file_name)[0]
         artist, track_title = name_part.split(' - ', 1)
@@ -27,44 +39,134 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False):
         db_logger.warning(f"Filename format incorrect: {file_name}")
         return None
 
-    # Iterate through the db to find the best match
-    best_match = None
-    highest_ratio = 0
+    # Store all matches above threshold
+    matches = []
+
+    # Normalize the input filename for comparison
+    normalized_artist = artist.lower().replace('&', 'and')
+    normalized_title = track_title.lower()
+
+    # Handle remix information
+    remix_info = ""
+    if "remix" in normalized_title.lower():
+        remix_parts = normalized_title.lower().split("remix")
+        normalized_title = remix_parts[0].strip()
+        remix_info = "remix" + remix_parts[1] if len(remix_parts) > 1 else "remix"
 
     for track in tracks_db:
-        db_artist = track.Artists.lower()
+        # Normalize database entries and handle multiple artists
+        db_artists = track.Artists.lower().replace('&', 'and')
         db_title = track.TrackTitle.lower()
 
-        # Compute similarity ratios
-        artist_ratio = Levenshtein.ratio(artist.lower(), db_artist)
-        title_ratio = Levenshtein.ratio(track_title.lower(), db_title)
+        # Split artists into list and normalize each
+        db_artist_list = [a.strip() for a in db_artists.split(',')]
 
-        overall_ratio = (artist_ratio + title_ratio) / 2
+        # Handle "and" in artist names by also splitting those
+        expanded_artists = []
+        for artist in db_artist_list:
+            if ' and ' in artist:
+                expanded_artists.extend([a.strip() for a in artist.split(' and ')])
+            else:
+                expanded_artists.append(artist)
 
-        if overall_ratio > highest_ratio:
-            highest_ratio = overall_ratio
-            best_match = track.TrackId
+        # Compare with each possible artist
+        artist_ratios = [Levenshtein.ratio(normalized_artist, db_artist) for db_artist in expanded_artists]
+        artist_ratio = max(artist_ratios) if artist_ratios else 0
 
-    if highest_ratio >= threshold:
-        db_logger.info(f"Fuzzy matched '{file_name}' to TrackId '{best_match}' with ratio {highest_ratio}")
-        if highest_ratio < 0.75:
-            db_logger.warning(f"Low-confidence match for '{file_name}' with TrackId '{best_match}' "
-                              f"(Ratio: {highest_ratio})")
-        return best_match
-    elif highest_ratio >= (threshold - 0.2) and interactive:
-        # Prompt user for confirmation if interactive mode is enabled
-        user_input = input(
-            f"Low-confidence match for '{file_name}': TrackId '{best_match}' with similarity {highest_ratio:.2f}. "
-            f"Accept? (y/n): ")
-        if user_input.lower() == 'y':
-            db_logger.info(f"User accepted fuzzy match for '{file_name}' with TrackId '{best_match}'")
-            return best_match
-        else:
-            db_logger.warning(f"User rejected fuzzy match for '{file_name}'.")
-            return None
-    else:
-        db_logger.warning(f"No suitable fuzzy match found for '{file_name}' (Highest ratio: {highest_ratio})")
+        # Add bonus if artist appears anywhere in the list
+        if any(normalized_artist in db_artist for db_artist in expanded_artists):
+            artist_ratio += 0.1
+
+        # Normalize titles by removing parentheses and dashes
+        normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()  # Remove parenthetical content
+        db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
+
+        # Handle special title cases (remixes, edits, etc.)
+        title_variations = []
+        # Original title
+        title_variations.append(db_title)
+        # Clean title without parentheses
+        title_variations.append(db_title_clean)
+        # Title with standardized format
+        standardized_db_title = db_title.replace(' - ', ' ').replace("'s", "s")
+        title_variations.append(standardized_db_title)
+
+        # Calculate best title match from variations
+        title_ratios = [Levenshtein.ratio(normalized_title, var) for var in title_variations]
+        title_ratio = max(title_ratios)
+
+        # Add bonus for remix/edit matching if present
+        remix_bonus = 0
+        if any(x in track_title.lower() for x in ['remix', 'edit', 'mix']) and \
+                any(x in db_title for x in ['remix', 'edit', 'mix']):
+            remix_bonus = 0.2
+
+        # Calculate weighted overall ratio
+        overall_ratio = (artist_ratio * 0.4 + title_ratio * 0.4 + remix_bonus)
+
+        if overall_ratio >= (threshold - 0.2):  # Lower threshold for collecting potential matches
+            matches.append({
+                'track_id': track.TrackId,
+                'ratio': overall_ratio,
+                'artist': track.Artists,
+                'title': track.TrackTitle
+            })
+
+    # Sort matches by ratio in descending order
+    matches.sort(key=lambda x: x['ratio'], reverse=True)
+
+    # Take top matches up to max_matches
+    top_matches = matches[:max_matches]
+
+    if not top_matches:
+        db_logger.error(f"No matches found for '{file_name}' above minimum threshold")
         return None
+
+    # If we have a high confidence match (above threshold), return it without prompting
+    if top_matches[0]['ratio'] >= threshold:
+        db_logger.info(f"Fuzzy matched '{file_name}' to TrackId '{top_matches[0]['track_id']}' "
+                       f"with ratio {top_matches[0]['ratio']}")
+        return top_matches[0]['track_id']
+
+    # Only prompt user in interactive mode for low confidence matches
+    if interactive and top_matches[0]['ratio'] >= (threshold - 0.2):
+        print(f"\nPotential matches for: {file_name}")
+        print("0. Skip this file")
+        for i, match in enumerate(top_matches, 1):
+            print(f"{i}. {match['artist']} - {match['title']} (similarity: {match['ratio']:.2f})")
+
+        while True:
+            try:
+                choice = input("Select the correct match (0-{}): ".format(len(top_matches)))
+                choice = int(choice)
+                if choice == 0:
+                    db_logger.warning(f"User skipped matching for '{file_name}'")
+                    return None
+                if 1 <= choice <= len(top_matches):
+                    selected_match = top_matches[choice - 1]
+                    db_logger.info(f"User selected match for '{file_name}': "
+                                   f"{selected_match['artist']} - {selected_match['title']}")
+                    return selected_match['track_id']
+                print("Invalid choice. Please try again.")
+            except ValueError:
+                print("Please enter a valid number.")
+
+    # If not interactive and no good matches, return None
+    db_logger.error(f"No suitable fuzzy match found for '{file_name}' "
+                    f"(Best ratio: {top_matches[0]['ratio'] if top_matches else 0})")
+    return None
+
+
+# Check if file already has a TrackId embedded
+def has_track_id(file_path):
+    try:
+        tags = ID3(file_path)
+        return 'TXXX:TRACKID' in tags
+    except ID3NoHeaderError:
+        return False
+    except Exception as e:
+        db_logger.error(f"Error checking TrackId for {file_path}: {e}")
+        return False
 
 
 # Retrieves TrackId and Source from a song file's metadata

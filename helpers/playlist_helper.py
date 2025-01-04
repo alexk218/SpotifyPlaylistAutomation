@@ -10,6 +10,7 @@ db_logger = setup_logger('db_logger', 'sql/db.log')
 
 
 # Organizes all songs from 'K:\\tracks_master' by creating symlinks in playlist folders based on db association
+# ! CREATES FOLDERS WITH SYMLINKS
 def organize_songs_into_playlists(
     master_tracks_dir: Union[str, PathLike[str]],
     playlists_dir: Union[str, PathLike[str]],

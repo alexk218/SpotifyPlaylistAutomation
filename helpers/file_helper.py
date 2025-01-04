@@ -2,10 +2,11 @@ import logging
 import os
 import re
 import uuid
+from datetime import datetime
 import Levenshtein
 import shutil
 from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
-from helpers.track_helper import find_track_id_fuzzy
+from helpers.track_helper import find_track_id_fuzzy, has_track_id
 from sql.helpers.db_helper import fetch_all_tracks
 from utils.logger import setup_logger
 
@@ -80,30 +81,55 @@ def embed_track_id(file_path, track_id):
         return False
 
 
-# Embed TrackId into song file metadata. Processes multiple files within specified directory (K:\\tracks_master).
+# Embed TrackId into song file metadata. Processes multiple files within master tracks directory
 def embed_track_metadata(master_tracks_dir, interactive=False):
+    """
+    Embed TrackId into song file metadata with improved tracking and statistics.
+    Skips files that already have a TrackId embedded.
+    """
     tracks_db = fetch_all_tracks()
     db_logger.debug(f"Fetched all tracks.")
 
-    # 'walks' through all files starting from K:\\tracks_master. Loops through ALL tracks.
+    # Initialize counters
+    total_files = 0
+    successful_embeds = 0
+    failed_embeds = 0
+    skipped_files = 0
+    already_tagged = 0
+
+    # Statistics dictionary
+    stats = {
+        'exact_matches': 0,
+        'fuzzy_matches': 0,
+        'failed_matches': 0,
+        'invalid_format': 0
+    }
+
     for root, dirs, files in os.walk(master_tracks_dir):
         for file in files:
             if not file.lower().endswith('.mp3'):
-                continue  # Skip non-MP3 files
+                continue
 
+            total_files += 1
             file_path = os.path.join(root, file)
+
+            # Skip if file already has TrackId
+            if has_track_id(file_path):
+                already_tagged += 1
+                print(f"⚡ Skipping '{file}' (already tagged)")
+                continue
+
             try:
-                # Extract Artist and TrackTitle from filename
-                # splitext: splits filename into name and extension. "artist - title.mp3" -> ["artist - title", ".mp3"]
-                # so first element ([0]) is just "artist - title"
                 name_part = os.path.splitext(file)[0]
                 artist, track_title = name_part.split(' - ', 1)
-                db_logger.info(f"Extracted Artist: '{artist}', TrackTitle: '{track_title}'")
+                db_logger.info(f"Processing: Artist: '{artist}', TrackTitle: '{track_title}'")
             except ValueError:
                 db_logger.warning(f"Filename format incorrect: {file_path}")
-                continue  # Skip files that don't follow the naming convention
+                stats['invalid_format'] += 1
+                skipped_files += 1
+                continue
 
-            # Attempt exact matching. Looks through ALL tracks in db and creates a list of all matching tracks.
+            # Attempt exact matching
             matching_tracks = [
                 track for track in tracks_db
                 if track.TrackTitle.lower() == track_title.lower() and track.Artists.lower() in artist.lower()
@@ -112,22 +138,75 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
             if matching_tracks:
                 db_logger.info(f"Exact match found for '{file}'")
                 track = matching_tracks[0]
-                db_logger.info(f"Embedding TrackId '{track.TrackId}' into '{file}'")
-                embed_success = embed_track_id(file_path, track.TrackId)
-                if embed_success:
-                    print(f"Embedded TrackId into '{file}'")
+                stats['exact_matches'] += 1
+                if embed_track_id(file_path, track.TrackId):
+                    successful_embeds += 1
+                    print(f"✓ Embedded TrackId into '{file}'")
+                else:
+                    failed_embeds += 1
+                    print(f"✗ Failed to embed TrackId into '{file}'")
             else:
                 # Attempt fuzzy matching
                 db_logger.info(f"No exact match found for '{file}'. Attempting fuzzy matching...")
                 track_id = find_track_id_fuzzy(file, tracks_db, threshold=0.6, interactive=interactive)
+
                 if track_id:
-                    embed_success = embed_track_id(file_path, track_id)
-                    if embed_success:
-                        print(f"Embedded TrackId into '{file}' via fuzzy matching")
+                    stats['fuzzy_matches'] += 1
+                    if embed_track_id(file_path, track_id):
+                        successful_embeds += 1
+                        print(f"✓ Embedded TrackId into '{file}' via fuzzy matching")
+                    else:
+                        failed_embeds += 1
+                        print(f"✗ Failed to embed TrackId into '{file}'")
                 else:
-                    # Handle tracks without TrackId (poor matches)
-                    print(f"Skipping file (no TrackId found): {file}")
-                    db_logger.warning(f"No suitable match found for '{file}'")
+                    stats['failed_matches'] += 1
+                    skipped_files += 1
+                    print(f"• Skipped file (no TrackId found): {file}")
+
+    # Print final statistics
+    print("\nEmbedding Statistics:")
+    print(f"Total MP3 files: {total_files}")
+    print(f"Already tagged (skipped): {already_tagged}")
+    print(f"Newly processed: {total_files - already_tagged}")
+    print(f"Successfully embedded: {successful_embeds}")
+    print(f"Failed to embed: {failed_embeds}")
+    print(f"Skipped files: {skipped_files}")
+    print(f"\nMatching Statistics:")
+    print(f"Exact matches: {stats['exact_matches']}")
+    print(f"Fuzzy matches: {stats['fuzzy_matches']}")
+    print(f"Failed matches: {stats['failed_matches']}")
+    print(f"Invalid filename format: {stats['invalid_format']}")
+    print(f"\nSuccess rate: {(successful_embeds / (total_files - already_tagged) * 100):.2f}%")
+
+    # Export unmatched tracks to a file
+    unmatched_tracks = []
+    for root, dirs, files in os.walk(master_tracks_dir):
+        for file in files:
+            if not file.lower().endswith('.mp3'):
+                continue
+
+            file_path = os.path.join(root, file)
+            try:
+                tags = ID3(file_path)
+                if 'TXXX:TRACKID' not in tags:
+                    unmatched_tracks.append(file)
+            except ID3NoHeaderError:
+                unmatched_tracks.append(file)
+            except Exception as e:
+                db_logger.error(f"Error checking TrackId for {file}: {e}")
+                unmatched_tracks.append(file)
+
+    # Export unmatched tracks to a file
+    if unmatched_tracks:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        export_path = os.path.join(os.path.dirname(master_tracks_dir), f'unmatched_tracks_{timestamp}.txt')
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write("Unmatched tracks:\n")
+            for track in unmatched_tracks:
+                f.write(f"{track}\n")
+        print(f"\nExported list of unmatched tracks to: {export_path}")
+
+    return successful_embeds, total_files
 
 
 # Remove TrackId from all MP3 files in the directory and its subdirectories.
