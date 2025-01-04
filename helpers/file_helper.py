@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 import Levenshtein
+import shutil
 from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
 from helpers.track_helper import find_track_id_fuzzy
 from sql.helpers.db_helper import fetch_all_tracks
@@ -46,11 +47,11 @@ def create_symlink(target_path, link_path):
     try:
         if not os.path.exists(link_path):
             os.symlink(target_path, link_path)
-            logging.info(f"Created symlink: {link_path} -> {target_path}")
+            db_logger.info(f"Created symlink: {link_path} -> {target_path}")
         else:
-            logging.info(f"Symlink already exists: {link_path}")
+            db_logger.info(f"Symlink already exists: {link_path}")
     except OSError as e:
-        logging.error(f"Failed to create symlink: {link_path} -> {target_path} ({e})")
+        db_logger.error(f"Failed to create symlink: {link_path} -> {target_path} ({e})")
 
 
 # Embed TrackId into MP3 file's metadata - using a TXXX frame
@@ -191,3 +192,80 @@ def count_tracks_with_id(master_tracks_dir):
     print(f"Percentage with TrackId: {(tracks_with_id / total_count * 100):.2f}%")
 
     return tracks_with_id, total_count
+
+
+# Compare files in master_tracks_dir to the 'Tracks' table in the DB.
+# Any file whose TrackId is not in the DB is moved (or removed).
+def cleanup_tracks(master_tracks_dir, quarantine_dir):
+    """
+    Compare files in master_tracks_dir to the 'Tracks' table in the DB.
+    Any file whose TrackId is not in the DB is moved to the quarantine directory.
+
+    :param master_tracks_dir: Path to tracks_master directory
+    :param quarantine_dir: Path to quarantine directory where unwanted files will be moved
+    """
+    # 1. Fetch all tracks from DB and build a set of valid TrackIds
+    db_tracks = fetch_all_tracks()  # Suppose each row has (TrackId, TrackTitle, Artists)
+    valid_track_ids = {row.TrackId for row in db_tracks}
+    db_logger.info(f"Fetched {len(valid_track_ids)} valid TrackIds from the DB.")
+
+    # 2. Ensure quarantine directory exists
+    os.makedirs(quarantine_dir, exist_ok=True)
+    db_logger.info(f"Using quarantine directory: {quarantine_dir}")
+
+    # 3. Walk through the master_tracks_dir
+    files_examined = 0
+    files_moved = 0
+
+    for root, _, files in os.walk(master_tracks_dir):
+        for filename in files:
+            # Handle only MP3 for example — adapt if you want other formats
+            if not filename.lower().endswith('.mp3'):
+                continue
+
+            files_examined += 1
+            file_path = os.path.join(root, filename)
+
+            # Extract TrackId from ID3 tags
+            try:
+                tags = ID3(file_path)
+                if 'TXXX:TRACKID' not in tags:
+                    # No ID, so not in DB for sure
+                    db_logger.warning(f"No TRACKID in {filename}, moving to quarantine.")
+                    is_unwanted = True
+                else:
+                    track_id = tags['TXXX:TRACKID'].text[0]
+                    # Check if track_id is in our valid set
+                    is_unwanted = (track_id not in valid_track_ids)
+                    if is_unwanted:
+                        db_logger.info(f"TrackId '{track_id}' in {filename} not found in DB, moving to quarantine.")
+            except ID3NoHeaderError:
+                db_logger.warning(f"No ID3 header in {filename}, moving to quarantine.")
+                is_unwanted = True
+            except Exception as e:
+                db_logger.error(f"Error reading {filename}: {e}")
+                # If we can't read it, treat it as unwanted and move
+                is_unwanted = True
+
+            # Move unwanted files to quarantine directory
+            if is_unwanted:
+                files_moved += 1
+                try:
+                    # To avoid filename collisions in quarantine, optionally rename files
+                    # For simplicity, we'll move them with the same name
+                    new_path = os.path.join(quarantine_dir, filename)
+                    # If file with same name exists in quarantine, append a number
+                    base, extension = os.path.splitext(new_path)
+                    counter = 1
+                    while os.path.exists(new_path):
+                        new_path = f"{base}_{counter}{extension}"
+                        counter += 1
+
+                    shutil.move(file_path, new_path)
+                    db_logger.info(f"Moved unwanted file to quarantine: {new_path}")
+                except Exception as e:
+                    db_logger.error(f"Failed to move {file_path} to {quarantine_dir}: {e}")
+
+    db_logger.info(f"\nCleanup Complete! "
+                   f"\nFiles Examined: {files_examined} "
+                   f"\nFiles Moved to Quarantine: {files_moved}")

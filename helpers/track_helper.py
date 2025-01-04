@@ -6,11 +6,13 @@ from utils.logger import setup_logger
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
 
+
 # Compare with stored data and find new tracks
 def find_new_tracks(current_tracks, stored_tracks):
     new_tracks = list(set(current_tracks) - set(stored_tracks))
     db_logger.info(f"New tracks identified: {new_tracks}")
     return new_tracks
+
 
 # Use fuzzy matching to find the best matching TrackId for a given filename.
 def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False):
