@@ -1,20 +1,11 @@
 import logging
 import os
-import Levenshtein
 import re
 import uuid
-from mutagen import File
+import Levenshtein
+from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
 from helpers.track_helper import find_track_id_fuzzy
 from sql.helpers.db_helper import fetch_all_tracks
-from utils.logger import setup_logger
-import logging
-import os
-import uuid
-from mutagen import File
-from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
-# from mutagen.flac import FLAC, FLACNoHeaderError
-from mutagen.easymp4 import EasyMP4
-from mutagen.wavpack import WavPack
 from utils.logger import setup_logger
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
@@ -89,7 +80,7 @@ def embed_track_id(file_path, track_id):
 
 
 # Embed TrackId into song file metadata. Processes multiple files within specified directory (K:\\tracks_master).
-def embed_track_metadata(master_tracks_dir):
+def embed_track_metadata(master_tracks_dir, interactive=False):
     tracks_db = fetch_all_tracks()
     db_logger.debug(f"Fetched all tracks.")
 
@@ -127,22 +118,76 @@ def embed_track_metadata(master_tracks_dir):
             else:
                 # Attempt fuzzy matching
                 db_logger.info(f"No exact match found for '{file}'. Attempting fuzzy matching...")
-                track_id = find_track_id_fuzzy(file, tracks_db, threshold=0.8, interactive=True)
+                track_id = find_track_id_fuzzy(file, tracks_db, threshold=0.6, interactive=interactive)
                 if track_id:
                     embed_success = embed_track_id(file_path, track_id)
                     if embed_success:
                         print(f"Embedded TrackId into '{file}' via fuzzy matching")
                 else:
-                    # Handle tracks without TrackId (external tracks)
-                    unique_id = assign_unique_id()
-                    embed_success = embed_track_id(file_path, unique_id)
-                    if embed_success:
-                        print(f"Embedded unique ID into '{file}' as external track")
+                    # Handle tracks without TrackId (poor matches)
+                    print(f"Skipping file (no TrackId found): {file}")
+                    db_logger.warning(f"No suitable match found for '{file}'")
 
 
-# For tracks without a TrackId - generate a UUID
-def assign_unique_id(source_id=None):
-    if source_id:
-        return source_id
-    else:
-        return str(uuid.uuid4())
+# Remove TrackId from all MP3 files in the directory and its subdirectories.
+def remove_all_track_ids(master_tracks_dir):
+    removed_count = 0
+    total_count = 0
+
+    for root, _, files in os.walk(master_tracks_dir):
+        for file in files:
+            if not file.lower().endswith('.mp3'):
+                continue
+
+            file_path = os.path.join(root, file)
+            total_count += 1
+
+            try:
+                tags = ID3(file_path)
+                # Check if TRACKID exists before trying to remove
+                if 'TXXX:TRACKID' in tags:
+                    tags.delall('TXXX:TRACKID')
+                    tags.save(file_path)
+                    removed_count += 1
+                    db_logger.info(f"Removed TrackId from: {file}")
+            except ID3NoHeaderError:
+                db_logger.debug(f"No ID3 tags found in: {file}")
+            except Exception as e:
+                db_logger.error(f"Error processing {file}: {e}")
+
+    print(f"Processed {total_count} MP3 files")
+    print(f"Removed TrackId from {removed_count} files")
+    return removed_count
+
+
+# Count how many MP3 files have a TrackId embedded
+def count_tracks_with_id(master_tracks_dir):
+    tracks_with_id = 0
+    total_count = 0
+
+    for root, _, files in os.walk(master_tracks_dir):
+        for file in files:
+            if not file.lower().endswith('.mp3'):
+                continue
+
+            file_path = os.path.join(root, file)
+            total_count += 1
+
+            try:
+                tags = ID3(file_path)
+                if 'TXXX:TRACKID' in tags:
+                    tracks_with_id += 1
+                    track_id = tags['TXXX:TRACKID'].text[0]
+                    db_logger.info(f"Found TrackId in {file}: {track_id}")
+            except ID3NoHeaderError:
+                db_logger.debug(f"No ID3 tags found in: {file}")
+            except Exception as e:
+                db_logger.error(f"Error processing {file}: {e}")
+
+    print(f"\nResults:")
+    print(f"Total MP3 files: {total_count}")
+    print(f"Files with TrackId: {tracks_with_id}")
+    print(f"Files without TrackId: {total_count - tracks_with_id}")
+    print(f"Percentage with TrackId: {(tracks_with_id / total_count * 100):.2f}%")
+
+    return tracks_with_id, total_count

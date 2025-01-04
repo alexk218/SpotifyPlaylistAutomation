@@ -1,15 +1,9 @@
 import argparse
-import sys
-import os
-import logging
-from dotenv import load_dotenv
-from helpers.file_helper import embed_track_metadata
+from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id
 from sql.helpers.db_helper import *
 from helpers.playlist_helper import organize_songs_into_playlists
 from helpers.track_helper import find_track_id_fuzzy, extract_track_id_from_metadata
 from utils.logger import setup_logger
-import re
-import uuid
 
 load_dotenv()
 
@@ -21,9 +15,6 @@ MASTER_TRACKS_DIRECTORY = os.getenv("MASTER_TRACKS_DIRECTORY")
 PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
-
-# logging.basicConfig(filename='db.log', level=logging.INFO,
-#                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def main():
@@ -42,7 +33,9 @@ def main():
     parser.add_argument('--organize-songs', action='store_true', help='Organize downloaded songs into playlist folders with symlinks')
     parser.add_argument('--dry-run', action='store_true', help='Simulate the organization process without creating symlinks')
     parser.add_argument('--embed-metadata', action='store_true', help='Embed TrackId into song file metadata')
-    parser.add_argument('--interactive', action='store_true', help='Enable interactive mode for low-confidence matches')
+    parser.add_argument('--interactive', action='store_true', help='Enable interactive mode for fuzzy matching')
+    parser.add_argument('--remove-track-ids', action='store_true', help='Remove TrackId from all MP3 files')
+    parser.add_argument('--count-track-ids', action='store_true', help='Count MP3 files with TrackId')
 
     args = parser.parse_args()
 
@@ -81,7 +74,11 @@ def main():
             playlist_id, playlist_name = pl
             print(f"PlaylistId: {playlist_id}, PlaylistName: {playlist_name}")
     if args.embed_metadata:
-        embed_track_metadata(MASTER_TRACKS_DIRECTORY)
+        embed_track_metadata(MASTER_TRACKS_DIRECTORY, interactive=args.interactive)
+    if args.remove_track_ids:
+        remove_all_track_ids(MASTER_TRACKS_DIRECTORY)
+    if args.count_track_ids:
+        count_tracks_with_id(MASTER_TRACKS_DIRECTORY)
     if args.organize_songs:
         organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run, interactive=args.interactive)
 
