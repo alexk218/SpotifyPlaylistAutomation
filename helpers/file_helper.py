@@ -179,7 +179,11 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
     print(f"Fuzzy matches: {stats['fuzzy_matches']}")
     print(f"Failed matches: {stats['failed_matches']}")
     print(f"Invalid filename format: {stats['invalid_format']}")
-    print(f"\nSuccess rate: {(successful_embeds / (total_files - already_tagged) * 100):.2f}%")
+
+    if total_files == already_tagged:
+        print("\nSuccess rate: N/A (all files were already tagged)")
+    else:
+        print(f"\nSuccess rate: {(successful_embeds / (total_files - already_tagged) * 100):.2f}%")
 
     # Export unmatched tracks to a file
     unmatched_tracks = []

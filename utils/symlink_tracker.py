@@ -16,8 +16,9 @@ class SymlinkTracker:
     def tracking_session(self):
         self.created_symlinks.clear()
         try:
-            yield self
+            yield self  # code pauses here while the 'with' block runs in organize_songs_into_playlists
         finally:
+            # after the 'with' block finishes...
             if self.created_symlinks:
                 summary = ["=== Summary of Created Symlinks ==="]
                 for link, target in self.created_symlinks:

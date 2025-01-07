@@ -20,8 +20,7 @@ db_logger = setup_logger('db_logger', 'sql/db.log')
 def organize_songs_into_playlists(
         master_tracks_dir: Union[str, PathLike[str]],
         playlists_dir: Union[str, PathLike[str]],
-        dry_run: bool = False,
-        interactive: bool = False
+        dry_run: bool = False
 ) -> None:
     with tracker.tracking_session():
         print("Organizing songs into playlist folders with symlinks...")
