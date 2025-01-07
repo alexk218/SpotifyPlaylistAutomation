@@ -517,15 +517,27 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
 
     removed_tracks_info = []
     # Remove tracks that are now in other playlists and collect their info
+    spotify_logger.info("Fetching details for removed tracks for logging purposes...")
     if tracks_to_remove:
         spotify_logger.info(f"Found {len(tracks_to_remove)} tracks to remove from UNSORTED (now in other playlists)")
-        # Get track details before removing
-        for i in range(0, len(tracks_to_remove), 50):  # Use 50 for track details batch size
+
+        # Remove tracks first
+        for i in range(0, len(tracks_to_remove), 100):
+            batch = tracks_to_remove[i:i + 100]
+            try:
+                spotify_client.playlist_remove_all_occurrences_of_items(unsorted_playlist_id, batch)
+                spotify_logger.info(f"Removed batch of {len(batch)} tracks from UNSORTED playlist")
+            except Exception as e:
+                spotify_logger.error(f"Error removing tracks from UNSORTED playlist: {e}")
+                continue
+
+        # Get track details after successful removal
+        for i in range(0, len(tracks_to_remove), 50):
             batch = tracks_to_remove[i:i + 50]
             try:
                 tracks_info = spotify_client.tracks(batch)
                 for track in tracks_info['tracks']:
-                    if track:  # Check if track exists (not None)
+                    if track:
                         artists = ", ".join([artist['name'] for artist in track['artists']])
                         removed_tracks_info.append({
                             'name': track['name'],
@@ -534,15 +546,6 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
                         })
             except Exception as e:
                 spotify_logger.error(f"Error fetching track details: {e}")
-
-        # Remove tracks in batches
-        for i in range(0, len(tracks_to_remove), 100):
-            batch = tracks_to_remove[i:i + 100]
-            try:
-                spotify_client.playlist_remove_all_occurrences_of_items(unsorted_playlist_id, batch)
-                spotify_logger.info(f"Removed batch of {len(batch)} tracks from UNSORTED playlist")
-            except Exception as e:
-                spotify_logger.error(f"Error removing tracks from UNSORTED playlist: {e}")
 
     # Find liked songs that aren't in any playlist
     tracks_in_playlists.update(unsorted_tracks)
