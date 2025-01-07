@@ -10,6 +10,7 @@ from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
 from helpers.track_helper import find_track_id_fuzzy, has_track_id
 from sql.helpers.db_helper import fetch_all_tracks
 from utils.logger import setup_logger
+from utils.symlink_tracker import tracker
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
 
@@ -49,6 +50,7 @@ def create_symlink(target_path, link_path):
     try:
         if not os.path.exists(link_path):
             os.symlink(target_path, link_path)
+            tracker.created_symlinks.append((link_path, target_path))
             db_logger.info(f"Created symlink: {link_path} -> {target_path}")
         else:
             db_logger.info(f"Symlink already exists: {link_path}")

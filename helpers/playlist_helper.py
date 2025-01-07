@@ -8,6 +8,7 @@ from drivers.spotify_client import authenticate_spotify, fetch_master_tracks_for
 from helpers.file_helper import create_symlink
 from sql.helpers.db_helper import fetch_playlists_for_track, fetch_all_playlists_db
 from utils.logger import setup_logger
+from utils.symlink_tracker import tracker
 
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 
@@ -22,72 +23,73 @@ def organize_songs_into_playlists(
         dry_run: bool = False,
         interactive: bool = False
 ) -> None:
-    print("Organizing songs into playlist folders with symlinks...")
-    db_logger.info("Starting to organize songs into playlists.")
+    with tracker.tracking_session():
+        print("Organizing songs into playlist folders with symlinks...")
+        db_logger.info("Starting to organize songs into playlists.")
 
-    # Get all playlists from database to create directories
-    playlists = fetch_all_playlists_db()
+        # Get all playlists from database to create directories
+        playlists = fetch_all_playlists_db()
 
-    # Create playlist directories if they don't exist
-    for playlist in playlists:
-        playlist_id, playlist_name = playlist
-        playlist_path = os.path.join(playlists_dir, playlist_name)
+        # Create playlist directories if they don't exist
+        for playlist in playlists:
+            playlist_id, playlist_name = playlist
+            playlist_path = os.path.join(playlists_dir, playlist_name)
 
-        if not dry_run:
-            if os.path.exists(playlist_path):
-                db_logger.info(f"Playlist directory already exists: {playlist_path}")
+            if not dry_run:
+                if os.path.exists(playlist_path):
+                    db_logger.info(f"Playlist directory already exists: {playlist_path}")
+                else:
+                    os.makedirs(playlist_path)
+                    db_logger.info(f"Created new playlist directory: {playlist_path}")
             else:
-                os.makedirs(playlist_path)
-                db_logger.info(f"Created new playlist directory: {playlist_path}")
-        else:
-            if os.path.exists(playlist_path):
-                db_logger.info(f"[DRY RUN] Playlist directory already exists: {playlist_path}")
-            else:
-                db_logger.info(f"[DRY RUN] Would create new playlist directory: {playlist_path}")
+                if os.path.exists(playlist_path):
+                    db_logger.info(f"[DRY RUN] Playlist directory already exists: {playlist_path}")
+                else:
+                    db_logger.info(f"[DRY RUN] Would create new playlist directory: {playlist_path}")
 
-    # Process each track in the master directory
-    for root, _, files in os.walk(master_tracks_dir):
-        for filename in files:
-            if not filename.lower().endswith('.mp3'):
-                continue
-
-            file_path = os.path.join(root, filename)
-
-            # Extract TrackId from metadata
-            try:
-                tags = ID3(file_path)
-                if 'TXXX:TRACKID' not in tags:
-                    db_logger.warning(f"No TrackId found in metadata for: {filename}")
+        # Process each track in the master directory
+        for root, _, files in os.walk(master_tracks_dir):
+            for filename in files:
+                if not filename.lower().endswith('.mp3'):
                     continue
 
-                track_id = tags['TXXX:TRACKID'].text[0]
-                db_logger.info(f"Found TrackId in {filename}: {track_id}")
+                file_path = os.path.join(root, filename)
 
-                # Get associated playlists for this track
-                associated_playlists = fetch_playlists_for_track(track_id)
+                # Extract TrackId from metadata
+                try:
+                    tags = ID3(file_path)
+                    if 'TXXX:TRACKID' not in tags:
+                        db_logger.warning(f"No TrackId found in metadata for: {filename}")
+                        continue
 
-                if not associated_playlists:
-                    db_logger.warning(f"No playlist associations found for track: {filename} (ID: {track_id})")
+                    track_id = tags['TXXX:TRACKID'].text[0]
+                    db_logger.info(f"Found TrackId in {filename}: {track_id}")
+
+                    # Get associated playlists for this track
+                    associated_playlists = fetch_playlists_for_track(track_id)
+
+                    if not associated_playlists:
+                        db_logger.warning(f"No playlist associations found for track: {filename} (ID: {track_id})")
+                        continue
+
+                    # Create symlinks in each associated playlist directory
+                    for playlist_name in associated_playlists:
+                        playlist_path = os.path.join(playlists_dir, playlist_name)
+                        symlink_path = os.path.join(playlist_path, filename)
+
+                        if dry_run:
+                            db_logger.info(f"[DRY RUN] Would create symlink: {symlink_path} -> {file_path}")
+                        else:
+                            create_symlink(file_path, symlink_path)
+
+                except ID3NoHeaderError:
+                    db_logger.warning(f"No ID3 tags found in: {filename}")
+                    continue
+                except Exception as e:
+                    db_logger.error(f"Error processing {filename}: {e}")
                     continue
 
-                # Create symlinks in each associated playlist directory
-                for playlist_name in associated_playlists:
-                    playlist_path = os.path.join(playlists_dir, playlist_name)
-                    symlink_path = os.path.join(playlist_path, filename)
-
-                    if dry_run:
-                        db_logger.info(f"[DRY RUN] Would create symlink: {symlink_path} -> {file_path}")
-                    else:
-                        create_symlink(file_path, symlink_path)
-
-            except ID3NoHeaderError:
-                db_logger.warning(f"No ID3 tags found in: {filename}")
-                continue
-            except Exception as e:
-                db_logger.error(f"Error processing {filename}: {e}")
-                continue
-
-    db_logger.info("Playlist organization complete!")
+        db_logger.info("Playlist organization complete!")
 
 
 def get_file_track_id(file_path):
