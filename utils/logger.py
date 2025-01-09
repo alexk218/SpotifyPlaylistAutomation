@@ -2,6 +2,9 @@ import logging
 import os
 
 def setup_logger(name, log_file, level=logging.INFO):
+    # Make sure the directory exists
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
     # Clear log file if it exists (by opening it in write mode)
     if os.path.exists(log_file):
         open(log_file, 'w', encoding='utf-8').close()
