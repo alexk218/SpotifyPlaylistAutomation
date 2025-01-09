@@ -103,14 +103,14 @@ def main():
     if args.validate_tracks:
         validate_master_tracks(MASTER_TRACKS_DIRECTORY)
     if args.validate_lengths:
-        validate_song_lengths(MASTER_TRACKS_DIRECTORY, VALIDATION_LOGS_DIR)
+        validate_song_lengths(MASTER_TRACKS_DIRECTORY)
     if args.validate_playlists:
         validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
     if args.validate_playlists_quick:
         validate_playlist_symlinks_quick(PLAYLISTS_DIRECTORY)
     if args.validate_all:
         validate_master_tracks(MASTER_TRACKS_DIRECTORY)
-        validate_song_lengths(MASTER_TRACKS_DIRECTORY, VALIDATION_LOGS_DIR)
+        validate_song_lengths(MASTER_TRACKS_DIRECTORY)
         validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
     if args.sync_unplaylisted:
         spotify_client = authenticate_spotify()

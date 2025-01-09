@@ -224,7 +224,7 @@ def fetch_master_tracks_db():
 
 
 # Retrieve all playlists associated with a given TrackId
-def fetch_playlists_for_track(track_id):
+def fetch_playlists_for_track_db(track_id):
     connection = get_db_connection()
     cursor = connection.cursor()
     try:
@@ -263,7 +263,7 @@ def fetch_all_playlists_db():
 
 
 # Fetch all tracks from the Tracks table
-def fetch_all_tracks():
+def fetch_all_tracks_db():
     connection = get_db_connection()
     cursor = connection.cursor()
     try:
@@ -280,7 +280,7 @@ def fetch_all_tracks():
 
 
 # Retrieve track details from the database based on TrackId
-def fetch_track_details(track_id):
+def fetch_track_details_db(track_id):
     connection = get_db_connection()
     cursor = connection.cursor()
     try:

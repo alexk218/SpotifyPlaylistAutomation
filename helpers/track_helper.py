@@ -19,19 +19,7 @@ def find_new_tracks(current_tracks, stored_tracks):
 
 # Use fuzzy matching to find the best matching TrackId for a given filename.
 def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, max_matches=5):
-    """
-    Find TrackId using fuzzy matching, now returning multiple potential matches
-
-    Args:
-        file_name (str): Name of the file to match
-        tracks_db (list): Database tracks to match against
-        threshold (float): Minimum similarity threshold
-        interactive (bool): Whether to enable interactive mode
-        max_matches (int): Maximum number of matches to consider
-
-    Returns:
-        str or None: The matched TrackId or None if no suitable match found
-    """
+    # * Returns: str or None: The matched TrackId or None if no suitable match found
     try:
         name_part = os.path.splitext(file_name)[0]
         artist, track_title = name_part.split(' - ', 1)

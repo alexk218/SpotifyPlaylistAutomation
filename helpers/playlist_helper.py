@@ -7,7 +7,7 @@ from mutagen.id3 import ID3, ID3NoHeaderError
 from drivers.spotify_client import authenticate_spotify, fetch_master_tracks_for_validation, fetch_playlists, \
     get_playlist_track_ids
 from helpers.file_helper import create_symlink, cleanup_broken_symlinks
-from sql.helpers.db_helper import fetch_playlists_for_track, fetch_all_playlists_db
+from sql.helpers.db_helper import fetch_playlists_for_track_db, fetch_all_playlists_db
 from utils.logger import setup_logger
 from utils.symlink_tracker import tracker
 
@@ -71,7 +71,7 @@ def organize_songs_into_playlists(
                     db_logger.info(f"Found TrackId in {filename}: {track_id}")
 
                     # Get associated playlists for this track
-                    associated_playlists = fetch_playlists_for_track(track_id)
+                    associated_playlists = fetch_playlists_for_track_db(track_id)
 
                     if not associated_playlists:
                         db_logger.warning(f"No playlist associations found for track: {filename} (ID: {track_id})")
