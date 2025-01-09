@@ -1,6 +1,6 @@
 import argparse
 from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
-    validate_song_lengths
+    validate_song_lengths, cleanup_broken_symlinks
 from helpers.playlist_helper import organize_songs_into_playlists, validate_master_tracks, validate_playlist_symlinks, \
     validate_playlist_symlinks_quick
 from sql.helpers.db_helper import *
@@ -17,7 +17,7 @@ PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
 QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
 VALIDATION_LOGS_DIR = os.getenv("VALIDATION_LOGS_DIR")
 METADATA_LOGS_DIR = os.getenv("METADATA_LOGS_DIR")
-
+UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
 
@@ -47,6 +47,9 @@ def main():
     parser.add_argument('--validate-lengths', action='store_true', help='Validate song lengths and report songs shorter than 5 minutes')
     parser.add_argument('--validate-playlists', action='store_true', help='Validate playlist symlinks against Spotify playlists')
     parser.add_argument('--validate-playlists-quick', action='store_true', help='Quick validation of playlist symlinks (TrackIds only)')
+    parser.add_argument('--validate-all', action='store_true', help='Run all validation checks (validate-tracks, validate-lengths, validate-playlists')
+    parser.add_argument('--sync-unplaylisted', action='store_true', help='Sync unplaylisted Liked Songs to UNSORTED playlist')
+    parser.add_argument('--cleanup-symlinks', action='store_true', help='Remove broken symlinks from playlists_master directory')
 
     args = parser.parse_args()
 
@@ -91,23 +94,29 @@ def main():
     if args.count_track_ids:
         count_tracks_with_id(MASTER_TRACKS_DIRECTORY)
     if args.organize_songs:
-        organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run, interactive=args.interactive)
+        organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run)
     if args.cleanup_tracks:
         cleanup_tracks(MASTER_TRACKS_DIRECTORY, QUARANTINE_DIRECTORY)
     if args.sync_master:
         spotify_client = authenticate_spotify()
         sync_to_master_playlist(spotify_client, MASTER_PLAYLIST_ID)
     if args.validate_tracks:
-        validate_master_tracks(
-            MASTER_TRACKS_DIRECTORY,
-            VALIDATION_LOGS_DIR
-        )
+        validate_master_tracks(MASTER_TRACKS_DIRECTORY)
     if args.validate_lengths:
         validate_song_lengths(MASTER_TRACKS_DIRECTORY, VALIDATION_LOGS_DIR)
     if args.validate_playlists:
-        validate_playlist_symlinks(PLAYLISTS_DIRECTORY, VALIDATION_LOGS_DIR)
+        validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
     if args.validate_playlists_quick:
-        validate_playlist_symlinks_quick(PLAYLISTS_DIRECTORY, VALIDATION_LOGS_DIR)
+        validate_playlist_symlinks_quick(PLAYLISTS_DIRECTORY)
+    if args.validate_all:
+        validate_master_tracks(MASTER_TRACKS_DIRECTORY)
+        validate_song_lengths(MASTER_TRACKS_DIRECTORY, VALIDATION_LOGS_DIR)
+        validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
+    if args.sync_unplaylisted:
+        spotify_client = authenticate_spotify()
+        sync_unplaylisted_to_unsorted(spotify_client, UNSORTED_PLAYLIST_ID)
+    if args.cleanup_symlinks:
+        cleanup_broken_symlinks(PLAYLISTS_DIRECTORY, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

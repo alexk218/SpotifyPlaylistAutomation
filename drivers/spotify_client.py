@@ -3,6 +3,7 @@ import logging
 import os
 import json
 import re
+import time
 from datetime import datetime
 import spotipy
 from spotipy import SpotifyOAuth
@@ -47,13 +48,16 @@ def authenticate_spotify():
 def fetch_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, str]]:
     spotify_logger.info("Fetching all my playlists")
     user_id = spotify_client.current_user()['id']
+    spotify_logger.info(f"User id: {user_id}")
 
     all_playlists = []
     offset = 0
     limit = 50  # Spotify API limit per request
 
     while len(all_playlists) < total_limit:
+        spotify_logger.info(f"Fetching playlists (offset: {offset}, limit: {limit})")
         playlists = spotify_client.current_user_playlists(limit=limit, offset=offset)
+        spotify_logger.info(f"Fetched {len(playlists['items'])} playlists in this batch")
         if not playlists['items']:
             break  # No more playlists to fetch
 
@@ -296,27 +300,55 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str) ->
     offset = 0
     limit = 100  # Spotify API limit
 
-    while True:
-        response = spotify_client.playlist_items(
+    spotify_logger.info(f"Fetching tracks for playlist {playlist_id}")
+
+    try:
+        # Get initial response to get total tracks
+        initial_response = spotify_client.playlist_items(
             playlist_id,
-            offset=offset,
-            limit=limit,
-            fields='items.track.id,total'
+            offset=0,
+            limit=1,
+            fields='total'
         )
+        total_tracks = initial_response['total']
+        spotify_logger.info(f"Total tracks to fetch: {total_tracks}")
 
-        if not response['items']:
-            break
+        while True:
+            try:
+                response = spotify_client.playlist_items(
+                    playlist_id,
+                    offset=offset,
+                    limit=limit,
+                    fields='items.track.id,total'
+                )
 
-        tracks.extend(
-            item['track']['id'] for item in response['items']
-            if item['track'] and item['track']['id']
-        )
+                if not response['items']:
+                    break
 
-        offset += limit
-        if offset >= response['total']:
-            break
+                batch_tracks = [
+                    item['track']['id'] for item in response['items']
+                    if item['track'] and item['track']['id']
+                ]
 
-    return tracks
+                tracks.extend(batch_tracks)
+                spotify_logger.debug(f"Fetched {len(batch_tracks)} tracks (offset: {offset})")
+
+                offset += limit
+                if offset >= response['total']:
+                    break
+
+            except Exception as e:
+                spotify_logger.error(f"Error fetching tracks at offset {offset}: {str(e)}")
+                # Wait a bit before retrying
+                time.sleep(1)
+                continue
+
+        spotify_logger.info(f"Successfully fetched {len(tracks)} tracks from playlist {playlist_id}")
+        return tracks
+
+    except Exception as e:
+        spotify_logger.error(f"Failed to fetch tracks for playlist {playlist_id}: {str(e)}")
+        return []
 
 
 # Get tracks that would be added to MASTER, organized by source playlist.
