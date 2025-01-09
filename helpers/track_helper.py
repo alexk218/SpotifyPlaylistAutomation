@@ -19,7 +19,7 @@ def find_new_tracks(current_tracks, stored_tracks):
 
 # Use fuzzy matching to find the best matching TrackId for a given filename.
 def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, max_matches=5):
-    # * Returns: str or None: The matched TrackId or None if no suitable match found
+    # * Returns:  Tuple[str, float] or None: (track_id, match_ratio) if match found, None if no suitable match found
     try:
         name_part = os.path.splitext(file_name)[0]
         artist, track_title = name_part.split(' - ', 1)
@@ -114,7 +114,7 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, 
     if top_matches[0]['ratio'] >= threshold:
         db_logger.info(f"Fuzzy matched '{file_name}' to TrackId '{top_matches[0]['track_id']}' "
                        f"with ratio {top_matches[0]['ratio']}")
-        return top_matches[0]['track_id']
+        return top_matches[0]['track_id'], top_matches[0]['ratio']
 
     # Only prompt user in interactive mode for low confidence matches
     if interactive and top_matches[0]['ratio'] >= (threshold - 0.2):
@@ -134,7 +134,7 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, 
                     selected_match = top_matches[choice - 1]
                     db_logger.info(f"User selected match for '{file_name}': "
                                    f"{selected_match['artist']} - {selected_match['title']}")
-                    return selected_match['track_id']
+                    return selected_match['track_id'], selected_match['ratio']
                 print("Invalid choice. Please try again.")
             except ValueError:
                 print("Please enter a valid number.")

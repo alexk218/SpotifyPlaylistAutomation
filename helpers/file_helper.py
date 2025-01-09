@@ -228,9 +228,10 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
             else:
                 # Attempt fuzzy matching
                 db_logger.info(f"No exact match found for '{file}'. Attempting fuzzy matching...")
-                track_id = find_track_id_fuzzy(file, tracks_db, threshold=0.6, interactive=interactive)
+                match_result = find_track_id_fuzzy(file, tracks_db, threshold=0.6, interactive=interactive)
 
-                if track_id:
+                if match_result:
+                    track_id, match_ratio = match_result
                     stats['fuzzy_matches'] += 1
                     if embed_track_id(file_path, track_id):
                         successful_count += 1
@@ -239,7 +240,8 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
                             'artist': artist,
                             'title': track_title,
                             'track_id': track_id,
-                            'match_type': 'fuzzy'
+                            'match_type': 'fuzzy',
+                            'ratio': match_ratio
                         })
                     else:
                         failed_count += 1
@@ -291,7 +293,10 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
                 f.write(f"  Artist: {embed['artist']}\n")
                 f.write(f"  Title: {embed['title']}\n")
                 f.write(f"  TrackId: {embed['track_id']}\n")
-                f.write(f"  Match Type: {embed['match_type']}\n\n")
+                f.write(f"  Match Type: {embed['match_type']}")
+                if embed['match_type'] == 'fuzzy':
+                    f.write(f" (ratio: {embed['ratio']:.2f})")
+                f.write("\n\n")
 
         # Write failed embeddings
         if failed_embeds:

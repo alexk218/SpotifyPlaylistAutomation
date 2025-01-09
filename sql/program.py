@@ -88,6 +88,7 @@ def main():
             playlist_id, playlist_name = pl
             print(f"PlaylistId: {playlist_id}, PlaylistName: {playlist_name}")
     if args.embed_metadata:
+        # * DB must be up-to-date
         embed_track_metadata(MASTER_TRACKS_DIRECTORY, interactive=args.interactive)
     if args.remove_track_ids:
         remove_all_track_ids(MASTER_TRACKS_DIRECTORY)
