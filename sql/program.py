@@ -103,8 +103,10 @@ def main():
     if args.validate_lengths:
         validate_song_lengths(MASTER_TRACKS_DIRECTORY)
     if args.validate_playlists:
+        # ! Warning: Lots of API requests
         validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
     if args.validate_playlists_quick:
+        # ! Warning: Lots of API requests
         validate_playlist_symlinks_quick(PLAYLISTS_DIRECTORY)
     if args.validate_all:
         # ! Warning: Lots of API requests

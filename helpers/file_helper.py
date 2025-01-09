@@ -100,7 +100,7 @@ def cleanup_broken_symlinks(playlists_dir: Union[str, os.PathLike[str]], dry_run
                                 removed_links.append((playlist_name, filename))
                                 tracker.removed_symlinks.append(file_path)
                             except Exception as e:
-                                db_logger.error(f"Failed to remove broken symlink {file_path}: {e}")
+                                db_logger.error(f"Error removing broken symlink {file_path}: {e}")
 
     except Exception as e:
         db_logger.error(f"Error during symlink cleanup: {e}")
