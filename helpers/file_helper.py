@@ -10,7 +10,7 @@ import shutil
 from mutagen import File
 from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
 from helpers.track_helper import find_track_id_fuzzy, has_track_id
-from sql.helpers.db_helper import fetch_all_tracks_db
+from sql.helpers.db_helper import fetch_all_tracks_db, get_track_added_date
 from utils.logger import setup_logger
 from utils.symlink_tracker import tracker
 
@@ -490,29 +490,35 @@ def validate_song_lengths(master_tracks_dir, min_length_minutes=5):
                     db_logger.error(f"Could not read file: {file}")
                     continue
 
-                # Get length in seconds
                 length = audio.info.length
 
                 if length < min_length_seconds:
-                    # Try to get TrackId if available
                     track_id = None
+                    added_at = None
                     try:
                         tags = ID3(file_path)
                         if 'TXXX:TRACKID' in tags:
                             track_id = tags['TXXX:TRACKID'].text[0]
-                    except:
-                        pass
+                            added_at = get_track_added_date(track_id)
+                    except Exception as e:
+                        db_logger.warning(f"Could not read TrackId for {file}: {e}")
 
                     short_songs.append({
                         'file': file,
                         'length': length,
-                        'track_id': track_id
+                        'track_id': track_id,
+                        'added_at': added_at
                     })
+                    db_logger.info(f"Found short song: {file} ({length:.2f} seconds)")
 
             except Exception as e:
                 db_logger.error(f"Error processing {file}: {e}")
 
-    # Generate report if short songs found
+    # Sort short songs by added_at date, putting songs without dates at the end
+    short_songs.sort(key=lambda x: (x['added_at'] is None,
+                                    datetime.min if x['added_at'] is None else -x['added_at'].timestamp()))
+
+    # Generate report
     if short_songs:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_path = master_validation_dir / f'song_length_validation_{timestamp}.log'
@@ -521,30 +527,38 @@ def validate_song_lengths(master_tracks_dir, min_length_minutes=5):
             f.write("Song Length Validation Report\n")
             f.write("===========================\n\n")
 
-            f.write(f"Minimum length: {min_length_minutes} minutes\n")
+            # Write summary
+            f.write("Summary\n")
+            f.write("-------\n")
+            f.write(f"Minimum length required: {min_length_minutes} minutes\n")
             f.write(f"Total files scanned: {total_files}\n")
-            f.write(f"Short songs found: {len(short_songs)}\n\n")
+            f.write(f"Short songs found: {len(short_songs)}\n")
+            songs_with_dates = sum(1 for song in short_songs if song['added_at'])
+            f.write(f"Songs with MASTER playlist dates: {songs_with_dates}\n")
+            f.write(f"Songs without MASTER playlist dates: {len(short_songs) - songs_with_dates}\n\n")
 
             f.write("Songs to Replace with Extended Versions:\n")
-            f.write("=====================================\n\n")
-
-            # Sort by length
-            short_songs.sort(key=lambda x: x['length'])
+            f.write("=====================================\n")
+            f.write("(Sorted by date added to MASTER playlist)\n\n")
 
             for song in short_songs:
                 minutes = int(song['length'] // 60)
                 seconds = int(song['length'] % 60)
+
                 f.write(f"• {song['file']}\n")
+                if song['added_at']:
+                    f.write(f"  Added to MASTER: {song['added_at'].strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"  Length: {minutes}:{seconds:02d}\n")
                 if song['track_id']:
                     f.write(f"  TrackId: {song['track_id']}\n")
                 f.write("\n")
 
+        db_logger.info(f"Validation complete. Report saved to: {log_path}")
         print(f"\nValidation complete!")
         print(f"Found {len(short_songs)} songs shorter than {min_length_minutes} minutes")
         print(f"Report saved to: {log_path}")
-
     else:
+        db_logger.info("No short songs found")
         print(f"\nValidation complete! All songs are {min_length_minutes} minutes or longer.")
 
     return len(short_songs), total_files

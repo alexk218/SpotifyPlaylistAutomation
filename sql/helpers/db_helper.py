@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 import pyodbc
 from dotenv import load_dotenv
 from drivers.spotify_client import *
@@ -169,30 +170,29 @@ def insert_tracks_and_associations():
 
     try:
         for track in tracks_with_playlists:
-            track_id, track_title, artist_names, album_name, playlists = track
+            track_id, track_title, artist_names, album_name, added_at, playlists = track
 
             db_logger.info(f"Inserting track: {track_title} (ID: {track_id})")
 
             # Insert into Tracks
             cursor.execute("""
-                   INSERT INTO Tracks (TrackId, TrackTitle, Artists, Album)
-                   VALUES (?, ?, ?, ?)
-                   """, (track_id, track_title, artist_names, album_name))
+                      INSERT INTO Tracks (TrackId, TrackTitle, Artists, Album, AddedToMaster)
+                      VALUES (?, ?, ?, ?, ?)
+                      """, (track_id, track_title, artist_names, album_name, added_at))
 
             # Insert into TrackPlaylists
             for playlist_name in playlists:
-                # Fetch PlaylistId from Playlists table
                 cursor.execute("""
-                       SELECT PlaylistId FROM Playlists
-                       WHERE PlaylistName = ?
-                       """, (playlist_name,))
+                          SELECT PlaylistId FROM Playlists
+                          WHERE PlaylistName = ?
+                          """, (playlist_name,))
                 result = cursor.fetchone()
                 if result:
                     playlist_id = result[0]
                     cursor.execute("""
-                           INSERT INTO TrackPlaylists (TrackId, PlaylistId)
-                           VALUES (?, ?)
-                           """, (track_id, playlist_id))
+                              INSERT INTO TrackPlaylists (TrackId, PlaylistId)
+                              VALUES (?, ?)
+                              """, (track_id, playlist_id))
                 else:
                     db_logger.warning(f"Playlist '{playlist_name}' not found in Playlists table.")
 
@@ -297,6 +297,26 @@ def fetch_track_details_db(track_id):
             return None
     except pyodbc.Error as e:
         db_logger.error(f"Error fetching track details for Track ID '{track_id}': {e}")
+        return None
+    finally:
+        cursor.close()
+        connection.close()
+
+
+# Get the date a track was added to MASTER playlist from the database
+def get_track_added_date(track_id: str) -> Optional[datetime]:
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("""
+            SELECT AddedToMaster
+            FROM Tracks
+            WHERE TrackId = ?
+        """, (track_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        db_logger.error(f"Error fetching added date for track {track_id}: {e}")
         return None
     finally:
         cursor.close()

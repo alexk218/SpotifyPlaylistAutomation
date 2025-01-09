@@ -110,7 +110,7 @@ def is_forbidden_playlist(name: str, description: str) -> bool:
 
 # Fetch all unique tracks from 'MASTER' playlist
 # Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album)
-def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[str, str, str, str]]:
+def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[str, str, str, str, datetime]]:
     spotify_logger.info(f"Fetching all unique tracks from 'MASTER' playlist (ID: {master_playlist_id})")
     all_tracks = []
 
@@ -127,7 +127,8 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[s
                     track['track']['id'],
                     track['track']['name'],
                     ", ".join([artist['name'] for artist in track['track']['artists']]),
-                    track['track']['album']['name']
+                    track['track']['album']['name'],
+                    datetime.strptime(track['added_at'], '%Y-%m-%dT%H:%M:%SZ')
                 )
                 for track in tracks['items']
             )
@@ -138,10 +139,16 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[s
             spotify_logger.error(f"Error fetching tracks for 'MASTER' playlist (ID: {master_playlist_id}): {e}")
             break
 
-    # Remove duplicates based on TrackId
-    unique_tracks = list({track[0]: track for track in all_tracks}.values())
-    spotify_logger.info(f"Fetched {len(unique_tracks)} unique tracks from 'MASTER' playlist")
-    return unique_tracks
+    # Remove duplicates based on TrackId, keeping the earliest added_at date
+    unique_tracks = {}
+    for track in all_tracks:
+        track_id = track[0]
+        if track_id not in unique_tracks or track[4] < unique_tracks[track_id][4]:
+            unique_tracks[track_id] = track
+
+    unique_tracks_list = list(unique_tracks.values())
+    spotify_logger.info(f"Fetched {len(unique_tracks_list)} unique tracks from 'MASTER' playlist")
+    return unique_tracks_list
 
 
 def fetch_master_tracks_for_validation(spotify_client, master_playlist_id):
@@ -231,8 +238,8 @@ def fetch_all_unique_tracks(spotify_client, my_playlists) -> List[Tuple[str, str
 
 # Find which playlists each track from 'MASTER' belongs to
 # * Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album, [Playlists])
-def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str]], master_playlist_id) -> (
-        List)[Tuple[str, str, str, str, List[str]]]:
+def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str, datetime]], master_playlist_id) -> (
+        List[Tuple[str, str, str, str, datetime, List[str]]]):
     spotify_logger.info("Finding playlists for each track in 'MASTER'")
 
     # Extract TrackIds from master_tracks for quick lookup
@@ -277,9 +284,9 @@ def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[s
     # Prepare the final list with playlists associated to each track
     tracks_with_playlists = []
     for track in master_tracks:
-        track_id, track_title, artist_names, album_name = track
+        track_id, track_title, artist_names, album_name, added_at = track  # Now unpacking 5 values
         playlists = track_to_playlists.get(track_id, [])
-        tracks_with_playlists.append((track_id, track_title, artist_names, album_name, playlists))
+        tracks_with_playlists.append((track_id, track_title, artist_names, album_name, added_at, playlists))
 
     spotify_logger.info("Completed finding playlists for all tracks in the 'MASTER' playlist")
     return tracks_with_playlists
