@@ -97,10 +97,8 @@ def main():
         organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run)
     if args.cleanup_tracks:
         cleanup_tracks(MASTER_TRACKS_DIRECTORY, QUARANTINE_DIRECTORY)
-    if args.sync_master:
-        spotify_client = authenticate_spotify()
-        sync_to_master_playlist(spotify_client, MASTER_PLAYLIST_ID)
     if args.validate_tracks:
+        # ! Warning: Lots of API requests
         validate_master_tracks(MASTER_TRACKS_DIRECTORY)
     if args.validate_lengths:
         validate_song_lengths(MASTER_TRACKS_DIRECTORY)
@@ -109,10 +107,16 @@ def main():
     if args.validate_playlists_quick:
         validate_playlist_symlinks_quick(PLAYLISTS_DIRECTORY)
     if args.validate_all:
+        # ! Warning: Lots of API requests
         validate_master_tracks(MASTER_TRACKS_DIRECTORY)
         validate_song_lengths(MASTER_TRACKS_DIRECTORY)
         validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
+    if args.sync_master:
+        # ! Warning: Lots of API requests
+        spotify_client = authenticate_spotify()
+        sync_to_master_playlist(spotify_client, MASTER_PLAYLIST_ID)
     if args.sync_unplaylisted:
+        # ! Warning: Lots of API requests
         spotify_client = authenticate_spotify()
         sync_unplaylisted_to_unsorted(spotify_client, UNSORTED_PLAYLIST_ID)
     if args.cleanup_symlinks:

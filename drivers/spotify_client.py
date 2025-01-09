@@ -13,6 +13,9 @@ from utils.logger import setup_logger
 
 spotify_logger = setup_logger('spotify_logger', 'drivers/spotify.log')
 
+# Default since date - September 12, 2021. Will not fetch Liked Songs before this date.
+DEFAULT_SINCE_DATE = datetime(2021, 9, 12)
+
 # Get the path to the current file (spotify_client.py)
 current_file = Path(__file__).resolve()
 project_root = current_file.parent.parent
@@ -479,27 +482,38 @@ def fetch_liked_songs(spotify_client):
     return [(results['track']['name'], item['track']['id']) for item in results['items']]
 
 
-# Fetch user's Liked Songs with their added dates
+# Fetch user's Liked Songs with their added dates (since Sept 12, 2021)
 # * Returns list of dicts with track info and added_at date
-def get_liked_songs_with_dates(spotify_client) -> List[dict]:
-    spotify_logger.info("Fetching Liked Songs with dates")
+def get_liked_songs_with_dates(spotify_client, since_date: datetime = DEFAULT_SINCE_DATE) -> List[dict]:
+    spotify_logger.info(f"Fetching Liked Songs with dates since {since_date.strftime('%Y-%m-%d')}")
     liked_songs = []
     offset = 0
-    limit = 50
+    limit = 50  # Spotify's maximum limit per request
 
     while True:
         results = spotify_client.current_user_saved_tracks(limit=limit, offset=offset)
         if not results['items']:
             break
 
+        should_break = False
         for item in results['items']:
+            added_at = datetime.strptime(item['added_at'], '%Y-%m-%dT%H:%M:%SZ')
+
+            # If we've hit songs older than our target date, we can stop
+            if added_at < since_date:
+                should_break = True
+                break
+
             track = item['track']
             liked_songs.append({
                 'id': track['id'],
                 'name': track['name'],
                 'artists': ', '.join(artist['name'] for artist in track['artists']),
-                'added_at': datetime.strptime(item['added_at'], '%Y-%m-%dT%H:%M:%SZ')
+                'added_at': added_at
             })
+
+        if should_break:
+            break
 
         offset += limit
         if offset >= results['total']:
@@ -629,7 +643,7 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
         for i in range(0, len(track_ids), 100):
             batch = track_ids[i:i + 100]
             try:
-                spotify_client.playlist_add_items(unsorted_playlist_id, batch)
+                spotify_client.playlist_add_items(unsorted_playlist_id, batch, position=0)
                 spotify_logger.info(f"Added batch of {len(batch)} tracks to UNSORTED playlist")
             except Exception as e:
                 spotify_logger.error(f"Error adding tracks to UNSORTED playlist: {e}")
