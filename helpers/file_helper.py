@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 from datetime import datetime
+from typing import Union, Tuple, List
 import Levenshtein
 import shutil
 from mutagen import File
@@ -58,6 +59,56 @@ def create_symlink(target_path, link_path):
         db_logger.error(f"Failed to create symlink: {link_path} -> {target_path} ({e})")
 
 
+# Scans through all playlist folders and removes broken symlinks.
+# * Broken symlinks occur when you delete a track from the master tracks playlist
+def cleanup_broken_symlinks(playlists_dir: Union[str, os.PathLike[str]], dry_run: bool = False) -> List[Tuple[str, str]]:
+    # Returns: List of tuples containing (playlist_name, filename) of removed symlinks
+    removed_links = []
+
+    print("\nChecking for broken symlinks...")
+    db_logger.info("Starting broken symlink cleanup")
+
+    try:
+        # Iterate through all playlist folders
+        for playlist_name in os.listdir(playlists_dir):
+            playlist_path = os.path.join(playlists_dir, playlist_name)
+
+            if not os.path.isdir(playlist_path) or playlist_name.upper() == "MASTER":
+                continue
+
+            # Check each file in the playlist folder
+            for filename in os.listdir(playlist_path):
+                if not filename.lower().endswith('.mp3'):
+                    continue
+
+                file_path = os.path.join(playlist_path, filename)
+
+                # Check if it's a symlink and if it's broken
+                if os.path.islink(file_path):
+                    target_path = os.path.realpath(file_path)
+                    if not os.path.exists(target_path):
+                        if dry_run:
+                            db_logger.info(f"[DRY RUN] Would remove broken symlink: {file_path}")
+                        else:
+                            try:
+                                os.remove(file_path)
+                                db_logger.info(f"Removed broken symlink: {file_path}")
+                                removed_links.append((playlist_name, filename))
+                                tracker.removed_symlinks.append(file_path)
+                            except Exception as e:
+                                db_logger.error(f"Failed to remove broken symlink {file_path}: {e}")
+
+    except Exception as e:
+        db_logger.error(f"Error during symlink cleanup: {e}")
+
+    if removed_links:
+        print(f"Removed {len(removed_links)} broken symlinks")
+    else:
+        print("No broken symlinks found")
+
+    return removed_links
+
+
 # Embed TrackId into MP3 file's metadata - using a TXXX frame
 def embed_track_id(file_path, track_id):
     # * file_path (str): Path to the audio file.
@@ -84,12 +135,9 @@ def embed_track_id(file_path, track_id):
         return False
 
 
-# Embed TrackId into song file metadata. Processes multiple files within master tracks directory
+# Embed TrackId into song file metadata. Processes all files within master tracks directory
+# Skips files that already have a TrackId embedded.
 def embed_track_metadata(master_tracks_dir, interactive=False):
-    """
-    Embed TrackId into song file metadata with improved tracking and statistics.
-    Skips files that already have a TrackId embedded.
-    """
     tracks_db = fetch_all_tracks()
     db_logger.debug(f"Fetched all tracks.")
 
@@ -281,17 +329,10 @@ def count_tracks_with_id(master_tracks_dir):
 
 
 # Compare files in master_tracks_dir to the 'Tracks' table in the DB.
-# Any file whose TrackId is not in the DB is moved (or removed).
+# Any file whose TrackId is not in the DB is moved to quarantine directory.
 def cleanup_tracks(master_tracks_dir, quarantine_dir):
-    """
-    Compare files in master_tracks_dir to the 'Tracks' table in the DB.
-    Any file whose TrackId is not in the DB is moved to the quarantine directory.
-
-    :param master_tracks_dir: Path to tracks_master directory
-    :param quarantine_dir: Path to quarantine directory where unwanted files will be moved
-    """
     # 1. Fetch all tracks from DB and build a set of valid TrackIds
-    db_tracks = fetch_all_tracks()  # Suppose each row has (TrackId, TrackTitle, Artists)
+    db_tracks = fetch_all_tracks()
     valid_track_ids = {row.TrackId for row in db_tracks}
     db_logger.info(f"Fetched {len(valid_track_ids)} valid TrackIds from the DB.")
 
@@ -357,16 +398,8 @@ def cleanup_tracks(master_tracks_dir, quarantine_dir):
                    f"\nFiles Moved to Quarantine: {files_moved}")
 
 
+# Generates report of songs shorter than minimum length
 def validate_song_lengths(master_tracks_dir, validation_logs_dir, min_length_minutes=5):
-    """
-    Validate song lengths in the master tracks directory.
-    Generates a report of songs shorter than the minimum length.
-
-    Args:
-        master_tracks_dir (str): Path to master tracks directory
-        validation_logs_dir (str): Path to save validation logs
-        min_length_minutes (int): Minimum song length in minutes
-    """
     # Ensure log directory exists
     if not os.path.exists(validation_logs_dir):
         os.makedirs(validation_logs_dir)
