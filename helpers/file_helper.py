@@ -3,17 +3,21 @@ import os
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Union, Tuple, List
 import Levenshtein
 import shutil
 from mutagen import File
 from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
 from helpers.track_helper import find_track_id_fuzzy, has_track_id
-from sql.helpers.db_helper import fetch_all_tracks
+from sql.helpers.db_helper import fetch_all_tracks_db
 from utils.logger import setup_logger
 from utils.symlink_tracker import tracker
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
+
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
 
 
 # Sanitize filenames. Replaces invalid characters.
@@ -138,14 +142,27 @@ def embed_track_id(file_path, track_id):
 # Embed TrackId into song file metadata. Processes all files within master tracks directory
 # Skips files that already have a TrackId embedded.
 def embed_track_metadata(master_tracks_dir, interactive=False):
-    tracks_db = fetch_all_tracks()
+    tracks_db = fetch_all_tracks_db()
     db_logger.debug(f"Fetched all tracks.")
+
+    # Create logs directory and subdirectory
+    logs_dir = project_root / 'logs'
+    logs_dir.mkdir(exist_ok=True)
+    master_validation_dir = logs_dir / 'master_validation'
+    master_validation_dir.mkdir(exist_ok=True)
+
+    # Initialize tracking lists for logging
+    successful_embeds = []
+    failed_embeds = []
+    skipped_already_tagged = []
+    skipped_invalid_format = []
+    fuzzy_matches = []
 
     # Initialize counters
     total_files = 0
-    successful_embeds = 0
-    failed_embeds = 0
-    skipped_files = 0
+    successful_count = 0
+    failed_count = 0
+    skipped_count = 0
     already_tagged = 0
 
     # Statistics dictionary
@@ -167,7 +184,8 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
             # Skip if file already has TrackId
             if has_track_id(file_path):
                 already_tagged += 1
-                print(f"⚡ Skipping '{file}' (already tagged)")
+                skipped_already_tagged.append(file)
+                db_logger.debug(f"Skipping '{file}' (already tagged)")
                 continue
 
             try:
@@ -177,7 +195,8 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
             except ValueError:
                 db_logger.warning(f"Filename format incorrect: {file_path}")
                 stats['invalid_format'] += 1
-                skipped_files += 1
+                skipped_count += 1
+                skipped_invalid_format.append(file)
                 continue
 
             # Attempt exact matching
@@ -191,11 +210,21 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
                 track = matching_tracks[0]
                 stats['exact_matches'] += 1
                 if embed_track_id(file_path, track.TrackId):
-                    successful_embeds += 1
-                    print(f"✓ Embedded TrackId into '{file}'")
+                    successful_count += 1
+                    successful_embeds.append({
+                        'file': file,
+                        'artist': artist,
+                        'title': track_title,
+                        'track_id': track.TrackId,
+                        'match_type': 'exact'
+                    })
                 else:
-                    failed_embeds += 1
-                    print(f"✗ Failed to embed TrackId into '{file}'")
+                    failed_count += 1
+                    failed_embeds.append({
+                        'file': file,
+                        'reason': 'Failed to embed TrackId',
+                        'track_id': track.TrackId
+                    })
             else:
                 # Attempt fuzzy matching
                 db_logger.info(f"No exact match found for '{file}'. Attempting fuzzy matching...")
@@ -204,64 +233,92 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
                 if track_id:
                     stats['fuzzy_matches'] += 1
                     if embed_track_id(file_path, track_id):
-                        successful_embeds += 1
-                        print(f"✓ Embedded TrackId into '{file}' via fuzzy matching")
+                        successful_count += 1
+                        fuzzy_matches.append({
+                            'file': file,
+                            'artist': artist,
+                            'title': track_title,
+                            'track_id': track_id,
+                            'match_type': 'fuzzy'
+                        })
                     else:
-                        failed_embeds += 1
-                        print(f"✗ Failed to embed TrackId into '{file}'")
+                        failed_count += 1
+                        failed_embeds.append({
+                            'file': file,
+                            'reason': 'Failed to embed TrackId (fuzzy match)',
+                            'track_id': track_id
+                        })
                 else:
                     stats['failed_matches'] += 1
-                    skipped_files += 1
-                    print(f"• Skipped file (no TrackId found): {file}")
+                    skipped_count += 1
+                    failed_embeds.append({
+                        'file': file,
+                        'reason': 'No matching TrackId found'
+                    })
 
-    # Print final statistics
-    print("\nEmbedding Statistics:")
-    print(f"Total MP3 files: {total_files}")
-    print(f"Already tagged (skipped): {already_tagged}")
-    print(f"Newly processed: {total_files - already_tagged}")
-    print(f"Successfully embedded: {successful_embeds}")
-    print(f"Failed to embed: {failed_embeds}")
-    print(f"Skipped files: {skipped_files}")
-    print(f"\nMatching Statistics:")
-    print(f"Exact matches: {stats['exact_matches']}")
-    print(f"Fuzzy matches: {stats['fuzzy_matches']}")
-    print(f"Failed matches: {stats['failed_matches']}")
-    print(f"Invalid filename format: {stats['invalid_format']}")
+    # Generate detailed log file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = master_validation_dir / f'metadata_embedding_{timestamp}.log'
 
-    if total_files == already_tagged:
-        print("\nSuccess rate: N/A (all files were already tagged)")
-    else:
-        print(f"\nSuccess rate: {(successful_embeds / (total_files - already_tagged) * 100):.2f}%")
+    with open(log_path, 'w', encoding='utf-8') as f:
+        f.write("Track Embedding Report\n")
+        f.write("=====================\n\n")
 
-    # Export unmatched tracks to a file
-    unmatched_tracks = []
-    for root, dirs, files in os.walk(master_tracks_dir):
-        for file in files:
-            if not file.lower().endswith('.mp3'):
-                continue
+        # Write summary statistics
+        f.write("Summary Statistics\n")
+        f.write("-----------------\n")
+        f.write(f"Total MP3 files processed: {total_files}\n")
+        f.write(f"Already tagged (skipped): {already_tagged}\n")
+        f.write(f"Newly processed: {total_files - already_tagged}\n")
+        f.write(f"Successfully embedded: {successful_count}\n")
+        f.write(f"Failed to embed: {failed_count}\n")
+        f.write(f"Skipped files: {skipped_count}\n")
+        f.write("\nMatching Statistics\n")
+        f.write(f"Exact matches: {stats['exact_matches']}\n")
+        f.write(f"Fuzzy matches: {stats['fuzzy_matches']}\n")
+        f.write(f"Failed matches: {stats['failed_matches']}\n")
+        f.write(f"Invalid filename format: {stats['invalid_format']}\n")
 
-            file_path = os.path.join(root, file)
-            try:
-                tags = ID3(file_path)
-                if 'TXXX:TRACKID' not in tags:
-                    unmatched_tracks.append(file)
-            except ID3NoHeaderError:
-                unmatched_tracks.append(file)
-            except Exception as e:
-                db_logger.error(f"Error checking TrackId for {file}: {e}")
-                unmatched_tracks.append(file)
+        if total_files != already_tagged:
+            f.write(f"\nSuccess rate: {(successful_count / (total_files - already_tagged) * 100):.2f}%\n")
 
-    # Export unmatched tracks to a file
-    if unmatched_tracks:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        export_path = os.path.join(os.path.dirname(master_tracks_dir), f'unmatched_tracks_{timestamp}.txt')
-        with open(export_path, 'w', encoding='utf-8') as f:
-            f.write("Unmatched tracks:\n")
-            for track in unmatched_tracks:
-                f.write(f"{track}\n")
-        print(f"\nExported list of unmatched tracks to: {export_path}")
+        # Write successful embeddings
+        if successful_embeds or fuzzy_matches:
+            f.write("\nSuccessful Embeddings:\n")
+            f.write("=====================\n")
+            for embed in successful_embeds + fuzzy_matches:
+                f.write(f"• {embed['file']}\n")
+                f.write(f"  Artist: {embed['artist']}\n")
+                f.write(f"  Title: {embed['title']}\n")
+                f.write(f"  TrackId: {embed['track_id']}\n")
+                f.write(f"  Match Type: {embed['match_type']}\n\n")
 
-    return successful_embeds, total_files
+        # Write failed embeddings
+        if failed_embeds:
+            f.write("\nFailed Embeddings:\n")
+            f.write("=================\n")
+            for fail in failed_embeds:
+                f.write(f"• {fail['file']}\n")
+                f.write(f"  Reason: {fail['reason']}\n")
+                if 'track_id' in fail:
+                    f.write(f"  TrackId: {fail['track_id']}\n")
+                f.write("\n")
+
+        # Write skipped files
+        if skipped_already_tagged:
+            f.write("\nSkipped (Already Tagged):\n")
+            f.write("=======================\n")
+            for file in skipped_already_tagged:
+                f.write(f"• {file}\n")
+
+        if skipped_invalid_format:
+            f.write("\nSkipped (Invalid Format):\n")
+            f.write("=======================\n")
+            for file in skipped_invalid_format:
+                f.write(f"• {file}\n")
+
+    print(f"\nEmbedding complete! Detailed report saved to: {log_path}")
+    return successful_count, total_files
 
 
 # Remove TrackId from all MP3 files in the directory and its subdirectories.
@@ -332,7 +389,7 @@ def count_tracks_with_id(master_tracks_dir):
 # Any file whose TrackId is not in the DB is moved to quarantine directory.
 def cleanup_tracks(master_tracks_dir, quarantine_dir):
     # 1. Fetch all tracks from DB and build a set of valid TrackIds
-    db_tracks = fetch_all_tracks()
+    db_tracks = fetch_all_tracks_db()
     valid_track_ids = {row.TrackId for row in db_tracks}
     db_logger.info(f"Fetched {len(valid_track_ids)} valid TrackIds from the DB.")
 
@@ -399,10 +456,12 @@ def cleanup_tracks(master_tracks_dir, quarantine_dir):
 
 
 # Generates report of songs shorter than minimum length
-def validate_song_lengths(master_tracks_dir, validation_logs_dir, min_length_minutes=5):
-    # Ensure log directory exists
-    if not os.path.exists(validation_logs_dir):
-        os.makedirs(validation_logs_dir)
+def validate_song_lengths(master_tracks_dir, min_length_minutes=5):
+    # Create logs directory and subdirectory
+    logs_dir = project_root / 'logs'
+    logs_dir.mkdir(exist_ok=True)
+    master_validation_dir = logs_dir / 'master_validation'
+    master_validation_dir.mkdir(exist_ok=True)
 
     # Track short songs
     short_songs = []
@@ -451,11 +510,11 @@ def validate_song_lengths(master_tracks_dir, validation_logs_dir, min_length_min
     # Generate report if short songs found
     if short_songs:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_path = os.path.join(validation_logs_dir, f'short_songs_{timestamp}.txt')
+        log_path = master_validation_dir / f'song_length_validation_{timestamp}.log'
 
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write("Short Songs Report\n")
-            f.write("================\n\n")
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write("Song Length Validation Report\n")
+            f.write("===========================\n\n")
 
             f.write(f"Minimum length: {min_length_minutes} minutes\n")
             f.write(f"Total files scanned: {total_files}\n")
@@ -478,7 +537,7 @@ def validate_song_lengths(master_tracks_dir, validation_logs_dir, min_length_min
 
         print(f"\nValidation complete!")
         print(f"Found {len(short_songs)} songs shorter than {min_length_minutes} minutes")
-        print(f"Report saved to: {report_path}")
+        print(f"Report saved to: {log_path}")
 
     else:
         print(f"\nValidation complete! All songs are {min_length_minutes} minutes or longer.")
