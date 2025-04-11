@@ -373,11 +373,11 @@ def validate_playlist_symlinks(playlists_dir: str) -> Dict[str, int]:
     # Generate report
     if mismatched_playlists or missing_playlists or extra_playlists:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = playlist_validation_dir / f'playlist_validation_quick_{timestamp}.log'
+        log_path = playlist_validation_dir / f'playlist_validation_{timestamp}.log'
 
         with open(log_path, 'w', encoding='utf-8') as f:
-            f.write("Quick Playlist Validation Report\n")
-            f.write("Quick validation of playlist symlinks against database data\n")
+            f.write("Playlist Validation Report\n")
+            f.write("Validation of playlist symlinks against database data\n")
             f.write("Shows track names from database instead of just IDs\n")
             f.write("============================\n\n")
 
@@ -422,7 +422,7 @@ def validate_playlist_symlinks(playlists_dir: str) -> Dict[str, int]:
                             f.write(f"  • {file}\n")
                         f.write("\n")
 
-        print(f"\nQuick validation complete! Issues found:")
+        print(f"\nValidation complete! Issues found:")
         print(f"- Missing playlists: {len(missing_playlists)}")
         print(f"- Extra playlists: {len(extra_playlists)}")
         print(f"- Mismatched playlists: {len(mismatched_playlists)}")

@@ -21,7 +21,7 @@ QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
 
-program_logger = setup_logger('program_optimized', 'sql/program_optimized.log')
+program_logger = setup_logger('program', 'sql/program.log')
 
 
 def main():
@@ -31,7 +31,7 @@ def main():
     # Database operations
     parser.add_argument('--clear-db', action='store_true', help='Clear all database tables')
     parser.add_argument('--sync-playlists', action='store_true', help='Sync playlists incrementally')
-    parser.add_argument('--sync-master-tracks', action='store_true', help='Sync master tracks incrementally')
+    parser.add_argument('--sync-tracks', action='store_true', help='Sync master tracks incrementally')
     parser.add_argument('--sync-all', action='store_true', help='Sync playlists and master tracks incrementally')
     parser.add_argument('--force-refresh', action='store_true', help='Force full refresh from Spotify API')
 
@@ -77,7 +77,7 @@ def main():
     if args.sync_all or args.sync_playlists:
         sync_playlists_incremental(force_full_refresh=args.force_refresh)
 
-    if args.sync_all or args.sync_master_tracks:
+    if args.sync_all or args.sync_tracks:
         sync_master_tracks_incremental(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
 
     # * File operations
