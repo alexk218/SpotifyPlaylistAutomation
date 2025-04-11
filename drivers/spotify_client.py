@@ -532,72 +532,11 @@ def get_liked_songs_with_dates(spotify_client, since_date=DEFAULT_SINCE_DATE):
 
     return sorted(liked_songs, key=lambda x: x['added_at'], reverse=True)  # Most recent first
 
-'''
-def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id: str) -> None:
-    spotify_logger.info("Starting sync to MASTER playlist")
-    print("\nStarting sync analysis...")
-
-    # Get tracks that would be added, organized by playlist
-    tracks_by_playlist = get_tracks_to_sync(spotify_client, master_playlist_id)
-
-    if not tracks_by_playlist:
-        spotify_logger.info("No new tracks to add to MASTER playlist")
-        print("\nNo new tracks found to add to MASTER playlist.")
-        return
-
-    # Display summary of changes
-    total_tracks = sum(len(tracks) for tracks in tracks_by_playlist.values())
-    print(f"\nFound {total_tracks} tracks to add to MASTER playlist from {len(tracks_by_playlist)} playlists:")
-    print("\nChanges to be made:")
-
-    # Sort playlists by name for easier reading
-    for playlist_name, tracks in sorted(tracks_by_playlist.items()):
-        print(f"\n{playlist_name} ({len(tracks)} tracks):")
-        # Sort tracks by artist name, then track name
-        sorted_tracks = sorted(tracks, key=lambda x: (x['artists'], x['name']))
-        for track in sorted_tracks:
-            print(f"  • {track['artists']} - {track['name']}")
-
-    # Ask for confirmation
-    confirmation = input("\nWould you like to proceed with adding these tracks to MASTER? (y/n): ")
-
-    if confirmation.lower() != 'y':
-        spotify_logger.info("Sync cancelled by user")
-        print("Sync cancelled.")
-        return
-
-    # Proceed with sync
-    spotify_logger.info(f"Starting to add {total_tracks} tracks to MASTER playlist")
-    print("\nStarting sync process...")
-
-    # Collect all track IDs to add, ensuring uniqueness
-    all_track_ids = list({
-        track['id']
-        for playlist_tracks in tracks_by_playlist.values()
-        for track in playlist_tracks
-    })
-
-    # Add tracks in batches with progress tracking
-    tracks_added = 0
-    for i in range(0, len(all_track_ids), 100):
-        batch = all_track_ids[i:i + 100]
-        try:
-            spotify_client.playlist_add_items(master_playlist_id, batch)
-            tracks_added += len(batch)
-            spotify_logger.info(f"Added batch of {len(batch)} tracks to MASTER playlist")
-            print(f"Progress: {tracks_added}/{total_tracks} tracks added to MASTER playlist")
-        except Exception as e:
-            spotify_logger.error(f"Error adding tracks to MASTER playlist: {e}")
-            print(f"Error adding tracks to MASTER playlist: {e}")
-
-    spotify_logger.info("Sync completed successfully")
-    print(f"\nSync completed successfully! Added {tracks_added} tracks to MASTER playlist.")
-'''
 
 def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id: str) -> None:
     """
     Syncs all tracks from all playlists to the MASTER playlist (except for forbidden playlists).
-    Makes necessary API calls to ensure accuracy, but optimizes where possible.
+    Makes necessary API calls to ensure accuracy, but doesn't use optimizations.
 
     Args:
         spotify_client: Authenticated Spotify client
@@ -607,11 +546,11 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
     print("\nStarting sync analysis...")
 
     # Get current tracks in MASTER playlist directly from Spotify for accuracy
-    master_tracks = set(get_playlist_track_ids(spotify_client, master_playlist_id))
-    spotify_logger.info(f"Found {len(master_tracks)} tracks in MASTER playlist")
+    master_track_ids = set(get_playlist_track_ids(spotify_client, master_playlist_id, force_refresh=True))
+    spotify_logger.info(f"Found {len(master_track_ids)} tracks in MASTER playlist")
 
     # Fetch all playlists (excluding forbidden ones)
-    user_playlists = fetch_playlists(spotify_client)
+    user_playlists = fetch_playlists(spotify_client, force_refresh=True)
     other_playlists = [pl for pl in user_playlists if pl[2] != master_playlist_id]
 
     # Track which songs come from which playlists
@@ -624,10 +563,10 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
         spotify_logger.info(f"Checking tracks in playlist: {playlist_name}")
 
         # Get tracks for this playlist directly from Spotify
-        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id)
+        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
 
         # Find tracks not in master playlist
-        new_track_ids = [id for id in playlist_track_ids if id not in master_tracks]
+        new_track_ids = [id for id in playlist_track_ids if id not in master_track_ids]
 
         if not new_track_ids:
             continue
@@ -650,6 +589,7 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
                         playlist_tracks.append(track_info)
             except Exception as e:
                 spotify_logger.error(f"Error fetching details for track batch: {e}")
+                continue
 
         if playlist_tracks:
             new_tracks_by_playlist[playlist_name] = playlist_tracks
@@ -708,8 +648,12 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
     print(f"\nSync completed successfully! Added {tracks_added} tracks to MASTER playlist.")
 
     # Invalidate relevant caches
-    from cache_manager import spotify_cache
-    spotify_cache.invalidate_tracks_cache(master_playlist_id)
+    try:
+        from cache_manager import spotify_cache
+        spotify_cache.invalidate_tracks_cache(master_playlist_id)
+        spotify_logger.info("Invalidated master tracks cache")
+    except Exception as e:
+        spotify_logger.warning(f"Could not invalidate cache: {e}")
 
 
 def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
