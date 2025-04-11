@@ -6,7 +6,7 @@ from sql.helpers.db_helper import clear_db
 from drivers.spotify_client import sync_to_master_playlist, sync_unplaylisted_to_unsorted, authenticate_spotify
 from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
     validate_song_lengths, cleanup_broken_symlinks
-from helpers.organization_helper import organize_songs_into_playlists
+from helpers.organization_helper import organize_songs_into_playlists, organize_songs_into_m3u_playlists
 from helpers.sync_helper import sync_playlists_incremental, sync_master_tracks_incremental
 from helpers.validation_helper import validate_master_tracks, validate_playlist_symlinks, \
     validate_playlist_symlinks
@@ -20,6 +20,7 @@ PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
 QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
+M3U_PLAYLISTS_DIRECTORY = os.getenv("M3U_PLAYLISTS_DIRECTORY")
 
 program_logger = setup_logger('program', 'sql/program.log')
 
@@ -36,6 +37,14 @@ def main():
     parser.add_argument('--force-refresh', action='store_true', help='Force full refresh from Spotify API')
 
     # File operations
+    parser.add_argument('--generate-m3u', action='store_true',
+                        help='Generate M3U playlist files that reference original tracks (for Rekordbox)')
+    parser.add_argument('--m3u-dir', type=str, default=M3U_PLAYLISTS_DIRECTORY,
+                        help='Directory where M3U playlist files will be created')
+    parser.add_argument('--no-extended-m3u', action='store_true',
+                        help='Generate simple M3U files without extended track information')
+    parser.add_argument('--no-overwrite', action='store_true',
+                        help='Do not overwrite existing M3U files')
     parser.add_argument('--organize-songs', action='store_true',
                         help='Organize downloaded songs into playlist folders with symlinks')
     parser.add_argument('--dry-run', action='store_true',
@@ -81,6 +90,16 @@ def main():
         sync_master_tracks_incremental(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
 
     # * File operations
+    if args.generate_m3u:
+        m3u_dir = args.m3u_dir
+        organize_songs_into_m3u_playlists(
+            MASTER_TRACKS_DIRECTORY,
+            m3u_dir,
+            extended=not args.no_extended_m3u,
+            dry_run=args.dry_run,
+            overwrite=not args.no_overwrite
+        )
+
     if args.organize_songs:
         organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run)
 
