@@ -237,10 +237,9 @@ def check_symlink(file_path: str) -> Optional[str]:
         return None
 
 
-def validate_playlist_symlinks_quick(playlists_dir: str) -> Dict[str, int]:
+def validate_playlist_symlinks(playlists_dir: str) -> Dict[str, int]:
     """
-    Quick validation of playlist symlinks against database data.
-    Uses minimal API calls by prioritizing database data.
+    Validation of playlist symlinks against database data.
 
     Args:
         playlists_dir: Directory containing playlist symlinks
@@ -263,6 +262,13 @@ def validate_playlist_symlinks_quick(playlists_dir: str) -> Dict[str, int]:
         db_playlist_dict = {p.name: p.playlist_id for p in database_playlists}
 
     validation_logger.info(f"Retrieved {len(database_playlists)} playlists from database")
+
+    # Get all tracks from database for looking up names later
+    with UnitOfWork() as uow:
+        all_tracks = uow.track_repository.get_all()
+        track_id_to_info = {track.track_id: (track.title, track.artists) for track in all_tracks}
+
+    validation_logger.info(f"Retrieved {len(all_tracks)} tracks from database for name lookups")
 
     # Get Spotify authentication only if needed
     spotify_client = None
@@ -338,12 +344,29 @@ def validate_playlist_symlinks_quick(playlists_dir: str) -> Dict[str, int]:
 
         # Compare track sets
         if len(db_track_ids) != len(local_track_ids) or db_track_ids != local_track_ids or missing_trackids:
+            # Add track info for missing and extra tracks
+            missing_tracks_info = []
+            for track_id in db_track_ids - local_track_ids:
+                if track_id in track_id_to_info:
+                    title, artists = track_id_to_info[track_id]
+                    missing_tracks_info.append((track_id, title, artists))
+                else:
+                    missing_tracks_info.append((track_id, "Unknown Title", "Unknown Artist"))
+
+            extra_tracks_info = []
+            for track_id in local_track_ids - db_track_ids:
+                if track_id in track_id_to_info:
+                    title, artists = track_id_to_info[track_id]
+                    extra_tracks_info.append((track_id, title, artists))
+                else:
+                    extra_tracks_info.append((track_id, "Unknown Title", "Unknown Artist"))
+
             mismatched_playlists.append({
                 'name': playlist_name,
                 'spotify_count': len(db_track_ids),
                 'local_count': len(local_track_ids),
-                'missing_tracks': db_track_ids - local_track_ids,
-                'extra_tracks': local_track_ids - db_track_ids,
+                'missing_tracks': missing_tracks_info,
+                'extra_tracks': extra_tracks_info,
                 'files_without_trackid': missing_trackids
             })
 
@@ -355,7 +378,7 @@ def validate_playlist_symlinks_quick(playlists_dir: str) -> Dict[str, int]:
         with open(log_path, 'w', encoding='utf-8') as f:
             f.write("Quick Playlist Validation Report\n")
             f.write("Quick validation of playlist symlinks against database data\n")
-            f.write("Only checks TrackIds\n")
+            f.write("Shows track names from database instead of just IDs\n")
             f.write("============================\n\n")
 
             if missing_playlists:
@@ -379,16 +402,18 @@ def validate_playlist_symlinks_quick(playlists_dir: str) -> Dict[str, int]:
                     f.write(f"  Local files: {playlist['local_count']}\n")
 
                     if playlist['missing_tracks']:
-                        f.write("\n  Missing track IDs (in database but not local):\n")
+                        f.write("\n  Missing tracks (in database but not local):\n")
                         f.write("  -----------------------------------------\n")
-                        for track_id in sorted(playlist['missing_tracks']):
-                            f.write(f"  • {track_id}\n")
+                        for track_id, title, artists in sorted(playlist['missing_tracks'], key=lambda x: x[1]):
+                            f.write(f"  • {artists} - {title}\n")
+                            f.write(f"    Track ID: {track_id}\n\n")
 
                     if playlist['extra_tracks']:
-                        f.write("\n  Extra track IDs (local but not in database):\n")
+                        f.write("\n  Extra tracks (local but not in database):\n")
                         f.write("  -------------------------------------\n")
-                        for track_id in sorted(playlist['extra_tracks']):
-                            f.write(f"  • {track_id}\n")
+                        for track_id, title, artists in sorted(playlist['extra_tracks'], key=lambda x: x[1]):
+                            f.write(f"  • {artists} - {title}\n")
+                            f.write(f"    Track ID: {track_id}\n\n")
 
                     if playlist['files_without_trackid']:
                         f.write("\n  Files without TrackId:\n")
@@ -410,140 +435,6 @@ def validate_playlist_symlinks_quick(playlists_dir: str) -> Dict[str, int]:
         'missing_playlists': len(missing_playlists),
         'extra_playlists': len(extra_playlists),
         'mismatched_playlists': len(mismatched_playlists)
-    }
-
-
-def validate_playlist_symlinks(playlists_dir):
-    """
-    Validate playlist symlinks against Spotify playlists.
-
-    Args:
-        playlists_dir (str): Directory containing playlist symlinks
-
-    Returns:
-        Dict[str, int]: Validation statistics
-    """
-    # Ensure logs directory exists
-    logs_dir = Path(playlists_dir).parent / 'logs'
-    logs_dir.mkdir(exist_ok=True)
-    playlist_validation_dir = logs_dir / 'playlist_validation'
-    playlist_validation_dir.mkdir(exist_ok=True)
-
-    print("\nValidating playlist symlinks against Spotify playlists...")
-
-    # Authenticate with Spotify
-    spotify_client = authenticate_spotify()
-
-    # Get Spotify playlists, excluding MASTER playlist
-    spotify_playlists = [
-        (name, owner, playlist_id)
-        for name, owner, playlist_id in fetch_playlists(spotify_client)
-        if playlist_id != os.getenv('MASTER_PLAYLIST_ID')
-    ]
-
-    total_playlists = len(spotify_playlists)
-    print(f"Found {total_playlists} playlists to validate")
-    validation_logger.info(f"Starting validation of {total_playlists} playlists")
-
-    mismatched_playlists = []
-    missing_playlists = []
-    extra_playlists = []
-    broken_links = []
-
-    # Get local playlist folders
-    local_playlist_folders = {
-        d.strip() for d in Path(playlists_dir).iterdir()
-        if d.is_dir() and d.name.upper() != "MASTER"
-    }
-
-    # Get Spotify playlist names
-    spotify_playlist_names = {name.strip() for name, _, _ in spotify_playlists}
-
-    # Find missing and extra playlists
-    missing_playlists = list(spotify_playlist_names - {folder.name for folder in local_playlist_folders})
-    extra_playlists = list(local_playlist_folders - spotify_playlist_names)
-
-    # Compare each playlist's contents
-    for playlist_name, _, playlist_id in spotify_playlists:
-        playlist_name = playlist_name.strip()
-
-        # Skip MASTER playlist
-        if playlist_name.upper() == "MASTER":
-            continue
-
-        # Check if playlist folder exists
-        local_folder = Path(playlists_dir) / playlist_name
-        if not local_folder.exists():
-            continue
-
-        # Get Spotify track IDs for this playlist
-        spotify_track_ids = set(get_playlist_track_ids(spotify_client, playlist_id))
-
-        # Get local track IDs
-        local_track_ids = set()
-        missing_trackids = []
-
-        # Process each MP3 file in the playlist folder
-        for file_path in local_folder.glob('*.mp3'):
-            # Check if symlink is valid
-            real_path = check_symlink(str(file_path))
-            if real_path is None:
-                missing_trackids.append(file_path.name)
-                broken_links.append((playlist_name, file_path.name))
-                continue
-
-            try:
-                # Read TrackId from metadata
-                tags = ID3(real_path)
-                if 'TXXX:TRACKID' in tags:
-                    track_id = tags['TXXX:TRACKID'].text[0]
-                    local_track_ids.add(track_id)
-                else:
-                    missing_trackids.append(file_path.name)
-            except Exception as e:
-                validation_logger.error(f"Error reading TrackId from {file_path}: {e}")
-                missing_trackids.append(file_path.name)
-
-        # Check for mismatches
-        if len(spotify_track_ids) != len(local_track_ids) or \
-           spotify_track_ids != local_track_ids or missing_trackids:
-            mismatched_playlists.append({
-                'name': playlist_name,
-                'spotify_count': len(spotify_track_ids),
-                'local_count': len(local_track_ids),
-                'missing_tracks': spotify_track_ids - local_track_ids,
-                'extra_tracks': local_track_ids - spotify_track_ids,
-                'files_without_trackid': missing_trackids
-            })
-
-    # Generate report if issues found
-    if mismatched_playlists or missing_playlists or extra_playlists or broken_links:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = playlist_validation_dir / f'playlist_validation_{timestamp}.log'
-
-        with open(log_path, 'w', encoding='utf-8') as f:
-            f.write("Playlist Validation Report\n")
-            f.write("========================\n\n")
-
-            # Write details about missing, extra, and mismatched playlists
-            # (report generation logic similar to previous implementations)
-            # ... [Detailed report writing would go here]
-
-        print(f"\nValidation complete! Issues found:")
-        print(f"- Missing playlists: {len(missing_playlists)}")
-        print(f"- Extra playlists: {len(extra_playlists)}")
-        print(f"- Mismatched playlists: {len(mismatched_playlists)}")
-        print(f"- Broken symlinks: {len(broken_links)}")
-        print(f"Report saved to: {log_path}")
-
-    else:
-        print("\nValidation complete! All playlist folders match their Spotify playlists.")
-
-    return {
-        'missing_playlists': len(missing_playlists),
-        'extra_playlists': len(extra_playlists),
-        'mismatched_playlists': len(mismatched_playlists),
-        'broken_links': len(broken_links)
     }
 
 

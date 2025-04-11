@@ -8,7 +8,7 @@ from helpers.file_helper import embed_track_metadata, remove_all_track_ids, coun
     validate_song_lengths, cleanup_broken_symlinks
 from helpers.organization_helper import organize_songs_into_playlists
 from helpers.sync_helper import sync_playlists_incremental, sync_master_tracks_incremental
-from helpers.validation_helper import validate_master_tracks, validate_playlist_symlinks_quick, \
+from helpers.validation_helper import validate_master_tracks, validate_playlist_symlinks, \
     validate_playlist_symlinks
 from utils.logger import setup_logger
 from cache_manager import spotify_cache
@@ -55,8 +55,6 @@ def main():
     parser.add_argument('--validate-lengths', action='store_true',
                         help='Validate song lengths and report songs shorter than 5 minutes')
     parser.add_argument('--validate-playlists', action='store_true',
-                        help='Validate playlist symlinks against Spotify API information')
-    parser.add_argument('--validate-playlists-quick', action='store_true',
                         help='Validate playlist symlinks against database information')
     parser.add_argument('--validate-all', action='store_true', help='Run all validation checks')
 
@@ -108,11 +106,7 @@ def main():
     if args.validate_lengths or args.validate_all:
         validate_song_lengths(MASTER_TRACKS_DIRECTORY)
 
-    if args.validate_playlists_quick or args.validate_all:
-        validate_playlist_symlinks_quick(PLAYLISTS_DIRECTORY)
-
-    if args.validate_playlists:
-        # ! Lots of API calls
+    if args.validate_playlists or args.validate_all:
         validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
 
     # * Cache management
