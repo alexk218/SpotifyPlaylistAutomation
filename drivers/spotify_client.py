@@ -1,5 +1,4 @@
 import html
-import logging
 import os
 import json
 import re
@@ -8,15 +7,18 @@ from datetime import datetime
 import spotipy
 from spotipy import SpotifyOAuth
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional, Any, Set
+
+from cache_manager import spotify_cache
+from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
-spotify_logger = setup_logger('spotify_logger', 'drivers/spotify.log')
+spotify_logger = setup_logger('spotify_client', 'drivers/spotify.log')
 
 # Default since date - September 12, 2021. Will not fetch Liked Songs before this date.
 DEFAULT_SINCE_DATE = datetime(2021, 9, 12)
 
-# Get the path to the current file (spotify_client.py)
+# Get the path to the current file
 current_file = Path(__file__).resolve()
 project_root = current_file.parent.parent
 config_path = project_root / 'exclusion_config.json'
@@ -46,46 +48,6 @@ def authenticate_spotify():
     return sp
 
 
-# Fetch all user's private playlists (self-created). Excludes playlists with forbidden words in their name.
-# * Returns: List of tuples containing (PlaylistName, PlaylistDescription, PlaylistId)
-def fetch_playlists(spotify_client, total_limit=500) -> List[Tuple[str, str, str]]:
-    spotify_logger.info("Fetching all my playlists")
-    user_id = spotify_client.current_user()['id']
-    spotify_logger.info(f"User id: {user_id}")
-
-    all_playlists = []
-    offset = 0
-    limit = 50  # Spotify API limit per request
-
-    while len(all_playlists) < total_limit:
-        spotify_logger.info(f"Fetching playlists (offset: {offset}, limit: {limit})")
-        playlists = spotify_client.current_user_playlists(limit=limit, offset=offset)
-        spotify_logger.info(f"Fetched {len(playlists['items'])} playlists in this batch")
-        if not playlists['items']:
-            break  # No more playlists to fetch
-
-        all_playlists.extend(playlists['items'])
-        offset += limit
-
-    spotify_logger.info(f"Total playlists fetched: {len(all_playlists)}")
-
-    my_playlists = [
-        (
-            playlist['name'],
-            html.unescape(playlist['description'] or ""),
-            playlist['id']
-        )
-        for playlist in all_playlists
-        if (
-                playlist['owner']['id'] == user_id and
-                not is_forbidden_playlist(playlist['name'], playlist['description'] or "")
-        )
-    ]
-
-    spotify_logger.info(f"Total playlists after exclusion: {len(my_playlists)}")
-    return my_playlists
-
-
 def is_forbidden_playlist(name: str, description: str) -> bool:
     name_lower = name.lower()
     description_lower = description.lower()
@@ -108,9 +70,90 @@ def is_forbidden_playlist(name: str, description: str) -> bool:
     return False
 
 
-# Fetch all unique tracks from 'MASTER' playlist
-# Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album)
-def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[str, str, str, str, datetime]]:
+def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> List[Tuple[str, str, str]]:
+    """
+    Fetch all user's private playlists (self-created), excluding forbidden playlists.
+    Uses cache if available and not forcing refresh.
+
+    Args:
+        spotify_client: Authenticated Spotify client
+        total_limit: Maximum number of playlists to fetch
+        force_refresh: Whether to force a refresh from the API
+
+    Returns:
+        List of tuples containing (PlaylistName, PlaylistDescription, PlaylistId)
+    """
+    # Try to get playlists from cache first
+    if not force_refresh:
+        cached_playlists = spotify_cache.get_playlists()
+        if cached_playlists:
+            spotify_logger.info(f"Using cached playlists data ({len(cached_playlists)} playlists)")
+            return cached_playlists
+
+    # If we get here, we need to fetch from Spotify API
+    spotify_logger.info("Fetching all my playlists from Spotify API")
+    user_id = spotify_client.current_user()['id']
+    spotify_logger.info(f"User id: {user_id}")
+
+    all_playlists = []
+    offset = 0
+    limit = 50  # Spotify API limit per request
+
+    while len(all_playlists) < total_limit:
+        spotify_logger.info(f"Fetching playlists (offset: {offset}, limit: {limit})")
+        playlists = spotify_client.current_user_playlists(limit=limit, offset=offset)
+        spotify_logger.info(f"Fetched {len(playlists['items'])} playlists in this batch")
+        if not playlists['items']:
+            break  # No more playlists to fetch
+
+        all_playlists.extend(playlists['items'])
+        offset += limit
+
+    spotify_logger.info(f"Total playlists fetched from API: {len(all_playlists)}")
+
+    my_playlists = [
+        (
+            playlist['name'],
+            html.unescape(playlist['description'] or ""),
+            playlist['id']
+        )
+        for playlist in all_playlists
+        if (
+                playlist['owner']['id'] == user_id and
+                not is_forbidden_playlist(playlist['name'], playlist['description'] or "")
+        )
+    ]
+
+    spotify_logger.info(f"Total playlists after exclusion: {len(my_playlists)}")
+
+    # Cache the result
+    spotify_cache.cache_playlists(my_playlists)
+
+    return my_playlists
+
+
+def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=False) -> List[
+    Tuple[str, str, str, str, datetime]]:
+    """
+    Fetch all unique tracks from 'MASTER' playlist.
+    Uses cache if available and not forcing refresh.
+
+    Args:
+        spotify_client: Authenticated Spotify client
+        master_playlist_id: ID of the master playlist
+        force_refresh: Whether to force a refresh from the API
+
+    Returns:
+        List of tuples containing (TrackId, TrackTitle, Artists, Album, AddedAt)
+    """
+    # Try to get master tracks from cache first
+    if not force_refresh:
+        cached_tracks = spotify_cache.get_master_tracks(master_playlist_id)
+        if cached_tracks:
+            spotify_logger.info(f"Using cached master tracks data ({len(cached_tracks)} tracks)")
+            return cached_tracks
+
+    # If we get here, we need to fetch from Spotify API
     spotify_logger.info(f"Fetching all unique tracks from 'MASTER' playlist (ID: {master_playlist_id})")
     all_tracks = []
 
@@ -131,6 +174,7 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[s
                     datetime.strptime(track['added_at'], '%Y-%m-%dT%H:%M:%SZ')
                 )
                 for track in tracks['items']
+                if track['track'] is not None  # Skip None tracks (can happen with deleted songs)
             )
             offset += limit
             if not tracks['next']:
@@ -148,169 +192,47 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[Tuple[s
 
     unique_tracks_list = list(unique_tracks.values())
     spotify_logger.info(f"Fetched {len(unique_tracks_list)} unique tracks from 'MASTER' playlist")
+
+    # Cache the result
+    spotify_cache.cache_master_tracks(master_playlist_id, unique_tracks_list)
+
     return unique_tracks_list
 
 
-def fetch_master_tracks_for_validation(spotify_client, master_playlist_id):
-    spotify_logger.info(f"Fetching tracks with dates from 'MASTER' playlist for validation")
-    all_tracks = []
+def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str, force_refresh=False) -> List[str]:
+    """
+    Get all track IDs from a playlist.
+    Uses database if available, then cache, then API as a fallback.
 
-    offset = 0
-    limit = 100
+    Args:
+        spotify_client: Authenticated Spotify client
+        playlist_id: The playlist ID to fetch tracks for
+        force_refresh: Whether to force a refresh from the API
 
-    while True:
-        try:
-            tracks = spotify_client.playlist_tracks(
-                master_playlist_id,
-                offset=offset,
-                limit=limit,
-                fields='items(added_at,track(id,name,artists(name),album(name))),total'
-            )
+    Returns:
+        List of track IDs
+    """
+    # First, try to get track IDs from database (if not forcing refresh)
+    if not force_refresh:
+        with UnitOfWork() as uow:
+            track_ids = uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id)
+            if track_ids:
+                spotify_logger.info(f"Retrieved {len(track_ids)} track IDs for playlist {playlist_id} from database")
+                return track_ids
 
-            if not tracks['items']:
-                break
+    # If not in database or forcing refresh, try cache
+    if not force_refresh:
+        cached_tracks = spotify_cache.get_playlist_tracks(playlist_id)
+        if cached_tracks:
+            spotify_logger.info(f"Using {len(cached_tracks)} cached track IDs for playlist {playlist_id}")
+            return cached_tracks
 
-            for item in tracks['items']:
-                if not item['track']:
-                    continue
+    # If we get here, fetch from Spotify API
+    spotify_logger.info(f"Fetching tracks for playlist {playlist_id} from Spotify API")
 
-                track = item['track']
-                added_at = datetime.strptime(item['added_at'], '%Y-%m-%dT%H:%M:%SZ')
-                all_tracks.append({
-                    'id': track['id'],
-                    'name': track['name'],
-                    'artists': ", ".join(artist['name'] for artist in track['artists']),
-                    'album': track['album']['name'],
-                    'added_at': added_at
-                })
-
-            offset += limit
-            # Continue until we've processed all tracks
-            if offset >= tracks.get('total', 0):
-                break
-
-        except Exception as e:
-            spotify_logger.error(f"Error fetching tracks for validation: {e}")
-            break
-
-    all_tracks.sort(key=lambda x: x['added_at'], reverse=True)
-    spotify_logger.info(f"Fetched {len(all_tracks)} tracks for validation")
-    return all_tracks
-
-
-# ! NOT NEEDED
-# Fetch ALL unique tracks from all user's playlists.
-# Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album)
-def fetch_all_unique_tracks(spotify_client, my_playlists) -> List[Tuple[str, str, str, str]]:
-    spotify_logger.info("Fetching all unique tracks from all my playlists")
-    all_tracks = []
-
-    for playlist_name, playlist_description, playlist_id in my_playlists:
-        spotify_logger.info(f"Fetching tracks for playlist: {playlist_name} (ID: {playlist_id})")
-        offset = 0
-        limit = 100
-        while True:
-            try:
-                tracks = spotify_client.playlist_tracks(playlist_id, offset=offset, limit=limit)
-                if not tracks['items']:
-                    break
-                all_tracks.extend(
-                    (
-                        track['track']['id'],
-                        track['track']['name'],
-                        ", ".join([artist['name'] for artist in track['track']['artists']]),
-                        track['track']['album']['name']
-                    )
-                    for track in tracks['items']
-                )
-                offset += limit
-                if not tracks['next']:
-                    break
-            except Exception as e:
-                spotify_logger.error(f"Error fetching tracks for playlist {playlist_name} (ID: {playlist_id}): {e}")
-                break
-
-    # Remove duplicates based on TrackId
-    unique_tracks = list({track[0]: track for track in all_tracks}.values())
-    spotify_logger.info(f"Fetched {len(unique_tracks)} unique tracks from all playlists")
-    return unique_tracks
-
-
-# Find which playlists each track from 'MASTER' belongs to
-# * Returns: List of tuples containing (TrackId, TrackTitle, Artists, Album, [Playlists])
-def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str, datetime]], master_playlist_id) -> (
-        List[Tuple[str, str, str, str, datetime, List[str]]]):
-    spotify_logger.info("Finding playlists for each track in 'MASTER'")
-
-    # Extract TrackIds from master_tracks for quick lookup
-    master_track_ids = set(track[0] for track in master_tracks)
-
-    # Fetch all playlists excluding the 'MASTER' playlist
-    all_playlists = fetch_playlists(spotify_client)
-    other_playlists = [pl for pl in all_playlists if pl[2] != master_playlist_id]
-
-    spotify_logger.info(f"Total other playlists to check: {len(other_playlists)}")
-
-    # Initialize a dictionary to map TrackId to playlists
-    track_to_playlists = {track_id: [] for track_id in master_track_ids}
-
-    for playlist_name, playlist_description, playlist_id in other_playlists:
-        spotify_logger.info(f"Checking tracks for playlist: {playlist_name} (ID: {playlist_id})")
-        offset = 0
-        limit = 100
-
-        while True:
-            try:
-                response = spotify_client.playlist_tracks(playlist_id, offset=offset, limit=limit)
-                items = response.get('items', [])
-
-                if not items:
-                    break  # No more tracks to fetch in this playlist
-
-                for item in items:
-                    track = item.get('track')
-                    if track:
-                        track_id = track.get('id')
-                        if track_id in master_track_ids:
-                            track_to_playlists[track_id].append(playlist_name)
-
-                if not response.get('next'):
-                    break  # No next page
-                offset += limit
-            except Exception as e:
-                spotify_logger.error(f"Error fetching tracks for playlist '{playlist_name}' (ID: {playlist_id}): {e}")
-                break  # Skip to the next playlist in case of an error
-
-    # Prepare the final list with playlists associated to each track
-    tracks_with_playlists = []
-    for track in master_tracks:
-        track_id, track_title, artist_names, album_name, added_at = track  # Now unpacking 5 values
-        playlists = track_to_playlists.get(track_id, [])
-        tracks_with_playlists.append((track_id, track_title, artist_names, album_name, added_at, playlists))
-
-    spotify_logger.info("Completed finding playlists for all tracks in the 'MASTER' playlist")
-    return tracks_with_playlists
-
-
-# Fetch PlaylistId of 'MASTER' playlist (NOT USED ANYMORE. MANUALLY USING PLAYLISTID).
-def fetch_master_playlist_id(spotify_client) -> str | None:
-    spotify_logger.info("Fetching 'MASTER' playlist ID")
-    playlists = fetch_playlists(spotify_client)
-    for playlist_name, playlist_description, playlist_id in playlists:
-        if playlist_name.upper() == "MASTER":
-            spotify_logger.info(f"'MASTER' playlist found with ID: {playlist_id}")
-            return playlist_id
-    spotify_logger.error("'MASTER' playlist not found.")
-    return None
-
-
-# Gets all track IDs from a playlist.
-def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str) -> List[str]:
     tracks = []
     offset = 0
     limit = 100  # Spotify API limit
-
-    spotify_logger.info(f"Fetching tracks for playlist {playlist_id}")
 
     try:
         # Get initial response to get total tracks
@@ -354,6 +276,10 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str) ->
                 continue
 
         spotify_logger.info(f"Successfully fetched {len(tracks)} tracks from playlist {playlist_id}")
+
+        # Cache the result
+        spotify_cache.cache_playlist_tracks(playlist_id, tracks)
+
         return tracks
 
     except Exception as e:
@@ -361,66 +287,252 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str) ->
         return []
 
 
-# Get tracks that would be added to MASTER, organized by source playlist.
-# * Returns a dictionary of playlist names to lists of track details.
-def get_tracks_to_sync(spotify_client: spotipy.Spotify, master_playlist_id: str) -> dict:
-    spotify_logger.info("Analyzing tracks to sync to MASTER playlist")
+def get_playlist_tracks_from_db(playlist_id: str) -> List[str]:
+    """
+    Get all track IDs for a playlist from the database.
 
-    # Get all tracks currently in MASTER playlist
-    master_tracks = get_playlist_track_ids(spotify_client, master_playlist_id)
-    spotify_logger.info(f"Found {len(master_tracks)} tracks in MASTER playlist")
+    Args:
+        playlist_id: Playlist ID
 
-    # Get all user's playlists except MASTER and forbidden ones
-    user_playlists = fetch_playlists(spotify_client)
-    other_playlists = [pl for pl in user_playlists if pl[2] != master_playlist_id]
+    Returns:
+        List of track IDs
+    """
+    with UnitOfWork() as uow:
+        track_ids = uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id)
+        spotify_logger.info(f"Retrieved {len(track_ids)} track IDs for playlist {playlist_id} from database")
+        return track_ids
 
-    # Track which songs come from which playlists
-    new_tracks_by_playlist = {}
 
-    # Process each playlist with progress indicator
-    print("\nAnalyzing playlists...")
-    for i, (playlist_name, _, playlist_id) in enumerate(other_playlists, 1):
-        print(f"Checking playlist {i}/{len(other_playlists)}: {playlist_name}")
-        spotify_logger.info(f"Checking tracks in playlist: {playlist_name}")
+def fetch_master_tracks_from_db() -> List[Dict[str, Any]]:
+    """
+    Get track details from the database for all tracks in the MASTER playlist.
 
-        # Get detailed track information
-        offset = 0
-        limit = 100
-        playlist_tracks = []
+    Returns:
+        List of track data dictionaries
+    """
+    with UnitOfWork() as uow:
+        tracks = uow.track_repository.get_all()
 
-        while True:
-            results = spotify_client.playlist_tracks(
-                playlist_id,
-                offset=offset,
-                limit=limit,
-                fields='items(track(id,name,artists(name))),total'
-            )
+        track_data = []
+        for track in tracks:
+            track_data.append({
+                'id': track.track_id,
+                'name': track.title,
+                'artists': track.artists,
+                'album': track.album,
+                'added_at': track.added_to_master
+            })
 
-            if not results['items']:
+        spotify_logger.info(f"Retrieved {len(track_data)} tracks from database")
+        return track_data
+
+
+def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str, datetime]],
+                                     master_playlist_id, use_db_first=True) -> List[
+    Tuple[str, str, str, str, datetime, List[str]]]:
+    """
+    Find which playlists each track from 'MASTER' belongs to.
+    Uses database if available, falls back to API calls.
+
+    Args:
+        spotify_client: Authenticated Spotify client
+        master_tracks: List of master track tuples
+        master_playlist_id: ID of the master playlist
+        use_db_first: Whether to try using the database first
+
+    Returns:
+        List of tuples containing (TrackId, TrackTitle, Artists, Album, AddedAt, [Playlists])
+    """
+    spotify_logger.info("Finding playlists for each track in 'MASTER'")
+
+    # Extract TrackIds from master_tracks for quick lookup
+    master_track_ids = set(track[0] for track in master_tracks)
+    spotify_logger.info(f"Total master tracks to check: {len(master_track_ids)}")
+
+    # Create mapping of TrackId to track details for faster lookups
+    track_details = {track[0]: track[1:5] for track in master_tracks}
+
+    # Initialize a dictionary to map TrackId to playlists
+    track_to_playlists = {track_id: [] for track_id in master_track_ids}
+
+    # If using database first, try to get associations from there
+    if use_db_first:
+        spotify_logger.info("Trying to get track-playlist associations from database")
+        with UnitOfWork() as uow:
+            # For each track, get the associated playlists
+            for track_id in master_track_ids:
+                playlists = uow.playlist_repository.get_playlists_for_track(track_id)
+                playlist_names = [playlist.name for playlist in playlists]
+                if playlist_names:
+                    track_to_playlists[track_id] = playlist_names
+
+        # Count how many tracks we found associations for
+        tracks_with_playlists = sum(1 for playlists in track_to_playlists.values() if playlists)
+        spotify_logger.info(f"Found playlist associations for {tracks_with_playlists} tracks in database")
+
+        # If we found associations for all tracks, we're done
+        if tracks_with_playlists == len(master_track_ids):
+            spotify_logger.info("Found all playlist associations in database, skipping API calls")
+
+            # Prepare the final list with playlists associated to each track
+            tracks_with_playlists = [
+                (track_id, *track_details[track_id], track_to_playlists[track_id])
+                for track_id in master_track_ids
+            ]
+
+            return tracks_with_playlists
+
+    # If we get here, we need to use the API for at least some tracks
+    spotify_logger.info("Fetching remaining playlist associations from Spotify API")
+
+    # Fetch all playlists excluding the 'MASTER' playlist
+    all_playlists = fetch_playlists(spotify_client)
+    other_playlists = [pl for pl in all_playlists if pl[2] != master_playlist_id]
+
+    spotify_logger.info(f"Total other playlists to check: {len(other_playlists)}")
+
+    # For each playlist, check which master tracks it contains
+    # This is more efficient than checking each track against all playlists
+    for playlist_name, playlist_description, playlist_id in other_playlists:
+        spotify_logger.info(f"Checking tracks for playlist: {playlist_name} (ID: {playlist_id})")
+
+        # Get track IDs for this playlist
+        playlist_track_ids = set(get_playlist_track_ids(spotify_client, playlist_id))
+
+        # Find intersection with master tracks
+        common_tracks = master_track_ids.intersection(playlist_track_ids)
+
+        # Update track_to_playlists
+        for track_id in common_tracks:
+            if playlist_name not in track_to_playlists[track_id]:
+                track_to_playlists[track_id].append(playlist_name)
+
+        spotify_logger.info(f"Found {len(common_tracks)} master tracks in playlist '{playlist_name}'")
+
+    # Prepare the final list with playlists associated to each track
+    tracks_with_playlists = [
+        (track_id, *track_details[track_id], track_to_playlists[track_id])
+        for track_id in master_track_ids
+    ]
+
+    spotify_logger.info("Completed finding playlists for all tracks in the 'MASTER' playlist")
+    return tracks_with_playlists
+
+#
+# def get_tracks_to_sync(spotify_client: spotipy.Spotify, master_playlist_id: str) -> Dict[str, List[Dict[str, str]]]:
+#     """
+#     Get tracks that would be added to MASTER, organized by source playlist.
+#     Optimized to use the database for existing tracks.
+#
+#     Args:
+#         spotify_client: Authenticated Spotify client
+#         master_playlist_id: ID of the master playlist
+#
+#     Returns:
+#         Dictionary of playlist names to lists of track details
+#     """
+#     spotify_logger.info("Analyzing tracks to sync to MASTER playlist")
+#
+#     # Get existing track IDs from database
+#     existing_track_ids = get_existing_track_ids()
+#     spotify_logger.info(f"Found {len(existing_track_ids)} tracks in database")
+#
+#     # Get all user's playlists except MASTER and forbidden ones
+#     user_playlists = fetch_playlists(spotify_client)
+#     other_playlists = [pl for pl in user_playlists if pl[2] != master_playlist_id]
+#
+#     # Track which songs come from which playlists
+#     new_tracks_by_playlist = {}
+#
+#     # Process each playlist
+#     print("\nAnalyzing playlists...")
+#     for i, (playlist_name, _, playlist_id) in enumerate(other_playlists, 1):
+#         print(f"Checking playlist {i}/{len(other_playlists)}: {playlist_name}")
+#         spotify_logger.info(f"Checking tracks in playlist: {playlist_name}")
+#
+#         # First try to get tracks from database
+#         playlist_track_ids = get_playlist_tracks_from_db(playlist_id)
+#
+#         # If not in database, fetch from Spotify
+#         if not playlist_track_ids:
+#             playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id)
+#
+#         # Find tracks not in master playlist
+#         new_track_ids = [id for id in playlist_track_ids if id not in existing_track_ids]
+#
+#         if not new_track_ids:
+#             continue
+#
+#         # For new tracks, get detailed information
+#         playlist_tracks = []
+#         for track_id in new_track_ids:
+#             # Fetch track details in batches would be more efficient
+#             # but for simplicity, we'll do one by one
+#             try:
+#                 track = spotify_client.track(track_id)
+#                 track_info = {
+#                     'id': track_id,
+#                     'name': track['name'],
+#                     'artists': ', '.join(artist['name'] for artist in track['artists'])
+#                 }
+#                 playlist_tracks.append(track_info)
+#             except Exception as e:
+#                 spotify_logger.error(f"Error fetching details for track {track_id}: {e}")
+#
+#         if playlist_tracks:
+#             new_tracks_by_playlist[playlist_name] = playlist_tracks
+#
+#     return new_tracks_by_playlist
+
+
+def get_liked_songs_with_dates(spotify_client, since_date=DEFAULT_SINCE_DATE):
+    """
+    Fetch user's Liked Songs with their added dates.
+
+    Args:
+        spotify_client: Authenticated Spotify client
+        since_date: Only fetch songs added after this date
+
+    Returns:
+        List of dicts with track info and added_at date
+    """
+    spotify_logger.info(f"Fetching Liked Songs with dates since {since_date.strftime('%Y-%m-%d')}")
+    liked_songs = []
+    offset = 0
+    limit = 50  # Spotify's maximum limit per request
+
+    while True:
+        results = spotify_client.current_user_saved_tracks(limit=limit, offset=offset)
+        if not results['items']:
+            break
+
+        should_break = False
+        for item in results['items']:
+            added_at = datetime.strptime(item['added_at'], '%Y-%m-%dT%H:%M:%SZ')
+
+            # If we've hit songs older than our target date, we can stop
+            if added_at < since_date:
+                should_break = True
                 break
 
-            for item in results['items']:
-                track = item['track']
-                if track and track['id'] and track['id'] not in master_tracks:
-                    track_info = {
-                        'id': track['id'],
-                        'name': track['name'],
-                        'artists': ', '.join(artist['name'] for artist in track['artists'])
-                    }
-                    playlist_tracks.append(track_info)
+            track = item['track']
+            liked_songs.append({
+                'id': track['id'],
+                'name': track['name'],
+                'artists': ', '.join(artist['name'] for artist in track['artists']),
+                'added_at': added_at
+            })
 
-            offset += limit
-            if offset >= results['total']:
-                break
+        if should_break:
+            break
 
-        if playlist_tracks:
-            new_tracks_by_playlist[playlist_name] = playlist_tracks
+        offset += limit
+        if offset >= results['total']:
+            break
 
-    return new_tracks_by_playlist
+    return sorted(liked_songs, key=lambda x: x['added_at'], reverse=True)  # Most recent first
 
-
-# Syncs all tracks from all playlists to the MASTER playlist (except for forbidden playlists)
-# * Waits for user confirmation before syncing. To make sure the right tracks are being added.
+'''
 def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id: str) -> None:
     spotify_logger.info("Starting sync to MASTER playlist")
     print("\nStarting sync analysis...")
@@ -480,57 +592,138 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
 
     spotify_logger.info("Sync completed successfully")
     print(f"\nSync completed successfully! Added {tracks_added} tracks to MASTER playlist.")
+'''
+
+def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id: str) -> None:
+    """
+    Syncs all tracks from all playlists to the MASTER playlist (except for forbidden playlists).
+    Makes necessary API calls to ensure accuracy, but optimizes where possible.
+
+    Args:
+        spotify_client: Authenticated Spotify client
+        master_playlist_id: ID of the MASTER playlist
+    """
+    spotify_logger.info("Starting sync to MASTER playlist")
+    print("\nStarting sync analysis...")
+
+    # Get current tracks in MASTER playlist directly from Spotify for accuracy
+    master_tracks = set(get_playlist_track_ids(spotify_client, master_playlist_id))
+    spotify_logger.info(f"Found {len(master_tracks)} tracks in MASTER playlist")
+
+    # Fetch all playlists (excluding forbidden ones)
+    user_playlists = fetch_playlists(spotify_client)
+    other_playlists = [pl for pl in user_playlists if pl[2] != master_playlist_id]
+
+    # Track which songs come from which playlists
+    new_tracks_by_playlist = {}
+
+    # Process each playlist
+    print("\nAnalyzing playlists...")
+    for i, (playlist_name, _, playlist_id) in enumerate(other_playlists, 1):
+        print(f"Checking playlist {i}/{len(other_playlists)}: {playlist_name}")
+        spotify_logger.info(f"Checking tracks in playlist: {playlist_name}")
+
+        # Get tracks for this playlist directly from Spotify
+        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id)
+
+        # Find tracks not in master playlist
+        new_track_ids = [id for id in playlist_track_ids if id not in master_tracks]
+
+        if not new_track_ids:
+            continue
+
+        # For new tracks, get detailed information
+        playlist_tracks = []
+
+        # Process in batches of 50 for efficiency
+        for j in range(0, len(new_track_ids), 50):
+            batch = new_track_ids[j:j + 50]
+            try:
+                tracks_info = spotify_client.tracks(batch)
+                for track in tracks_info['tracks']:
+                    if track:
+                        track_info = {
+                            'id': track['id'],
+                            'name': track['name'],
+                            'artists': ', '.join(artist['name'] for artist in track['artists'])
+                        }
+                        playlist_tracks.append(track_info)
+            except Exception as e:
+                spotify_logger.error(f"Error fetching details for track batch: {e}")
+
+        if playlist_tracks:
+            new_tracks_by_playlist[playlist_name] = playlist_tracks
+
+    if not new_tracks_by_playlist:
+        spotify_logger.info("No new tracks to add to MASTER playlist")
+        print("\nNo new tracks found to add to MASTER playlist.")
+        return
+
+    # Display summary of changes
+    total_tracks = sum(len(tracks) for tracks in new_tracks_by_playlist.values())
+    print(f"\nFound {total_tracks} tracks to add to MASTER playlist from {len(new_tracks_by_playlist)} playlists:")
+    print("\nChanges to be made:")
+
+    # Sort playlists by name for easier reading
+    for playlist_name, tracks in sorted(new_tracks_by_playlist.items()):
+        print(f"\n{playlist_name} ({len(tracks)} tracks):")
+        # Sort tracks by artist name, then track name
+        sorted_tracks = sorted(tracks, key=lambda x: (x['artists'], x['name']))
+        for track in sorted_tracks:
+            print(f"  • {track['artists']} - {track['name']}")
+
+    # Ask for confirmation
+    confirmation = input("\nWould you like to proceed with adding these tracks to MASTER? (y/n): ")
+
+    if confirmation.lower() != 'y':
+        spotify_logger.info("Sync cancelled by user")
+        print("Sync cancelled.")
+        return
+
+    # Proceed with sync
+    spotify_logger.info(f"Starting to add {total_tracks} tracks to MASTER playlist")
+    print("\nStarting sync process...")
+
+    # Collect all track IDs to add, ensuring uniqueness
+    all_track_ids = list({
+        track['id']
+        for playlist_tracks in new_tracks_by_playlist.values()
+        for track in playlist_tracks
+    })
+
+    # Add tracks in batches with progress tracking
+    tracks_added = 0
+    for i in range(0, len(all_track_ids), 100):
+        batch = all_track_ids[i:i + 100]
+        try:
+            spotify_client.playlist_add_items(master_playlist_id, batch)
+            tracks_added += len(batch)
+            spotify_logger.info(f"Added batch of {len(batch)} tracks to MASTER playlist")
+            print(f"Progress: {tracks_added}/{total_tracks} tracks added to MASTER playlist")
+        except Exception as e:
+            spotify_logger.error(f"Error adding tracks to MASTER playlist: {e}")
+            print(f"Error adding tracks to MASTER playlist: {e}")
+
+    spotify_logger.info("Sync completed successfully")
+    print(f"\nSync completed successfully! Added {tracks_added} tracks to MASTER playlist.")
+
+    # Invalidate relevant caches
+    from cache_manager import spotify_cache
+    spotify_cache.invalidate_tracks_cache(master_playlist_id)
 
 
-# Fetch user's Liked Songs
-def fetch_liked_songs(spotify_client):
-    spotify_logger.info("Fetching Liked Songs")
-    results = spotify_client.current_user_saved_tracks()
-    return [(results['track']['name'], item['track']['id']) for item in results['items']]
-
-
-# Fetch user's Liked Songs with their added dates (since Sept 12, 2021)
-# * Returns list of dicts with track info and added_at date
-def get_liked_songs_with_dates(spotify_client, since_date: datetime = DEFAULT_SINCE_DATE) -> List[dict]:
-    spotify_logger.info(f"Fetching Liked Songs with dates since {since_date.strftime('%Y-%m-%d')}")
-    liked_songs = []
-    offset = 0
-    limit = 50  # Spotify's maximum limit per request
-
-    while True:
-        results = spotify_client.current_user_saved_tracks(limit=limit, offset=offset)
-        if not results['items']:
-            break
-
-        should_break = False
-        for item in results['items']:
-            added_at = datetime.strptime(item['added_at'], '%Y-%m-%dT%H:%M:%SZ')
-
-            # If we've hit songs older than our target date, we can stop
-            if added_at < since_date:
-                should_break = True
-                break
-
-            track = item['track']
-            liked_songs.append({
-                'id': track['id'],
-                'name': track['name'],
-                'artists': ', '.join(artist['name'] for artist in track['artists']),
-                'added_at': added_at
-            })
-
-        if should_break:
-            break
-
-        offset += limit
-        if offset >= results['total']:
-            break
-
-    return sorted(liked_songs, key=lambda x: x['added_at'], reverse=True)  # Most recent first
-
-
-# Add Liked Songs that aren't in any other playlist to 'UNSORTED' playlist (excluding forbidden playlists)
 def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
+    """
+    Add Liked Songs that aren't in any other playlist to 'UNSORTED' playlist.
+    Makes necessary API calls to ensure accuracy, but optimizes where possible.
+
+    Args:
+        spotify_client: Authenticated Spotify client
+        unsorted_playlist_id: ID of the UNSORTED playlist
+
+    Returns:
+        List of unplaylisted songs that were added
+    """
     if not unsorted_playlist_id:
         spotify_logger.error("UNSORTED playlist ID not provided!")
         return []
@@ -543,24 +736,26 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
     unplaylisted_logs_dir = logs_dir / 'unplaylisted'
     unplaylisted_logs_dir.mkdir(exist_ok=True)
 
-    # Get all Liked Songs with dates
+    # Get all Liked Songs with dates - this requires API call
     liked_songs_with_dates = get_liked_songs_with_dates(spotify_client)
     liked_song_ids = {song['id'] for song in liked_songs_with_dates}
-
     spotify_logger.info(f"Found {len(liked_song_ids)} Liked Songs")
 
     # Get all user's playlists
     all_playlists = fetch_playlists(spotify_client)
-    spotify_logger.info(f"Checking against {len(all_playlists)} non-forbidden playlists")
+    spotify_logger.info(f"Found {len(all_playlists)} playlists")
 
     # Get all tracks from all playlists (excluding forbidden playlists)
     tracks_in_playlists = set()
     for _, _, playlist_id in all_playlists:
-        playlist_tracks = get_playlist_track_ids(spotify_client, playlist_id)
-        tracks_in_playlists.update(playlist_tracks)
+        if playlist_id != unsorted_playlist_id:  # Skip UNSORTED playlist
+            playlist_tracks = get_playlist_track_ids(spotify_client, playlist_id)
+            tracks_in_playlists.update(playlist_tracks)
+            spotify_logger.info(f"Added {len(playlist_tracks)} tracks from a playlist")
 
-    # Add tracks from UNSORTED playlist separately (since it's excluded)
+    # Get tracks from UNSORTED playlist separately
     unsorted_tracks = get_playlist_track_ids(spotify_client, unsorted_playlist_id)
+    spotify_logger.info(f"Found {len(unsorted_tracks)} tracks in UNSORTED playlist")
 
     # Find tracks that should be removed from UNSORTED (they're now in other playlists)
     tracks_to_remove = [
@@ -574,7 +769,7 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
     if tracks_to_remove:
         spotify_logger.info(f"Found {len(tracks_to_remove)} tracks to remove from UNSORTED (now in other playlists)")
 
-        # Remove tracks first
+        # Remove tracks in batches
         for i in range(0, len(tracks_to_remove), 100):
             batch = tracks_to_remove[i:i + 100]
             try:
@@ -610,7 +805,7 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
         if song['id'] in unplaylisted
     ]
 
-    # Generate log file regardless of whether there are unplaylisted songs
+    # Generate log file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = unplaylisted_logs_dir / f'playlist_sync_{timestamp}.log'
 
