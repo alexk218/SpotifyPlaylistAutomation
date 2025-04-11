@@ -340,6 +340,15 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
 
 
 def remove_all_track_ids(master_tracks_dir):
+    # Confirmation prompt
+    print("\n⚠️  WARNING: This will remove TrackIds from ALL MP3 files in the directory.")
+    print("This is a destructive action that cannot be undone!")
+    confirmation = input("Are you ABSOLUTELY SURE you want to continue? (type 'YES' to confirm): ")
+
+    if confirmation.strip().upper() != 'YES':
+        print("Operation cancelled. No TrackIds were removed.")
+        return 0
+
     removed_count = 0
     total_count = 0
 
