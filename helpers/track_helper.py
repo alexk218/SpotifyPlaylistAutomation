@@ -42,18 +42,10 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, 
         remix_info = "remix" + remix_parts[1] if len(remix_parts) > 1 else "remix"
 
     for track in tracks_db:
-        # Normalize database entries and handle multiple artists
-        # Check if track is the new Track domain model or the old database row
-        if hasattr(track, 'artists') and hasattr(track, 'title') and hasattr(track, 'track_id'):
-            # New Track domain model
-            db_artists = track.artists.lower().replace('&', 'and')
-            db_title = track.title.lower()
-            track_id = track.track_id
-        else:
-            # Old database row style
-            db_artists = track.Artists.lower().replace('&', 'and')
-            db_title = track.TrackTitle.lower()
-            track_id = track.TrackId
+        # Always use the new Track domain model properties
+        db_artists = track.artists.lower().replace('&', 'and')
+        db_title = track.title.lower()
+        track_id = track.track_id
 
         # Split artists into list and normalize each
         db_artist_list = [a.strip() for a in db_artists.split(',')]
@@ -102,15 +94,11 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, 
         overall_ratio = (artist_ratio * 0.4 + title_ratio * 0.4 + remix_bonus)
 
         if overall_ratio >= (threshold - 0.2):  # Lower threshold for collecting potential matches
-            # Get artist and title from the correct object properties
-            artist_name = track.artists if hasattr(track, 'artists') else track.Artists
-            title_name = track.title if hasattr(track, 'title') else track.TrackTitle
-
             matches.append({
                 'track_id': track_id,
                 'ratio': overall_ratio,
-                'artist': artist_name,
-                'title': title_name
+                'artist': track.artists,
+                'title': track.title
             })
 
     # Sort matches by ratio in descending order
