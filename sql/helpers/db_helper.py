@@ -4,6 +4,7 @@ These functions use the new UnitOfWork and Repository patterns internally,
 but maintain the same API for backward compatibility.
 """
 
+import os
 from datetime import datetime
 from typing import Optional, List, Tuple
 
@@ -245,6 +246,48 @@ def get_track_added_date(track_id: str) -> Optional[datetime]:
         if track:
             return track.added_to_master
         return None
+
+
+# Count how many MP3 files have a TrackId embedded - This is for file_helper.py compatibility
+def count_tracks_with_id_db():
+    """
+    Get count of tracks with IDs in the database.
+    This is mainly a compatibility function for the old API.
+
+    Returns:
+        Tuple of (tracks_with_ids, total_tracks)
+    """
+    with UnitOfWork() as uow:
+        return uow.track_repository.get_track_count_with_id()
+
+
+# Get track IDs that exist in the database
+def get_existing_track_ids():
+    """
+    Get all track IDs from the database.
+
+    Returns:
+        Set of track IDs
+    """
+    with UnitOfWork() as uow:
+        tracks = uow.track_repository.get_all()
+        return {track.track_id for track in tracks}
+
+
+# Check if track ID exists in database
+def track_id_exists_in_db(track_id):
+    """
+    Check if a track ID exists in the database.
+
+    Args:
+        track_id: The track ID to check
+
+    Returns:
+        Boolean indicating if the track exists
+    """
+    with UnitOfWork() as uow:
+        track = uow.track_repository.get_by_id(track_id)
+        return track is not None
 
 
 '''

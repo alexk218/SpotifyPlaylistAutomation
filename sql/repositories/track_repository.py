@@ -1,6 +1,6 @@
 import pyodbc
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from sql.models.track import Track
 from sql.repositories.base_repository import BaseRepository
@@ -90,6 +90,30 @@ class TrackRepository(BaseRepository[Track]):
         """
         return super().get_by_id(track_id)
 
+    def search_track_ids(self, track_ids: List[str]) -> List[Track]:
+        """
+        Get tracks matching the provided list of track IDs.
+
+        Args:
+            track_ids: List of track IDs to search for
+
+        Returns:
+            List of Track objects matching the IDs
+        """
+        if not track_ids:
+            return []
+
+        # Convert list of IDs to a comma-separated string for SQL IN clause
+        id_string = ','.join(f"'{id}'" for id in track_ids)
+
+        query = f"""
+            SELECT * FROM Tracks
+            WHERE TrackId IN ({id_string})
+        """
+
+        results = self.fetch_all(query)
+        return [self._map_to_model(row) for row in results]
+
     def get_by_title_and_artist(self, title: str, artist: str) -> List[Track]:
         """
         Find tracks by title and artist (partial match).
@@ -158,6 +182,22 @@ class TrackRepository(BaseRepository[Track]):
         """
         results = self.fetch_all(query)
         return [self._map_to_model(row) for row in results]
+
+    def get_track_count_with_id(self) -> Tuple[int, int]:
+        """
+        Get count of tracks with and without track IDs.
+
+        Returns:
+            Tuple of (tracks_with_ids, total_tracks)
+        """
+        query = """
+            SELECT COUNT(*) as total FROM Tracks
+        """
+        result = self.fetch_one(query)
+        total_tracks = result.total if result else 0
+
+        # All tracks in the database have IDs, so this is just for API compatibility
+        return total_tracks, total_tracks
 
     def _map_to_model(self, row: pyodbc.Row) -> Track:
         """
