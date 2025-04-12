@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Set, Optional, Tuple, Union
+from typing import List, Dict, Set, Optional, Tuple, Union, Any
 from mutagen.id3 import ID3, ID3NoHeaderError
 from mutagen import File
 
@@ -28,6 +28,7 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
         master_tracks_dir: Directory containing the master tracks
         playlists_dir: Directory where playlist files will be created
         extended: Whether to use extended M3U format with metadata
+        overwrite: Whether to overwrite existing playlist files
 
     Returns:
         Tuple of (tracks_found, tracks_added) counts
@@ -120,9 +121,73 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
     return tracks_found, tracks_added
 
 
+def get_m3u_track_ids(m3u_path: str) -> set:
+    """
+    Extract track IDs from an M3U file by examining the referenced MP3 files.
+
+    Args:
+        m3u_path: Path to the M3U file
+
+    Returns:
+        Set of track IDs found in the referenced MP3 files
+    """
+    track_ids = set()
+
+    if not os.path.exists(m3u_path):
+        return track_ids
+
+    try:
+        with open(m3u_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                # Skip comment lines and empty lines
+                if line.startswith('#') or not line.strip():
+                    continue
+
+                # Get the MP3 file path and check for track ID
+                file_path = line.strip()
+                if os.path.exists(file_path) and file_path.lower().endswith('.mp3'):
+                    try:
+                        tags = ID3(file_path)
+                        if 'TXXX:TRACKID' in tags:
+                            track_id = tags['TXXX:TRACKID'].text[0]
+                            track_ids.add(track_id)
+                    except Exception:
+                        pass
+    except Exception as e:
+        m3u_logger.error(f"Error reading M3U file {m3u_path}: {e}")
+
+    return track_ids
+
+
+def compare_playlist_with_m3u(playlist_id: str, m3u_path: str) -> Tuple[bool, set, set]:
+    """
+    Compare track IDs in a database playlist with those in an M3U file.
+
+    Args:
+        playlist_id: Spotify ID of the playlist
+        m3u_path: Path to the M3U file
+
+    Returns:
+        Tuple of (has_changes, added_tracks, removed_tracks)
+    """
+    # Get track IDs from database
+    with UnitOfWork() as uow:
+        db_track_ids = set(uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
+
+    # Get track IDs from M3U file
+    m3u_track_ids = get_m3u_track_ids(m3u_path)
+
+    # Compare the sets
+    added_tracks = db_track_ids - m3u_track_ids
+    removed_tracks = m3u_track_ids - db_track_ids
+    has_changes = bool(added_tracks or removed_tracks)
+
+    return has_changes, added_tracks, removed_tracks
+
+
 def generate_all_m3u_playlists(master_tracks_dir: str, playlists_dir: str,
                                extended: bool = True, skip_master: bool = True,
-                               overwrite: bool = True) -> Dict[str, int]:
+                               overwrite: bool = True, only_changed: bool = True) -> Dict[str, Any]:
     """
     Generate M3U playlist files for all playlists in the database.
 
@@ -131,6 +196,8 @@ def generate_all_m3u_playlists(master_tracks_dir: str, playlists_dir: str,
         playlists_dir: Directory where playlist files will be created
         extended: Whether to use extended M3U format with metadata
         skip_master: Whether to skip the MASTER playlist
+        overwrite: Whether to overwrite existing M3U files
+        only_changed: Only update playlists that have changed
 
     Returns:
         Dictionary with statistics about the generation process
@@ -155,9 +222,13 @@ def generate_all_m3u_playlists(master_tracks_dir: str, playlists_dir: str,
     stats = {
         'total_playlists': len(playlists),
         'playlists_created': 0,
+        'playlists_updated': 0,
+        'playlists_unchanged': 0,
         'total_tracks_found': 0,
         'total_tracks_added': 0,
-        'empty_playlists': []
+        'empty_playlists': [],
+        'changed_playlists': [],  # Track which playlists changed
+        'playlist_changes': {}  # Detailed changes for each playlist
     }
 
     # Generate a playlist file for each playlist
@@ -166,6 +237,38 @@ def generate_all_m3u_playlists(master_tracks_dir: str, playlists_dir: str,
         if skip_master and playlist.name.upper() == "MASTER":
             m3u_logger.info(f"Skipping MASTER playlist")
             continue
+
+        # Sanitize the playlist name for use as a filename
+        safe_playlist_name = sanitize_filename(playlist.name, preserve_spaces=True)
+        m3u_path = os.path.join(playlists_dir, f"{safe_playlist_name}.m3u")
+
+        # Check if the playlist has changed
+        if only_changed and os.path.exists(m3u_path):
+            has_changes, added_tracks, removed_tracks = compare_playlist_with_m3u(playlist.playlist_id, m3u_path)
+
+            if not has_changes:
+                m3u_logger.info(f"Playlist '{playlist.name}' is unchanged, skipping.")
+                stats['playlists_unchanged'] += 1
+                continue
+
+            # Log what changed
+            m3u_logger.info(
+                f"Playlist '{playlist.name}' has changes: {len(added_tracks)} additions, {len(removed_tracks)} removals")
+            stats['changed_playlists'].append(playlist.name)
+            stats['playlist_changes'][playlist.name] = {
+                'added_tracks': len(added_tracks),
+                'removed_tracks': len(removed_tracks)
+            }
+
+            # Get names for some changed tracks
+            with UnitOfWork() as uow:
+                added_details = []
+                for track_id in list(added_tracks)[:5]:  # First 5 only
+                    track = uow.track_repository.get_by_id(track_id)
+                    if track:
+                        added_details.append(f"{track.artists} - {track.title}")
+
+                stats['playlist_changes'][playlist.name]['added_details'] = added_details
 
         m3u_logger.info(f"Processing playlist: {playlist.name} (ID: {playlist.playlist_id})")
 
@@ -198,7 +301,10 @@ def generate_all_m3u_playlists(master_tracks_dir: str, playlists_dir: str,
         stats['total_tracks_added'] += tracks_added
 
         if tracks_added > 0:
-            stats['playlists_created'] += 1
+            if os.path.exists(m3u_path):
+                stats['playlists_updated'] += 1
+            else:
+                stats['playlists_created'] += 1
         else:
             stats['empty_playlists'].append(playlist.name)
 
@@ -215,9 +321,25 @@ def generate_all_m3u_playlists(master_tracks_dir: str, playlists_dir: str,
 
         report.write("Statistics:\n")
         report.write(f"  Total playlists in database: {stats['total_playlists']}\n")
-        report.write(f"  Playlists created: {stats['playlists_created']}\n")
+        report.write(f"  New playlists created: {stats['playlists_created']}\n")
+        report.write(f"  Existing playlists updated: {stats['playlists_updated']}\n")
+        report.write(f"  Playlists unchanged: {stats['playlists_unchanged']}\n")
         report.write(f"  Total tracks found: {stats['total_tracks_found']}\n")
         report.write(f"  Total tracks added to playlists: {stats['total_tracks_added']}\n")
+
+        if stats['changed_playlists']:
+            report.write("\nChanged Playlists:\n")
+            for playlist_name in stats['changed_playlists']:
+                changes = stats['playlist_changes'][playlist_name]
+                report.write(f"  - {playlist_name}:\n")
+                report.write(
+                    f"      {changes['added_tracks']} tracks added, {changes['removed_tracks']} tracks removed\n")
+
+                if changes.get('added_details'):
+                    report.write("      Sample additions:\n")
+                    for track in changes['added_details']:
+                        report.write(f"        * {track}\n")
+                report.write("\n")
 
         if stats['empty_playlists']:
             report.write("\nEmpty playlists (no tracks found):\n")

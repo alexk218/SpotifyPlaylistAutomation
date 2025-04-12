@@ -45,10 +45,10 @@ def main():
                         help='Generate simple M3U files without extended track information')
     parser.add_argument('--no-overwrite', action='store_true',
                         help='Do not overwrite existing M3U files')
-    parser.add_argument('--organize-songs', action='store_true',
-                        help='Organize downloaded songs into playlist folders with symlinks')
+    parser.add_argument('--all-playlists', action='store_true',
+                        help='Process all playlists, not just the ones that changed')
     parser.add_argument('--dry-run', action='store_true',
-                        help='Simulate the organization process without creating symlinks')
+                        help='Simulate the organization process without creating symlinks or files')
     parser.add_argument('--embed-metadata', action='store_true', help='Embed TrackId into song file metadata')
     parser.add_argument('--interactive', action='store_true', help='Enable interactive mode for fuzzy matching')
     parser.add_argument('--remove-track-ids', action='store_true', help='Remove TrackId from all MP3 files')
@@ -97,7 +97,8 @@ def main():
             m3u_dir,
             extended=not args.no_extended_m3u,
             dry_run=args.dry_run,
-            overwrite=not args.no_overwrite
+            overwrite=not args.no_overwrite,
+            only_changed=not args.all_playlists
         )
 
     if args.organize_songs:

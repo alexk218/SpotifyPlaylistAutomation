@@ -21,7 +21,8 @@ def organize_songs_into_m3u_playlists(
         playlists_dir: Union[str, PathLike[str]],
         extended: bool = True,
         dry_run: bool = False,
-        overwrite: bool = True
+        overwrite: bool = True,
+        only_changed: bool = True
 ) -> None:
     """
     Organize songs into M3U playlist files based on database associations.
@@ -29,7 +30,8 @@ def organize_songs_into_m3u_playlists(
     tracks problem when importing to Rekordbox.
 
     Args:
-        overwrite: Whether to overwrite existing M3U files
+        only_changed:
+        overwrite:
         master_tracks_dir: Directory containing master tracks
         playlists_dir: Directory to create playlist files in
         extended: Whether to use extended M3U format with metadata
@@ -107,15 +109,67 @@ def organize_songs_into_m3u_playlists(
         print("\nDRY RUN - No files will be created")
         return
 
+    # Check for existing M3U files
+    m3u_files_exist = False
+    if os.path.exists(playlists_dir):
+        existing_files = [f for f in os.listdir(playlists_dir) if f.endswith('.m3u')]
+        m3u_files_exist = len(existing_files) > 0
+
+    # If only updating changed playlists, check for changes first
+    changed_playlists = []
+    if m3u_files_exist and only_changed and not dry_run:
+        print("\nChecking for playlist changes...")
+        organization_logger.info("Analyzing playlist changes")
+
+        from helpers.m3u_helper import compare_playlist_with_m3u, sanitize_filename
+
+        with UnitOfWork() as uow:
+            for playlist in db_playlists:
+                if playlist.name.upper() == "MASTER":
+                    continue
+
+                safe_name = sanitize_filename(playlist.name, preserve_spaces=True)
+                m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+
+                if os.path.exists(m3u_path):
+                    has_changes, added, removed = compare_playlist_with_m3u(playlist.playlist_id, m3u_path)
+                    if has_changes:
+                        changed_playlists.append({
+                            'name': playlist.name,
+                            'added': len(added),
+                            'removed': len(removed)
+                        })
+                else:
+                    # New playlist
+                    changed_playlists.append({'name': playlist.name, 'added': 'New', 'removed': 0})
+
+        if changed_playlists:
+            print(f"\nFound {len(changed_playlists)} playlists with changes:")
+            print("====================================")
+            for i, p in enumerate(changed_playlists):
+                if p['added'] == 'New':
+                    print(f"{i + 1}. {p['name']} (NEW PLAYLIST)")
+                else:
+                    print(f"{i + 1}. {p['name']} (+{p['added']} tracks, -{p['removed']} tracks)")
+
+            print("\nOnly these playlists will be updated.")
+        else:
+            print("\nNo playlist changes detected. All playlists are up to date.")
+            if not overwrite:
+                print("No M3U files will be generated. Use --overwrite to force regeneration.")
+                return
+            else:
+                print("Using --overwrite flag will regenerate all files anyway.")
+
     # Explain what will happen with existing files
-    if os.path.exists(playlists_dir) and os.listdir(playlists_dir) and overwrite:
+    if m3u_files_exist and overwrite and not only_changed:
         existing_files = [f for f in os.listdir(playlists_dir) if f.endswith('.m3u')]
         if existing_files:
             print(f"\nNOTE: {len(existing_files)} existing M3U files found in the target directory.")
-            print("These files will be overwritten with updated versions.")
+            print("All files will be overwritten with updated versions.")
 
     # Ask for confirmation
-    confirmation = input("\nWould you like to generate M3U playlist files for all playlists? (y/n): ")
+    confirmation = input("\nWould you like to generate M3U playlist files? (y/n): ")
     if confirmation.lower() != 'y':
         organization_logger.info("M3U playlist generation cancelled by user")
         print("Operation cancelled.")
@@ -128,12 +182,18 @@ def organize_songs_into_m3u_playlists(
         playlists_dir=playlists_dir,
         extended=extended,
         skip_master=True,
-        overwrite=overwrite
+        overwrite=overwrite,
+        only_changed=only_changed
     )
 
     # Print summary
     print("\nM3U playlist generation complete!")
-    print(f"Created {stats['playlists_created']} playlist files")
+    if only_changed:
+        print(f"Created {stats['playlists_created']} new playlists")
+        print(f"Updated {stats['playlists_updated']} existing playlists")
+        print(f"Skipped {stats['playlists_unchanged']} unchanged playlists")
+    else:
+        print(f"Generated {stats['playlists_created'] + stats['playlists_updated']} playlist files")
     print(f"Added {stats['total_tracks_added']} tracks to playlists")
 
     if stats['empty_playlists']:
