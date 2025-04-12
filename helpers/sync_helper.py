@@ -47,13 +47,14 @@ def get_db_tracks() -> Dict[str, Track]:
         return {track.track_id: track for track in tracks}
 
 
-def sync_playlists_incremental(force_full_refresh: bool = False) -> Tuple[int, int, int]:
+def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
     """
     Incrementally sync playlists from Spotify to the database.
     Only fetches and updates playlists that have changed.
 
     Args:
         force_full_refresh: Whether to force a full refresh, ignoring existing data
+        auto_confirm: Whether to skip the confirmation prompt
 
     Returns:
         Tuple of (added, updated, unchanged) counts
@@ -135,8 +136,8 @@ def sync_playlists_incremental(force_full_refresh: bool = False) -> Tuple[int, i
                 else:
                     print(f"  Description removed")
 
-    # Ask for confirmation if there are changes
-    if playlists_to_add or playlists_to_update:
+    # Ask for confirmation if there are changes (unless auto_confirm is True)
+    if (playlists_to_add or playlists_to_update) and not auto_confirm:
         confirmation = input("\nWould you like to proceed with these changes to the database? (y/n): ")
         if confirmation.lower() != 'y':
             sync_logger.info("Playlist sync cancelled by user")
@@ -419,3 +420,59 @@ def sync_track_playlist_associations(uow, track_id, playlist_names):
     for playlist_id in playlist_ids_to_remove:
         uow.track_playlist_repository.delete(track_id, playlist_id)
         sync_logger.debug(f"Removed association: Track {track_id} from Playlist {playlist_id}")
+
+
+def analyze_playlists_changes(force_full_refresh=False):
+    """
+    Analyze what changes would be made to playlists without executing them.
+
+    Args:
+        force_full_refresh: Whether to force a full refresh, ignoring existing data
+
+    Returns:
+        Tuple of (added_count, updated_count, unchanged_count, changes_details)
+    """
+    # Get existing playlists from database
+    existing_playlists = get_db_playlists() if not force_full_refresh else {}
+
+    # Fetch all playlists from Spotify
+    spotify_client = authenticate_spotify()
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+
+    # Track changes for analysis
+    playlists_to_add = []
+    playlists_to_update = []
+    unchanged_count = 0
+
+    # Analyze changes
+    for playlist_name, playlist_description, playlist_id in spotify_playlists:
+        # Check if playlist exists in database
+        if playlist_id in existing_playlists:
+            existing_playlist = existing_playlists[playlist_id]
+
+            # Check if playlist details have changed
+            if (existing_playlist.name != playlist_name.strip() or
+                    existing_playlist.description != playlist_description):
+
+                # Mark for update
+                playlists_to_update.append({
+                    'id': playlist_id,
+                    'name': playlist_name.strip(),
+                    'description': playlist_description,
+                    'old_name': existing_playlist.name,
+                    'old_description': existing_playlist.description
+                })
+            else:
+                unchanged_count += 1
+        else:
+            # Mark for addition
+            playlists_to_add.append({
+                'id': playlist_id,
+                'name': playlist_name.strip(),
+                'description': playlist_description
+            })
+
+    return len(playlists_to_add), len(playlists_to_update), unchanged_count, {
+        'to_add': playlists_to_add,
+        'to_update': playlists_to_update
+    }
