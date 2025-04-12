@@ -707,11 +707,84 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
         if track_id in tracks_in_playlists
     ]
 
+    # Find liked songs that aren't in any playlist
+    tracks_in_playlists.update(unsorted_tracks)
+    unplaylisted = liked_song_ids - tracks_in_playlists
+
+    # Filter and sort the unplaylisted songs with their dates
+    unplaylisted_songs = [
+        song for song in liked_songs_with_dates
+        if song['id'] in unplaylisted
+    ]
+
+    # Display summary of changes
+    print("\nUNPLAYLISTED TRACKS SYNC ANALYSIS COMPLETE")
+    print("========================================")
+
+    if tracks_to_remove:
+        print(f"\nTracks to remove from UNSORTED: {len(tracks_to_remove)}")
+        # Get track details for display
+        removed_tracks_info = []
+        for i in range(0, len(tracks_to_remove), 50):
+            batch = tracks_to_remove[i:i + 50]
+            try:
+                tracks_info = spotify_client.tracks(batch)
+                for track in tracks_info['tracks']:
+                    if track:
+                        artists = ", ".join([artist['name'] for artist in track['artists']])
+                        removed_tracks_info.append({
+                            'name': track['name'],
+                            'artists': artists,
+                            'id': track['id']
+                        })
+            except Exception as e:
+                spotify_logger.error(f"Error fetching track details: {e}")
+
+        # Display sample of tracks to remove
+        print("\nSAMPLE TRACKS TO REMOVE FROM UNSORTED:")
+        print("=====================================")
+        # Sort tracks by artist name, then track name for better readability
+        sorted_tracks = sorted(removed_tracks_info[:10], key=lambda x: (x['artists'], x['name']))
+        for track in sorted_tracks:
+            print(f"• {track['artists']} - {track['name']}")
+        if len(removed_tracks_info) > 10:
+            print(f"...and {len(removed_tracks_info) - 10} more")
+    else:
+        print("\nNo tracks to remove from UNSORTED playlist")
+
+    if unplaylisted_songs:
+        print(f"\nLiked Songs to add to UNSORTED: {len(unplaylisted_songs)}")
+
+        # Display sample of tracks to add
+        print("\nSAMPLE TRACKS TO ADD TO UNSORTED:")
+        print("================================")
+        # Sort by date added, newest first, and take first 10
+        sorted_songs = sorted(unplaylisted_songs[:10], key=lambda x: x['added_at'], reverse=True)
+        for song in sorted_songs:
+            added_date = song['added_at'].strftime('%Y-%m-%d')
+            print(f"• {song['artists']} - {song['name']} (Added: {added_date})")
+        if len(unplaylisted_songs) > 10:
+            print(f"...and {len(unplaylisted_songs) - 10} more")
+    else:
+        print("\nNo unplaylisted Liked Songs to add")
+
+    # Ask for confirmation
+    if tracks_to_remove or unplaylisted_songs:
+        confirmation = input("\nWould you like to proceed with syncing these changes to Spotify? (y/n): ")
+        if confirmation.lower() != 'y':
+            spotify_logger.info("Unplaylisted sync cancelled by user")
+            print("Sync cancelled.")
+            return []
+    else:
+        print("\nNo changes needed. All Liked Songs are already in playlists, and no tracks need to be removed.")
+        return []
+
     removed_tracks_info = []
-    # Remove tracks that are now in other playlists and collect their info
+    # Remove tracks that are now in other playlists
     spotify_logger.info("Fetching details for removed tracks for logging purposes...")
     if tracks_to_remove:
         spotify_logger.info(f"Found {len(tracks_to_remove)} tracks to remove from UNSORTED (now in other playlists)")
+        print(f"\nRemoving {len(tracks_to_remove)} tracks from UNSORTED playlist...")
 
         # Remove tracks in batches
         for i in range(0, len(tracks_to_remove), 100):
@@ -719,8 +792,10 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
             try:
                 spotify_client.playlist_remove_all_occurrences_of_items(unsorted_playlist_id, batch)
                 spotify_logger.info(f"Removed batch of {len(batch)} tracks from UNSORTED playlist")
+                print(f"Removed batch of {len(batch)} tracks from UNSORTED playlist")
             except Exception as e:
                 spotify_logger.error(f"Error removing tracks from UNSORTED playlist: {e}")
+                print(f"Error removing tracks: {e}")
                 continue
 
         # Get track details after successful removal
@@ -738,16 +813,6 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
                         })
             except Exception as e:
                 spotify_logger.error(f"Error fetching track details: {e}")
-
-    # Find liked songs that aren't in any playlist
-    tracks_in_playlists.update(unsorted_tracks)
-    unplaylisted = liked_song_ids - tracks_in_playlists
-
-    # Filter and sort the unplaylisted songs with their dates
-    unplaylisted_songs = [
-        song for song in liked_songs_with_dates
-        if song['id'] in unplaylisted
-    ]
 
     # Generate log file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -770,7 +835,7 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
         # Report unplaylisted songs
         f.write("=== Unplaylisted Songs Added to UNSORTED ===\n")
         if unplaylisted_songs:
-            f.write(f"Total songs added: {len(unplaylisted_songs)}\n\n")
+            f.write(f"Total songs to add: {len(unplaylisted_songs)}\n\n")
             for song in unplaylisted_songs:
                 log_line = (f"Added on: {song['added_at']}\n"
                             f"Track: {song['artists']} - {song['name']}\n"
@@ -783,6 +848,7 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
     # Add unplaylisted tracks to UNSORTED playlist if any exist
     if unplaylisted_songs:
         spotify_logger.info("Adding unplaylisted songs to UNSORTED playlist...")
+        print(f"\nAdding {len(unplaylisted_songs)} tracks to UNSORTED playlist...")
 
         # Add tracks in batches of 100 (Spotify API limit)
         track_ids = [song['id'] for song in unplaylisted_songs]
@@ -791,8 +857,11 @@ def sync_unplaylisted_to_unsorted(spotify_client, unsorted_playlist_id: str):
             try:
                 spotify_client.playlist_add_items(unsorted_playlist_id, batch, position=0)
                 spotify_logger.info(f"Added batch of {len(batch)} tracks to UNSORTED playlist")
+                print(f"Added batch of {len(batch)} tracks to UNSORTED playlist")
             except Exception as e:
                 spotify_logger.error(f"Error adding tracks to UNSORTED playlist: {e}")
+                print(f"Error adding tracks: {e}")
 
     spotify_logger.info(f"Sync complete. Check log file at {log_path}")
+    print(f"\nSync complete! A detailed log file is available at: {log_path}")
     return unplaylisted_songs

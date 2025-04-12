@@ -70,42 +70,113 @@ def sync_playlists_incremental(force_full_refresh: bool = False) -> Tuple[int, i
     spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
     sync_logger.info(f"Fetched {len(spotify_playlists)} playlists from Spotify")
 
-    # Track counts
-    added_count = 0
-    updated_count = 0
+    # Track changes for analysis
+    playlists_to_add = []
+    playlists_to_update = []
     unchanged_count = 0
 
-    with UnitOfWork() as uow:
-        for playlist_name, playlist_description, playlist_id in spotify_playlists:
-            # Check if playlist exists in database
-            if playlist_id in existing_playlists:
-                existing_playlist = existing_playlists[playlist_id]
+    # Analyze changes (without applying them yet)
+    for playlist_name, playlist_description, playlist_id in spotify_playlists:
+        # Check if playlist exists in database
+        if playlist_id in existing_playlists:
+            existing_playlist = existing_playlists[playlist_id]
 
-                # Check if playlist details have changed
-                if (existing_playlist.name != playlist_name.strip() or
-                        existing_playlist.description != playlist_description):
+            # Check if playlist details have changed
+            if (existing_playlist.name != playlist_name.strip() or
+                    existing_playlist.description != playlist_description):
 
-                    # Update the playlist
-                    existing_playlist.name = playlist_name.strip()
-                    existing_playlist.description = playlist_description
-                    uow.playlist_repository.update(existing_playlist)
-                    updated_count += 1
-                    sync_logger.info(f"Updated playlist: {playlist_name} (ID: {playlist_id})")
-                else:
-                    unchanged_count += 1
-                    sync_logger.debug(f"Playlist unchanged: {playlist_name} (ID: {playlist_id})")
+                # Mark for update
+                playlists_to_update.append({
+                    'id': playlist_id,
+                    'name': playlist_name.strip(),
+                    'description': playlist_description,
+                    'old_name': existing_playlist.name,
+                    'old_description': existing_playlist.description
+                })
             else:
-                # Create new playlist
-                new_playlist = Playlist(
-                    playlist_id=playlist_id,
-                    name=playlist_name.strip(),
-                    description=playlist_description
-                )
-                uow.playlist_repository.insert(new_playlist)
-                added_count += 1
-                sync_logger.info(f"Added new playlist: {playlist_name} (ID: {playlist_id})")
+                unchanged_count += 1
+        else:
+            # Mark for addition
+            playlists_to_add.append({
+                'id': playlist_id,
+                'name': playlist_name.strip(),
+                'description': playlist_description
+            })
 
-    print(f"Playlist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged")
+    # Display summary of changes
+    print("\nPLAYLIST SYNC ANALYSIS COMPLETE")
+    print("==============================")
+    print(f"\nPlaylists to add: {len(playlists_to_add)}")
+    print(f"Playlists to update: {len(playlists_to_update)}")
+    print(f"Unchanged playlists: {unchanged_count}")
+
+    # Display detailed changes
+    if playlists_to_add:
+        print("\nNEW PLAYLISTS TO ADD:")
+        print("====================")
+        # Sort by name for better readability
+        sorted_playlists = sorted(playlists_to_add, key=lambda x: x['name'])
+        for playlist in sorted_playlists:
+            print(f"• {playlist['name']}")
+            if playlist['description']:
+                print(f"  Description: {playlist['description']}")
+
+    if playlists_to_update:
+        print("\nPLAYLISTS TO UPDATE:")
+        print("===================")
+        sorted_updates = sorted(playlists_to_update, key=lambda x: x['name'])
+        for playlist in sorted_updates:
+            print(f"• {playlist['old_name']} → {playlist['name']}")
+            if playlist['old_description'] != playlist['description']:
+                if playlist['old_description'] and playlist['description']:
+                    print(f"  Description changed")
+                elif playlist['description']:
+                    print(f"  Description added")
+                else:
+                    print(f"  Description removed")
+
+    # Ask for confirmation if there are changes
+    if playlists_to_add or playlists_to_update:
+        confirmation = input("\nWould you like to proceed with these changes to the database? (y/n): ")
+        if confirmation.lower() != 'y':
+            sync_logger.info("Playlist sync cancelled by user")
+            print("Sync cancelled.")
+            return 0, 0, unchanged_count
+    else:
+        print("\nNo changes needed. Database is up to date.")
+        return 0, 0, unchanged_count
+
+    # If confirmed, apply the changes
+    added_count = 0
+    updated_count = 0
+
+    print("\nApplying changes to database...")
+    with UnitOfWork() as uow:
+        # Add new playlists
+        for playlist_data in playlists_to_add:
+            # Create new playlist
+            new_playlist = Playlist(
+                playlist_id=playlist_data['id'],
+                name=playlist_data['name'],
+                description=playlist_data['description']
+            )
+            uow.playlist_repository.insert(new_playlist)
+            added_count += 1
+            sync_logger.info(f"Added new playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
+
+        # Update existing playlists
+        for playlist_data in playlists_to_update:
+            # Get the existing playlist
+            existing_playlist = existing_playlists[playlist_data['id']]
+
+            # Update the playlist
+            existing_playlist.name = playlist_data['name']
+            existing_playlist.description = playlist_data['description']
+            uow.playlist_repository.update(existing_playlist)
+            updated_count += 1
+            sync_logger.info(f"Updated playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
+
+    print(f"\nPlaylist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged")
     sync_logger.info(
         f"Playlist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged")
 
