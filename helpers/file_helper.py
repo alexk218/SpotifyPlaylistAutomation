@@ -1,18 +1,16 @@
-import logging
+import os
 import os
 import re
-import uuid
+import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Union, Tuple, List
+
 import Levenshtein
-import shutil
 from mutagen import File
 from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
-from helpers.track_helper import find_track_id_fuzzy, has_track_id
-from sql.helpers.db_helper import fetch_all_tracks_db, get_track_added_date
+
+from sql.helpers.db_helper import get_track_added_date
 from utils.logger import setup_logger
-from utils.symlink_tracker import tracker
 
 db_logger = setup_logger('db_logger', 'sql/db.log')
 
@@ -50,68 +48,6 @@ def track_exists(track_title, artist, directory, threshold=0.5):
     return False
 
 
-# Creates symlink pointing to target_path named link_path
-def create_symlink(target_path, link_path):
-    try:
-        if not os.path.exists(link_path):
-            os.symlink(target_path, link_path)
-            tracker.created_symlinks.append((link_path, target_path))
-            db_logger.info(f"Created symlink: {link_path} -> {target_path}")
-        else:
-            db_logger.info(f"Symlink already exists: {link_path}")
-    except OSError as e:
-        db_logger.error(f"Failed to create symlink: {link_path} -> {target_path} ({e})")
-
-
-# Scans through all playlist folders and removes broken symlinks.
-# * Broken symlinks occur when you delete a track from the master tracks playlist
-def cleanup_broken_symlinks(playlists_dir: Union[str, os.PathLike[str]], dry_run: bool = False) -> List[Tuple[str, str]]:
-    # Returns: List of tuples containing (playlist_name, filename) of removed symlinks
-    removed_links = []
-
-    print("\nChecking for broken symlinks...")
-    db_logger.info("Starting broken symlink cleanup")
-
-    try:
-        # Iterate through all playlist folders
-        for playlist_name in os.listdir(playlists_dir):
-            playlist_path = os.path.join(playlists_dir, playlist_name)
-
-            if not os.path.isdir(playlist_path) or playlist_name.upper() == "MASTER":
-                continue
-
-            # Check each file in the playlist folder
-            for filename in os.listdir(playlist_path):
-                if not filename.lower().endswith('.mp3'):
-                    continue
-
-                file_path = os.path.join(playlist_path, filename)
-
-                # Check if it's a symlink and if it's broken
-                if os.path.islink(file_path):
-                    target_path = os.path.realpath(file_path)
-                    if not os.path.exists(target_path):
-                        if dry_run:
-                            db_logger.info(f"[DRY RUN] Would remove broken symlink: {file_path}")
-                        else:
-                            try:
-                                os.remove(file_path)
-                                db_logger.info(f"Removed broken symlink: {file_path}")
-                                removed_links.append((playlist_name, filename))
-                                tracker.removed_symlinks.append(file_path)
-                            except Exception as e:
-                                db_logger.error(f"Error removing broken symlink {file_path}: {e}")
-
-    except Exception as e:
-        db_logger.error(f"Error during symlink cleanup: {e}")
-
-    if removed_links:
-        print(f"Removed {len(removed_links)} broken symlinks")
-    else:
-        print("No broken symlinks found")
-
-    return removed_links
-
 # Embed TrackId into MP3 file's metadata - using a TXXX frame
 def embed_track_id(file_path, track_id):
     # * file_path (str): Path to the audio file.
@@ -139,21 +75,10 @@ def embed_track_id(file_path, track_id):
 
 
 def embed_track_metadata(master_tracks_dir, interactive=False):
-    import logging
     import os
-    import re
-    import uuid
     from datetime import datetime
-    from pathlib import Path
-    from typing import Union, Tuple, List
-    import Levenshtein
-    import shutil
-    from mutagen import File
-    from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
     from helpers.track_helper import find_track_id_fuzzy, has_track_id
-    from sql.helpers.db_helper import fetch_all_tracks_db, get_track_added_date
-    from utils.logger import setup_logger
-    from utils.symlink_tracker import tracker
+    from sql.helpers.db_helper import fetch_all_tracks_db
 
     tracks_db = fetch_all_tracks_db()
     db_logger.debug(f"Fetched all tracks.")

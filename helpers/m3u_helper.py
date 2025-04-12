@@ -2,13 +2,12 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Set, Optional, Tuple, Union, Any
-from mutagen.id3 import ID3, ID3NoHeaderError
-from mutagen import File
+from typing import List, Dict, Tuple, Any
+
+from mutagen.id3 import ID3
 
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
-from utils.symlink_tracker import tracker
 
 m3u_logger = setup_logger('m3u_helper', 'logs/m3u_validation/m3u.log')
 

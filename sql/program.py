@@ -5,11 +5,10 @@ from dotenv import load_dotenv
 from sql.helpers.db_helper import clear_db
 from drivers.spotify_client import sync_to_master_playlist, sync_unplaylisted_to_unsorted, authenticate_spotify
 from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
-    validate_song_lengths, cleanup_broken_symlinks
-from helpers.organization_helper import organize_songs_into_playlists, organize_songs_into_m3u_playlists
+    validate_song_lengths
+from helpers.organization_helper import organize_songs_into_m3u_playlists
 from helpers.sync_helper import sync_playlists_incremental, sync_master_tracks_incremental
-from helpers.validation_helper import validate_master_tracks, validate_playlist_symlinks, \
-    validate_playlist_symlinks
+from helpers.validation_helper import validate_master_tracks
 from utils.logger import setup_logger
 from cache_manager import spotify_cache
 
@@ -55,8 +54,6 @@ def main():
     parser.add_argument('--remove-track-ids', action='store_true', help='Remove TrackId from all MP3 files')
     parser.add_argument('--cleanup-tracks', action='store_true',
                         help='Clean up unwanted files from tracks_master directory by moving them to quarantine')
-    parser.add_argument('--cleanup-symlinks', action='store_true',
-                        help='Remove broken symlinks from playlists_master directory')
 
     # Validation
     parser.add_argument('--count-track-ids', action='store_true', help='Count MP3 files with TrackId')
@@ -64,8 +61,6 @@ def main():
                         help='Validate local tracks against database information')
     parser.add_argument('--validate-lengths', action='store_true',
                         help='Validate song lengths and report songs shorter than 5 minutes')
-    parser.add_argument('--validate-playlists', action='store_true',
-                        help='Validate playlist symlinks against database information')
     parser.add_argument('--validate-all', action='store_true', help='Run all validation checks')
 
     # Cache management
@@ -102,9 +97,6 @@ def main():
             only_changed=not args.all_playlists
         )
 
-    if args.organize_songs:
-        organize_songs_into_playlists(MASTER_TRACKS_DIRECTORY, PLAYLISTS_DIRECTORY, dry_run=args.dry_run)
-
     if args.embed_metadata:
         embed_track_metadata(MASTER_TRACKS_DIRECTORY, interactive=args.interactive)
 
@@ -113,9 +105,6 @@ def main():
 
     if args.cleanup_tracks:
         cleanup_tracks(MASTER_TRACKS_DIRECTORY, QUARANTINE_DIRECTORY)
-
-    if args.cleanup_symlinks:
-        cleanup_broken_symlinks(PLAYLISTS_DIRECTORY, dry_run=args.dry_run)
 
     # * Validation
     if args.count_track_ids:
@@ -126,9 +115,6 @@ def main():
 
     if args.validate_lengths or args.validate_all:
         validate_song_lengths(MASTER_TRACKS_DIRECTORY_SSD)
-
-    if args.validate_playlists or args.validate_all:
-        validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
 
     # * Cache management
     if args.clear_cache:
