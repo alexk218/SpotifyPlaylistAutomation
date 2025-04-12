@@ -29,17 +29,24 @@ def organize_songs_into_m3u_playlists(
     tracks problem when importing to Rekordbox.
 
     Args:
-        only_changed: Only update playlists that have actually changed
-        overwrite: Whether to overwrite existing playlist files
         master_tracks_dir: Directory containing master tracks
         playlists_dir: Directory to create playlist files in
         extended: Whether to use extended M3U format with metadata
         dry_run: If True, only print what would be done, don't create files
+        overwrite: Whether to overwrite existing playlist files
+        only_changed: Only update playlists that have actually changed
     """
-    from helpers.m3u_helper import generate_all_m3u_playlists
+    from helpers.m3u_helper import (generate_all_m3u_playlists,
+                                    build_track_id_mapping,
+                                    sanitize_filename,
+                                    compare_playlist_with_m3u)
 
     print("Analyzing M3U playlist organization plan...")
     organization_logger.info("Starting M3U playlist organization analysis")
+
+    # First, build a mapping of track_id -> file_path for all MP3 files
+    # This is the key optimization - we only scan all MP3 files ONCE
+    track_id_map = build_track_id_mapping(master_tracks_dir)
 
     # Get all playlist information from the database
     with UnitOfWork() as uow:
@@ -50,25 +57,10 @@ def organize_songs_into_m3u_playlists(
     # Filter out the MASTER playlist if it exists
     db_playlists = [p for p in db_playlists if p.name.upper() != "MASTER"]
 
-    # Count tracks that have IDs and are in playlists
-    track_count = 0
-    track_with_id_count = 0
-
-    for root, _, files in os.walk(master_tracks_dir):
-        for filename in files:
-            if not filename.lower().endswith('.mp3'):
-                continue
-
-            track_count += 1
-            file_path = os.path.join(root, filename)
-
-            # Check if file has a TrackId
-            try:
-                tags = ID3(file_path)
-                if 'TXXX:TRACKID' in tags:
-                    track_with_id_count += 1
-            except Exception:
-                pass
+    # Display statistics about the track files
+    track_count = len([f for root, _, files in os.walk(master_tracks_dir)
+                       for f in files if f.lower().endswith('.mp3')])
+    track_with_id_count = len(track_id_map)
 
     print(f"\nFOUND {len(db_playlists)} PLAYLISTS AND {track_count} TRACKS")
     print(f"Tracks with TrackID: {track_with_id_count}")
@@ -120,33 +112,33 @@ def organize_songs_into_m3u_playlists(
         print("\nChecking for playlist changes...")
         organization_logger.info("Analyzing playlist changes")
 
-        from helpers.m3u_helper import compare_playlist_with_m3u, sanitize_filename
+        # This is a key optimization point - we use compare_playlist_with_m3u
+        # but pass the track_id_map parameter to make it much faster
+        for playlist in db_playlists:
+            if playlist.name.upper() == "MASTER":
+                continue
 
-        with UnitOfWork() as uow:
-            for playlist in db_playlists:
-                if playlist.name.upper() == "MASTER":
-                    continue
+            safe_name = sanitize_filename(playlist.name, preserve_spaces=True)
+            m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
 
-                safe_name = sanitize_filename(playlist.name, preserve_spaces=True)
-                m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+            if os.path.exists(m3u_path):
+                # Use the optimized comparison function by passing track_id_map
+                has_changes, added, removed = compare_playlist_with_m3u(
+                    playlist.playlist_id,
+                    m3u_path,
+                    master_tracks_dir,
+                    track_id_map  # This is the key optimization
+                )
 
-                if os.path.exists(m3u_path):
-                    # Pass master_tracks_dir to the compare function to only consider local files
-                    has_changes, added, removed = compare_playlist_with_m3u(
-                        playlist.playlist_id,
-                        m3u_path,
-                        master_tracks_dir
-                    )
-
-                    if has_changes:
-                        changed_playlists.append({
-                            'name': playlist.name,
-                            'added': len(added),
-                            'removed': len(removed)
-                        })
-                else:
-                    # New playlist
-                    changed_playlists.append({'name': playlist.name, 'added': 'New', 'removed': 0})
+                if has_changes:
+                    changed_playlists.append({
+                        'name': playlist.name,
+                        'added': len(added),
+                        'removed': len(removed)
+                    })
+            else:
+                # New playlist
+                changed_playlists.append({'name': playlist.name, 'added': 'New', 'removed': 0})
 
         if changed_playlists:
             print(f"\nFound {len(changed_playlists)} playlists with changes:")
@@ -182,6 +174,8 @@ def organize_songs_into_m3u_playlists(
 
     # Generate all M3U playlists
     print("\nGenerating M3U playlist files...")
+
+    # Pass the track_id_map to the generate_all_m3u_playlists function
     stats = generate_all_m3u_playlists(
         master_tracks_dir=master_tracks_dir,
         playlists_dir=playlists_dir,
@@ -189,7 +183,8 @@ def organize_songs_into_m3u_playlists(
         skip_master=True,
         overwrite=overwrite,
         only_changed=only_changed,
-        changed_playlists=[p['name'] for p in changed_playlists] if only_changed else None
+        changed_playlists=[p['name'] for p in changed_playlists] if only_changed else None,
+        track_id_map=track_id_map  # Pass our pre-built track ID mapping
     )
 
     # Print summary
