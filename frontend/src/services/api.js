@@ -33,11 +33,17 @@ export default {
       confirm: confirm
     });
   },
-  syncTracks(forceRefresh = false) {
-    return apiClient.post('/sync/tracks', { force_refresh: forceRefresh });
+  syncTracks(forceRefresh = false, confirm = false) {
+    return apiClient.post('/sync/tracks', {
+      force_refresh: forceRefresh,
+      confirm: confirm
+    });
   },
-  syncAll(forceRefresh = false) {
-    return apiClient.post('/sync/all', { force_refresh: forceRefresh });
+  syncAll(forceRefresh = false, confirm = false) {
+    return apiClient.post('/sync/all', {
+      force_refresh: forceRefresh,
+      confirm: confirm
+    });
   },
   syncToMaster() {
     return apiClient.post('/spotify/sync-to-master');

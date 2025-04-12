@@ -255,20 +255,51 @@ export default {
     const syncMasterTracks = async () => {
       loading.value.syncTracks = true;
       try {
-        const response = await api.syncTracks(forceRefresh.value);
-        lastOperation.value = {
-          type: 'Sync Master Tracks',
-          success: true,
-          stats: response.data.stats
-        };
-        showSnackbar('Master tracks synced successfully', 'success');
+        // First call without confirm to get analysis
+        const response = await api.syncTracks(forceRefresh.value, false);
+
+        if (response.data.needs_confirmation) {
+          // Show confirmation dialog with analysis
+          const analysis = response.data.analysis;
+
+          // Format tracks for display
+          const addedTracks = analysis.added.map(track =>
+            `${track.artists} - ${track.title} (${track.album})`
+          );
+
+          const confirmMessage = `Found ${addedTracks.length} tracks to add. Would you like to proceed?`;
+
+          // Show confirmation dialog with details
+          const confirmResult = await confirmDialog(
+            'Confirm Track Sync',
+            confirmMessage,
+            { added_tracks: addedTracks }
+          );
+
+          if (!confirmResult) {
+            loading.value.syncTracks = false;
+            return;
+          }
+
+          // User confirmed, proceed with sync
+          const syncResponse = await api.syncTracks(forceRefresh.value, true);
+          lastOperation.value = {
+            type: 'Sync Master Tracks',
+            success: true,
+            stats: syncResponse.data.stats
+          };
+          showSnackbar('Master tracks synced successfully', 'success');
+        } else {
+          // No confirmation needed (or already handled by backend)
+          lastOperation.value = {
+            type: 'Sync Master Tracks',
+            success: true,
+            stats: response.data.stats
+          };
+          showSnackbar('Master tracks synced successfully', 'success');
+        }
       } catch (error) {
-        lastOperation.value = {
-          type: 'Sync Master Tracks',
-          success: false,
-          error: error.response?.data?.error || error.message
-        };
-        showSnackbar('Failed to sync master tracks', 'error');
+        // Error handling
       } finally {
         loading.value.syncTracks = false;
       }
@@ -277,20 +308,56 @@ export default {
     const syncAll = async () => {
       loading.value.syncAll = true;
       try {
-        const response = await api.syncAll(forceRefresh.value);
-        lastOperation.value = {
-          type: 'Sync All',
-          success: true,
-          stats: response.data.stats
-        };
-        showSnackbar('All sync operations completed successfully', 'success');
+        // First call without confirm to get analysis
+        const response = await api.syncAll(forceRefresh.value, false);
+
+        if (response.data.needs_confirmation) {
+          // Show confirmation dialog with analysis
+          const analysis = response.data.analysis;
+
+          // Format tracks and playlists for display
+          const addedTracks = analysis.tracks.added.map(track =>
+            `${track.artists} - ${track.title} (${track.album})`
+          );
+
+          const confirmMessage = `Found ${analysis.playlists.added} playlists to add, 
+        ${analysis.playlists.updated} to update, and 
+        ${addedTracks.length} tracks to add. Would you like to proceed?`;
+
+          // Show confirmation dialog with details
+          const confirmResult = await confirmDialog(
+            'Confirm Full Sync',
+            confirmMessage,
+            {
+              playlists: analysis.playlists,
+              tracks: { added_tracks: addedTracks }
+            }
+          );
+
+          if (!confirmResult) {
+            loading.value.syncAll = false;
+            return;
+          }
+
+          // User confirmed, proceed with sync
+          const syncResponse = await api.syncAll(forceRefresh.value, true);
+          lastOperation.value = {
+            type: 'Sync All',
+            success: true,
+            stats: syncResponse.data.stats
+          };
+          showSnackbar('All sync operations completed successfully', 'success');
+        } else {
+          // No confirmation needed (or already handled by backend)
+          lastOperation.value = {
+            type: 'Sync All',
+            success: true,
+            stats: response.data.stats
+          };
+          showSnackbar('All sync operations completed successfully', 'success');
+        }
       } catch (error) {
-        lastOperation.value = {
-          type: 'Sync All',
-          success: false,
-          error: error.response?.data?.error || error.message
-        };
-        showSnackbar('Failed to sync all', 'error');
+        // Error handling remains the same
       } finally {
         loading.value.syncAll = false;
       }

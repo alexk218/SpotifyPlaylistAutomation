@@ -476,3 +476,78 @@ def analyze_playlists_changes(force_full_refresh=False):
         'to_add': playlists_to_add,
         'to_update': playlists_to_update
     }
+
+
+def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = False):
+    """
+    Analyze what changes would be made to tracks without executing them.
+
+    Args:
+        master_playlist_id: ID of the master playlist
+        force_full_refresh: Whether to force a full refresh, ignoring existing data
+
+    Returns:
+        Tuple of (tracks_to_add, tracks_to_update, unchanged_tracks)
+    """
+    # Get existing tracks from database
+    existing_tracks = get_db_tracks() if not force_full_refresh else {}
+
+    # Fetch all tracks from the MASTER playlist
+    spotify_client = authenticate_spotify()
+    master_tracks = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_full_refresh)
+
+    # Find which playlists each track belongs to
+    tracks_with_playlists = []
+
+    # Process in smaller batches to avoid API overload
+    batch_size = 50
+    for i in range(0, len(master_tracks), batch_size):
+        batch = master_tracks[i:i + batch_size]
+        batch_with_playlists = find_playlists_for_tracks_from_db(spotify_client, batch, master_playlist_id)
+        tracks_with_playlists.extend(batch_with_playlists)
+
+        # Slight delay to avoid hitting rate limits
+        if i + batch_size < len(master_tracks):
+            time.sleep(0.5)
+
+    # Analyze changes without applying them
+    tracks_to_add = []
+    tracks_to_update = []
+    unchanged_tracks = []
+
+    for track_data in tracks_with_playlists:
+        track_id, track_title, artist_names, album_name, added_at, playlist_names = track_data
+
+        # Check if track exists in database
+        if track_id in existing_tracks:
+            existing_track = existing_tracks[track_id]
+
+            # Check if track details have changed
+            if (existing_track.title != track_title or
+                    existing_track.artists != artist_names or
+                    existing_track.album != album_name):
+
+                # Mark for update
+                tracks_to_update.append({
+                    'id': track_id,
+                    'title': track_title,
+                    'artists': artist_names,
+                    'album': album_name,
+                    'old_title': existing_track.title,
+                    'old_artists': existing_track.artists,
+                    'old_album': existing_track.album,
+                    'playlists': playlist_names
+                })
+            else:
+                unchanged_tracks.append(track_id)
+        else:
+            # Mark for addition
+            tracks_to_add.append({
+                'id': track_id,
+                'title': track_title,
+                'artists': artist_names,
+                'album': album_name,
+                'playlists': playlist_names
+            })
+
+    return tracks_to_add, tracks_to_update, unchanged_tracks

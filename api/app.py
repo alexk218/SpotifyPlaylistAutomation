@@ -166,9 +166,35 @@ def sync_playlists():
 def sync_tracks():
     """Sync master tracks incrementally"""
     force_refresh = request.json.get('force_refresh', False)
+    confirm = request.json.get('confirm', False)
 
+    # First analyze what changes would be made without executing them
+    if not confirm:
+        try:
+            # New function to analyze track changes without applying them
+            # This will need to be implemented in your helpers/sync_helper.py
+            from helpers.sync_helper import analyze_tracks_changes
+            added_tracks, updated_tracks, unchanged_tracks = analyze_tracks_changes(
+                MASTER_PLAYLIST_ID, force_full_refresh=force_refresh)
+
+            # Return the analysis to the frontend
+            return jsonify({
+                'success': True,
+                'needs_confirmation': len(added_tracks) > 0 or len(updated_tracks) > 0,
+                'analysis': {
+                    'added': added_tracks,
+                    'updated': updated_tracks,
+                    'unchanged': unchanged_tracks
+                }
+            })
+        except Exception as e:
+            api_logger.error(f"Failed to analyze track changes: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # If confirm=True, proceed with the actual sync
     try:
-        added, updated, unchanged = sync_master_tracks_incremental(MASTER_PLAYLIST_ID, force_full_refresh=force_refresh)
+        added, updated, unchanged = sync_master_tracks_incremental(
+            MASTER_PLAYLIST_ID, force_full_refresh=force_refresh)
         api_logger.info(f"Master tracks sync complete: {added} added, {updated} updated, {unchanged} unchanged")
 
         return jsonify({
@@ -188,12 +214,49 @@ def sync_tracks():
 def sync_all():
     """Sync playlists and master tracks incrementally"""
     force_refresh = request.json.get('force_refresh', False)
+    confirm = request.json.get('confirm', False)
 
+    if not confirm:
+        # First analyze both playlists and tracks
+        try:
+            from helpers.sync_helper import analyze_playlists_changes, analyze_tracks_changes
+
+            # Get playlist changes
+            playlists_added, playlists_updated, playlists_unchanged, playlist_details = analyze_playlists_changes(
+                force_full_refresh=force_refresh)
+
+            # Get track changes
+            added_tracks, updated_tracks, unchanged_tracks = analyze_tracks_changes(
+                MASTER_PLAYLIST_ID, force_full_refresh=force_refresh)
+
+            return jsonify({
+                'success': True,
+                'needs_confirmation': (playlists_added > 0 or playlists_updated > 0 or
+                                       len(added_tracks) > 0 or len(updated_tracks) > 0),
+                'analysis': {
+                    'playlists': {
+                        'added': playlists_added,
+                        'updated': playlists_updated,
+                        'unchanged': playlists_unchanged,
+                        'details': playlist_details
+                    },
+                    'tracks': {
+                        'added': added_tracks,
+                        'updated': updated_tracks,
+                        'unchanged': unchanged_tracks
+                    }
+                }
+            })
+        except Exception as e:
+            api_logger.error(f"Failed to analyze sync changes: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # If confirm=True, proceed with the actual sync
     try:
         playlists_added, playlists_updated, playlists_unchanged = sync_playlists_incremental(
-            force_full_refresh=force_refresh)
-        tracks_added, tracks_updated, tracks_unchanged = sync_master_tracks_incremental(MASTER_PLAYLIST_ID,
-                                                                                        force_full_refresh=force_refresh)
+            force_full_refresh=force_refresh, auto_confirm=True)
+        tracks_added, tracks_updated, tracks_unchanged = sync_master_tracks_incremental(
+            MASTER_PLAYLIST_ID, force_full_refresh=force_refresh)
 
         api_logger.info(
             f"All sync complete. Playlists: {playlists_added} added, {playlists_updated} updated, {playlists_unchanged} unchanged. " +
