@@ -30,8 +30,8 @@ def organize_songs_into_m3u_playlists(
     tracks problem when importing to Rekordbox.
 
     Args:
-        only_changed:
-        overwrite:
+        only_changed: Only update playlists that have actually changed
+        overwrite: Whether to overwrite existing playlist files
         master_tracks_dir: Directory containing master tracks
         playlists_dir: Directory to create playlist files in
         extended: Whether to use extended M3U format with metadata
@@ -132,7 +132,13 @@ def organize_songs_into_m3u_playlists(
                 m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
 
                 if os.path.exists(m3u_path):
-                    has_changes, added, removed = compare_playlist_with_m3u(playlist.playlist_id, m3u_path)
+                    # Pass master_tracks_dir to the compare function to only consider local files
+                    has_changes, added, removed = compare_playlist_with_m3u(
+                        playlist.playlist_id,
+                        m3u_path,
+                        master_tracks_dir
+                    )
+
                     if has_changes:
                         changed_playlists.append({
                             'name': playlist.name,
@@ -183,7 +189,8 @@ def organize_songs_into_m3u_playlists(
         extended=extended,
         skip_master=True,
         overwrite=overwrite,
-        only_changed=only_changed
+        only_changed=only_changed,
+        changed_playlists=[p['name'] for p in changed_playlists] if only_changed else None
     )
 
     # Print summary
