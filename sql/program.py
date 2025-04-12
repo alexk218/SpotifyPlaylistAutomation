@@ -16,11 +16,12 @@ from cache_manager import spotify_cache
 load_dotenv()
 
 MASTER_TRACKS_DIRECTORY = os.getenv("MASTER_TRACKS_DIRECTORY")
+MASTER_TRACKS_DIRECTORY_SSD = os.getenv("MASTER_TRACKS_DIRECTORY_SSD")
 PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
 QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
-M3U_PLAYLISTS_DIRECTORY = os.getenv("M3U_PLAYLISTS_DIRECTORY")
+M3U_PLAYLISTS_DIRECTORY = os.getenv("M3U_PLAYLISTS_DIRECTORY_SSD")
 
 program_logger = setup_logger('program', 'sql/program.log')
 
@@ -93,7 +94,7 @@ def main():
     if args.generate_m3u:
         m3u_dir = args.m3u_dir
         organize_songs_into_m3u_playlists(
-            MASTER_TRACKS_DIRECTORY,
+            MASTER_TRACKS_DIRECTORY_SSD,
             m3u_dir,
             extended=not args.no_extended_m3u,
             dry_run=args.dry_run,
@@ -118,13 +119,13 @@ def main():
 
     # * Validation
     if args.count_track_ids:
-        count_tracks_with_id(MASTER_TRACKS_DIRECTORY)
+        count_tracks_with_id(MASTER_TRACKS_DIRECTORY_SSD)
 
     if args.validate_tracks or args.validate_all:
-        validate_master_tracks(MASTER_TRACKS_DIRECTORY)
+        validate_master_tracks(MASTER_TRACKS_DIRECTORY_SSD)
 
     if args.validate_lengths or args.validate_all:
-        validate_song_lengths(MASTER_TRACKS_DIRECTORY)
+        validate_song_lengths(MASTER_TRACKS_DIRECTORY_SSD)
 
     if args.validate_playlists or args.validate_all:
         validate_playlist_symlinks(PLAYLISTS_DIRECTORY)
