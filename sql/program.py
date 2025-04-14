@@ -7,7 +7,8 @@ from drivers.spotify_client import sync_to_master_playlist, sync_unplaylisted_to
 from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
     validate_song_lengths
 from helpers.organization_helper import organize_songs_into_m3u_playlists
-from helpers.sync_helper import sync_playlists_incremental, sync_master_tracks_incremental
+from helpers.sync_helper import sync_playlists_incremental, sync_master_tracks_incremental, \
+    sync_track_playlist_associations
 from helpers.validation_helper import validate_master_tracks
 from utils.logger import setup_logger
 from cache_manager import spotify_cache
@@ -34,7 +35,8 @@ def main():
     parser.add_argument('--clear-db', action='store_true', help='Clear all database tables')
     parser.add_argument('--sync-playlists', action='store_true', help='Sync playlists incrementally')
     parser.add_argument('--sync-tracks', action='store_true', help='Sync master tracks incrementally')
-    parser.add_argument('--sync-all', action='store_true', help='Sync playlists and master tracks incrementally')
+    parser.add_argument('--sync-associations', action='store_true', help='Sync track-playlist associations')
+    parser.add_argument('--sync-all', action='store_true', help='Sync playlists, tracks, and associations incrementally')
     parser.add_argument('--force-refresh', action='store_true', help='Force full refresh from Spotify API')
 
     # File operations
@@ -85,6 +87,9 @@ def main():
 
     if args.sync_all or args.sync_tracks:
         sync_master_tracks_incremental(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
+
+    if args.sync_all or args.sync_associations:
+        sync_track_playlist_associations(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
 
     # * File operations
     if args.generate_m3u:
