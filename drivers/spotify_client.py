@@ -328,17 +328,18 @@ def fetch_master_tracks_from_db() -> List[Dict[str, Any]]:
 
 
 def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str, datetime]],
-                                     master_playlist_id, use_db_first=True) -> List[
-    Tuple[str, str, str, str, datetime, List[str]]]:
+                                     master_playlist_id, use_db_first=True, force_refresh=False) -> list[
+    tuple[str, Any, list[Any]]]:
     """
     Find which playlists each track from 'MASTER' belongs to.
-    Uses database if available, falls back to API calls.
+    Uses database if available, but always checks Spotify for updates.
 
     Args:
         spotify_client: Authenticated Spotify client
         master_tracks: List of master track tuples
         master_playlist_id: ID of the master playlist
         use_db_first: Whether to try using the database first
+        force_refresh: Whether to force a refresh from API and ignore cache
 
     Returns:
         List of tuples containing (TrackId, TrackTitle, Artists, Album, AddedAt, [Playlists])
@@ -355,9 +356,9 @@ def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[s
     # Initialize a dictionary to map TrackId to playlists
     track_to_playlists = {track_id: [] for track_id in master_track_ids}
 
-    # If using database first, try to get associations from there
-    if use_db_first:
-        spotify_logger.info("Trying to get track-playlist associations from database")
+    # If using database first and not forcing refresh, start with getting associations from there
+    if use_db_first and not force_refresh:
+        spotify_logger.info("Getting initial track-playlist associations from database")
         with UnitOfWork() as uow:
             # For each track, get the associated playlists
             for track_id in master_track_ids:
@@ -370,23 +371,11 @@ def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[s
         tracks_with_playlists = sum(1 for playlists in track_to_playlists.values() if playlists)
         spotify_logger.info(f"Found playlist associations for {tracks_with_playlists} tracks in database")
 
-        # If we found associations for all tracks, we're done
-        if tracks_with_playlists == len(master_track_ids):
-            spotify_logger.info("Found all playlist associations in database, skipping API calls")
+    # Now always check Spotify for updated associations
+    spotify_logger.info("Checking Spotify for updated playlist associations")
 
-            # Prepare the final list with playlists associated to each track
-            tracks_with_playlists = [
-                (track_id, *track_details[track_id], track_to_playlists[track_id])
-                for track_id in master_track_ids
-            ]
-
-            return tracks_with_playlists
-
-    # If we get here, we need to use the API for at least some tracks
-    spotify_logger.info("Fetching remaining playlist associations from Spotify API")
-
-    # Fetch all playlists excluding the 'MASTER' playlist
-    all_playlists = fetch_playlists(spotify_client)
+    # Fetch all playlists excluding the 'MASTER' playlist with force_refresh parameter
+    all_playlists = fetch_playlists(spotify_client, force_refresh=force_refresh)
     other_playlists = [pl for pl in all_playlists if pl[2] != master_playlist_id]
 
     spotify_logger.info(f"Total other playlists to check: {len(other_playlists)}")
@@ -396,8 +385,8 @@ def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[s
     for playlist_name, playlist_description, playlist_id in other_playlists:
         spotify_logger.info(f"Checking tracks for playlist: {playlist_name} (ID: {playlist_id})")
 
-        # Get track IDs for this playlist
-        playlist_track_ids = set(get_playlist_track_ids(spotify_client, playlist_id))
+        # Get track IDs for this playlist - pass force_refresh to ensure fresh data
+        playlist_track_ids = set(get_playlist_track_ids(spotify_client, playlist_id, force_refresh=force_refresh))
 
         # Find intersection with master tracks
         common_tracks = master_track_ids.intersection(playlist_track_ids)
@@ -406,6 +395,7 @@ def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[s
         for track_id in common_tracks:
             if playlist_name not in track_to_playlists[track_id]:
                 track_to_playlists[track_id].append(playlist_name)
+                spotify_logger.info(f"Found playlist association: Track {track_id} in playlist '{playlist_name}'")
 
         spotify_logger.info(f"Found {len(common_tracks)} master tracks in playlist '{playlist_name}'")
 
@@ -417,72 +407,6 @@ def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[s
 
     spotify_logger.info("Completed finding playlists for all tracks in the 'MASTER' playlist")
     return tracks_with_playlists
-
-#
-# def get_tracks_to_sync(spotify_client: spotipy.Spotify, master_playlist_id: str) -> Dict[str, List[Dict[str, str]]]:
-#     """
-#     Get tracks that would be added to MASTER, organized by source playlist.
-#     Optimized to use the database for existing tracks.
-#
-#     Args:
-#         spotify_client: Authenticated Spotify client
-#         master_playlist_id: ID of the master playlist
-#
-#     Returns:
-#         Dictionary of playlist names to lists of track details
-#     """
-#     spotify_logger.info("Analyzing tracks to sync to MASTER playlist")
-#
-#     # Get existing track IDs from database
-#     existing_track_ids = get_existing_track_ids()
-#     spotify_logger.info(f"Found {len(existing_track_ids)} tracks in database")
-#
-#     # Get all user's playlists except MASTER and forbidden ones
-#     user_playlists = fetch_playlists(spotify_client)
-#     other_playlists = [pl for pl in user_playlists if pl[2] != master_playlist_id]
-#
-#     # Track which songs come from which playlists
-#     new_tracks_by_playlist = {}
-#
-#     # Process each playlist
-#     print("\nAnalyzing playlists...")
-#     for i, (playlist_name, _, playlist_id) in enumerate(other_playlists, 1):
-#         print(f"Checking playlist {i}/{len(other_playlists)}: {playlist_name}")
-#         spotify_logger.info(f"Checking tracks in playlist: {playlist_name}")
-#
-#         # First try to get tracks from database
-#         playlist_track_ids = get_playlist_tracks_from_db(playlist_id)
-#
-#         # If not in database, fetch from Spotify
-#         if not playlist_track_ids:
-#             playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id)
-#
-#         # Find tracks not in master playlist
-#         new_track_ids = [id for id in playlist_track_ids if id not in existing_track_ids]
-#
-#         if not new_track_ids:
-#             continue
-#
-#         # For new tracks, get detailed information
-#         playlist_tracks = []
-#         for track_id in new_track_ids:
-#             # Fetch track details in batches would be more efficient
-#             # but for simplicity, we'll do one by one
-#             try:
-#                 track = spotify_client.track(track_id)
-#                 track_info = {
-#                     'id': track_id,
-#                     'name': track['name'],
-#                     'artists': ', '.join(artist['name'] for artist in track['artists'])
-#                 }
-#                 playlist_tracks.append(track_info)
-#             except Exception as e:
-#                 spotify_logger.error(f"Error fetching details for track {track_id}: {e}")
-#
-#         if playlist_tracks:
-#             new_tracks_by_playlist[playlist_name] = playlist_tracks
-#
-#     return new_tracks_by_playlist
 
 
 def get_liked_songs_with_dates(spotify_client, since_date=DEFAULT_SINCE_DATE):

@@ -20,7 +20,8 @@ PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
 QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
-M3U_PLAYLISTS_DIRECTORY = os.getenv("M3U_PLAYLISTS_DIRECTORY_SSD")
+M3U_PLAYLISTS_DIRECTORY_SSD = os.getenv("M3U_PLAYLISTS_DIRECTORY_SSD")
+M3U_PLAYLISTS_DIRECTORY = os.getenv("M3U_PLAYLISTS_DIRECTORY")
 
 program_logger = setup_logger('program', 'sql/program.log')
 
@@ -89,7 +90,7 @@ def main():
     if args.generate_m3u:
         m3u_dir = args.m3u_dir
         organize_songs_into_m3u_playlists(
-            MASTER_TRACKS_DIRECTORY_SSD,
+            MASTER_TRACKS_DIRECTORY,
             m3u_dir,
             extended=not args.no_extended_m3u,
             dry_run=args.dry_run,
@@ -108,13 +109,13 @@ def main():
 
     # * Validation
     if args.count_track_ids:
-        count_tracks_with_id(MASTER_TRACKS_DIRECTORY_SSD)
+        count_tracks_with_id(MASTER_TRACKS_DIRECTORY)
 
     if args.validate_tracks or args.validate_all:
-        validate_master_tracks(MASTER_TRACKS_DIRECTORY_SSD)
+        validate_master_tracks(MASTER_TRACKS_DIRECTORY)
 
     if args.validate_lengths or args.validate_all:
-        validate_song_lengths(MASTER_TRACKS_DIRECTORY_SSD)
+        validate_song_lengths(MASTER_TRACKS_DIRECTORY)
 
     # * Cache management
     if args.clear_cache:

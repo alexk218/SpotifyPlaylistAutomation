@@ -87,7 +87,7 @@ class PlaylistRepository(BaseRepository[Playlist]):
 
     def get_by_name(self, name: str) -> Optional[Playlist]:
         """
-        Get a playlist by its exact name.
+        Get a playlist by its name, with better whitespace handling.
 
         Args:
             name: The playlist name to look up
@@ -95,19 +95,39 @@ class PlaylistRepository(BaseRepository[Playlist]):
         Returns:
             Playlist object or None if not found
         """
+        # Handle None or empty string
+        if not name:
+            return None
+
+        # Normalize the name by trimming whitespace
+        normalized_name = name.strip()
+
+        # Try exact match first with normalized values
         query = """
             SELECT * FROM Playlists 
-            WHERE RTRIM(PlaylistName) = ?
+            WHERE RTRIM(LTRIM(PlaylistName)) = ?
         """
-        result = self.fetch_one(query, (name,))
+        result = self.fetch_one(query, (normalized_name,))
 
         if result:
             return self._map_to_model(result)
+
+        # If no exact match, try case-insensitive
+        query = """
+            SELECT * FROM Playlists 
+            WHERE LOWER(RTRIM(LTRIM(PlaylistName))) = LOWER(?)
+        """
+        result = self.fetch_one(query, (normalized_name,))
+
+        if result:
+            self.db_logger.info(f"Found playlist '{result.PlaylistName}' with case-insensitive match for '{name}'")
+            return self._map_to_model(result)
+
         return None
 
     def find_by_name(self, name_part: str) -> List[Playlist]:
         """
-        Find playlists by partial name match.
+        Find playlists by partial name match, with improved whitespace handling.
 
         Args:
             name_part: Part of playlist name to search for
@@ -115,12 +135,19 @@ class PlaylistRepository(BaseRepository[Playlist]):
         Returns:
             List of matching Playlist objects
         """
+        if not name_part:
+            return []
+
+        # Normalize the search string
+        normalized_search = name_part.strip()
+
         query = """
             SELECT * FROM Playlists
-            WHERE PlaylistName LIKE ?
+            WHERE LOWER(PlaylistName) LIKE LOWER(?)
         """
-        results = self.fetch_all(query, (f"%{name_part}%",))
+        results = self.fetch_all(query, (f"%{normalized_search}%",))
         return [self._map_to_model(row) for row in results]
+
 
     def get_playlists_for_track(self, track_id: str) -> List[Playlist]:
         """
