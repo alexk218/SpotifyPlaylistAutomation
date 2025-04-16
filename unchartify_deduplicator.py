@@ -243,15 +243,6 @@ def deduplicate_unchartify_playlists(spotify_client, dry_run: bool = False,
                     # Print summary to console
                     print(f"Found {len(tracks_to_remove)} duplicates to remove")
 
-                    # Log some sample duplicates
-                    sample_limit = min(3, len(tracks_to_remove))
-                    if sample_limit > 0:
-                        print("Sample duplicates to be removed:")
-                        for i in range(sample_limit):
-                            print(f"  - {get_track_display_info(tracks_to_remove[i])}")
-
-                        if len(tracks_to_remove) > sample_limit:
-                            print(f"  - ...and {len(tracks_to_remove) - sample_limit} more")
                 else:
                     report_file.write("No duplicates found in this playlist.\n")
                     print("No duplicates found in this playlist.")
@@ -347,6 +338,7 @@ def deduplicate_unchartify_playlists(spotify_client, dry_run: bool = False,
                     print("=" * 80)
 
                     group_count = 1
+                    tracks_by_group = {}
                     for primary_id, group in duplicates_by_primary.items():
                         keep_track = group['keep']
                         duplicates = group['duplicates']
@@ -355,18 +347,64 @@ def deduplicate_unchartify_playlists(spotify_client, dry_run: bool = False,
                             print(f"\nGroup {group_count}: KEEPING:")
                             print(f"  ✅ {get_track_display_info(keep_track)}")
                             print(f"  REMOVING:")
+
+                            # Store tracks in this group for possible exclusion
+                            tracks_by_group[group_count] = []
+
                             for i, dupe in enumerate(duplicates, 1):
                                 print(f"  ❌ {i}. {get_track_display_info(dupe)}")
+                                tracks_by_group[group_count].append(dupe)
+
                             group_count += 1
 
                     print("\n" + "=" * 80)
                     confirmation = input(
-                        f"\nRemove all {len(tracks_to_remove)} tracks shown above from '{playlist_name}'? (y/n): ")
+                        f"\nRemove duplicates? (y: remove all, n: cancel, or enter group numbers to exclude from removal, e.g., '48,16'): ")
 
-                    if confirmation.lower() != 'y':
+                    if confirmation.lower() == 'n':
                         print("Skipping removal for this playlist.")
                         report_file.write(f"\nUser skipped removal of {len(tracks_to_remove)} tracks.\n")
                         continue
+                    elif confirmation.lower() != 'y':
+                        # User specified groups to exclude
+                        try:
+                            # Parse the input as a list of group numbers
+                            exclude_groups = [int(group.strip()) for group in confirmation.split(',') if group.strip()]
+
+                            # Track how many were excluded
+                            excluded_count = 0
+
+                            # Remove the tracks from excluded groups from the removal list
+                            for group_num in exclude_groups:
+                                if group_num in tracks_by_group:
+                                    print(f"Excluding Group {group_num} from removal")
+                                    for track in tracks_by_group[group_num]:
+                                        if track in tracks_to_remove:
+                                            tracks_to_remove.remove(track)
+                                            excluded_count += 1
+                                            dedup_logger.info(
+                                                f"Excluded track from removal: {get_track_display_info(track)}")
+                                else:
+                                    print(f"Warning: Group {group_num} not found")
+
+                            print(f"Excluded {excluded_count} tracks from removal")
+
+                            # If no tracks left to remove after exclusions
+                            if not tracks_to_remove:
+                                print("No tracks to remove after exclusions.")
+                                continue
+
+                            # Ask for final confirmation with updated count
+                            final_confirm = input(
+                                f"\nRemove {len(tracks_to_remove)} tracks (after exclusions)? (y/n): ")
+                            if final_confirm.lower() != 'y':
+                                print("Operation cancelled.")
+                                continue
+
+                        except Exception as e:
+                            print(f"Error processing exclusions: {e}")
+                            print("Please use a comma-separated list of group numbers (e.g., '48,16')")
+                            continue
 
                     print(f"Removing {len(tracks_to_remove)} duplicate tracks...")
                     success = remove_tracks_from_playlist(spotify_client, playlist_id, tracks_to_remove)
