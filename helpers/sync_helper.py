@@ -210,6 +210,19 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
     for track_data in master_tracks:
         track_id, track_title, artist_names, album_name, added_at = track_data
 
+        # Check if this is a local file (track_id is None)
+        is_local = track_id is None
+
+        # For local files, generate a predictable ID based on the title and artist
+        if is_local:
+            # Create a stable identifier for local files
+            import hashlib
+            local_id = f"local_{hashlib.md5(f'{track_title}_{artist_names}'.encode()).hexdigest()[:16]}"
+            track_id = local_id
+
+            # Log the local file
+            sync_logger.info(f"Processing local file: {track_title} by {artist_names} -> {track_id}")
+
         # Check if track exists in database
         if track_id in existing_tracks:
             existing_track = existing_tracks[track_id]
@@ -225,6 +238,7 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
                     'title': track_title,
                     'artists': artist_names,
                     'album': album_name,
+                    'is_local': is_local,
                     'old_title': existing_track.title,
                     'old_artists': existing_track.artists,
                     'old_album': existing_track.album
@@ -238,7 +252,8 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
                 'title': track_title,
                 'artists': artist_names,
                 'album': album_name,
-                'added_at': added_at
+                'added_at': added_at,
+                'is_local': is_local
             })
 
     # Display summary of changes
@@ -255,7 +270,8 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
         # Sort by artist for better readability
         sorted_tracks = sorted(tracks_to_add, key=lambda x: x['artists'] + x['title'])
         for i, track in enumerate(sorted_tracks[:10], 1):  # Show first 10
-            print(f"{i}. {track['artists']} - {track['title']} ({track['album']})")
+            local_indicator = " (LOCAL)" if track['is_local'] else ""
+            print(f"{i}. {track['artists']} - {track['title']} ({track['album']}){local_indicator}")
         if len(sorted_tracks) > 10:
             print(f"...and {len(sorted_tracks) - 10} more tracks")
 
@@ -264,8 +280,9 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
         print("================")
         sorted_updates = sorted(tracks_to_update, key=lambda x: x['artists'] + x['title'])
         for i, track in enumerate(sorted_updates[:10], 1):  # Show first 10
+            local_indicator = " (LOCAL)" if track['is_local'] else ""
             print(f"{i}. {track['id']}: {track['old_artists']} - {track['old_title']}")
-            print(f"   → {track['artists']} - {track['title']}")
+            print(f"   → {track['artists']} - {track['title']}{local_indicator}")
             if track['old_album'] != track['album']:
                 print(f"     Album: {track['old_album']} → {track['album']}")
         if len(sorted_updates) > 10:
@@ -295,6 +312,14 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
             artist_names = track_data['artists']
             album_name = track_data['album']
             added_at = track_data['added_at']
+            is_local = track_data['is_local']
+
+            # Determine local path if it's a local file (can be enhanced later)
+            local_path = None
+            if is_local:
+                # This would be where you could search for the local file path
+                # For now, we'll just store that it's a local file
+                pass
 
             # Create new track
             new_track = Track(
@@ -302,7 +327,9 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
                 title=track_title,
                 artists=artist_names,
                 album=album_name,
-                added_to_master=added_at
+                added_to_master=added_at,
+                is_local=is_local,
+                local_path=local_path
             )
             uow.track_repository.insert(new_track)
             added_count += 1
@@ -314,14 +341,17 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
             track_title = track_data['title']
             artist_names = track_data['artists']
             album_name = track_data['album']
+            is_local = track_data['is_local']
 
             # Get the existing track
             existing_track = existing_tracks[track_id]
 
-            # Update the track
+            # Update the track - keep existing local_path if it's set
             existing_track.title = track_title
             existing_track.artists = artist_names
             existing_track.album = album_name
+            existing_track.is_local = is_local
+
             uow.track_repository.update(existing_track)
             updated_count += 1
             sync_logger.info(f"Updated track: {track_title} (ID: {track_id})")

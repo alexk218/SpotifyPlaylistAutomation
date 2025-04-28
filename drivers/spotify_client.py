@@ -167,14 +167,14 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=F
                 break
             all_tracks.extend(
                 (
-                    track['track']['id'],
+                    track['track'].get('id'),
                     track['track']['name'],
                     ", ".join([artist['name'] for artist in track['track']['artists']]),
-                    track['track']['album']['name'],
+                    track['track'].get('album', {}).get('name', 'Local File'),
                     datetime.strptime(track['added_at'], '%Y-%m-%dT%H:%M:%SZ')
                 )
                 for track in tracks['items']
-                if track['track'] is not None  # Skip None tracks (can happen with deleted songs)
+                if track['track'] is not None
             )
             offset += limit
             if not tracks['next']:

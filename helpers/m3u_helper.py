@@ -260,6 +260,187 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
         m3u_logger.info(f"Playlist file already exists and overwrite=False: {m3u_path}")
         return 0, 0
 
+    # Get track IDs and details for this playlist from the database
+    with UnitOfWork() as uow:
+        track_ids = set(uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
+        m3u_logger.info(f"Found {len(track_ids)} tracks for playlist '{playlist_name}' in database")
+
+        # Get track details for each track
+        track_details = {}
+        for track_id in track_ids:
+            track = uow.track_repository.get_by_id(track_id)
+            if track:
+                track_details[track_id] = {
+                    'title': track.title,
+                    'artists': track.artists,
+                    'album': track.album,
+                    'is_local': track.is_local if hasattr(track, 'is_local') else False
+                }
+
+    # If track_id_map is provided, use it for efficient playlist generation
+    if track_id_map is not None:
+        # Get track details for the tracks that we have files for
+        tracks_to_add = []
+        for track_id in track_ids:
+            if track_id not in track_details:
+                continue
+
+            details = track_details[track_id]
+
+            # Check if this is a local file
+            if details['is_local'] or track_id.startswith('local_'):
+                # Handle local file - try to find it in the music library
+                local_path = find_local_file_path(details['title'], details['artists'], master_tracks_dir)
+                if local_path:
+                    tracks_to_add.append({
+                        'id': track_id,
+                        'path': local_path,
+                        'title': details['title'],
+                        'artists': details['artists'],
+                        'duration': get_track_duration(local_path)
+                    })
+                    m3u_logger.info(f"Found local file for '{details['artists']} - {details['title']}'")
+                else:
+                    m3u_logger.warning(f"Could not find local file for '{details['artists']} - {details['title']}'")
+            elif track_id in track_id_map:
+                # Regular Spotify track
+                file_path = track_id_map[track_id]
+                tracks_to_add.append({
+                    'id': track_id,
+                    'path': file_path,
+                    'title': details['title'],
+                    'artists': details['artists'],
+                    'duration': get_track_duration(file_path)
+                })
+
+        # Write the M3U file
+        with open(m3u_path, "w", encoding="utf-8") as m3u_file:
+            # Write M3U header
+            m3u_file.write("#EXTM3U\n")
+
+            # Write each track
+            for track in tracks_to_add:
+                if extended:
+                    # #EXTINF:duration,Artist - Title
+                    m3u_file.write(f"#EXTINF:{track['duration']},{track['artists']} - {track['title']}\n")
+
+                # Write the file path
+                m3u_file.write(f"{track['path']}\n")
+
+        tracks_found = len(track_ids.intersection(set(track_id_map.keys())))
+        tracks_added = len(tracks_to_add)
+
+        m3u_logger.info(f"Created M3U playlist '{m3u_path}' with {tracks_added} tracks")
+        m3u_logger.info(f"Found {tracks_found} tracks out of {len(track_ids)} total in playlist")
+
+        return tracks_found, tracks_added
+
+    # Original implementation when track_id_map is not provided
+    tracks_found = 0
+    tracks_added = 0
+    track_paths = []
+
+    # First process local files
+    for track_id in track_ids:
+        if track_id.startswith('local_') and track_id in track_details:
+            details = track_details[track_id]
+
+            # Try to find the local file
+            local_path = find_local_file_path(details['title'], details['artists'], master_tracks_dir)
+
+            if local_path:
+                tracks_found += 1
+                track_paths.append({
+                    'path': os.path.abspath(local_path),
+                    'title': details['title'],
+                    'artists': details['artists'],
+                    'duration': get_track_duration(local_path)
+                })
+                m3u_logger.info(f"Found local file for '{details['artists']} - {details['title']}'")
+
+    # Then process regular Spotify tracks
+    for root, _, files in os.walk(master_tracks_dir):
+        for filename in files:
+            if not filename.lower().endswith('.mp3'):
+                continue
+
+            file_path = os.path.join(root, filename)
+
+            # Check if this file has one of our track IDs
+            try:
+                tags = ID3(file_path)
+                if 'TXXX:TRACKID' in tags:
+                    track_id = tags['TXXX:TRACKID'].text[0]
+                    if track_id in track_ids and not track_id.startswith('local_'):
+                        tracks_found += 1
+
+                        # Get track details if available
+                        details = track_details.get(track_id, {})
+                        title = details.get('title', os.path.splitext(filename)[0])
+                        artists = details.get('artists', 'Unknown Artist')
+
+                        # Store both the path and metadata
+                        track_paths.append({
+                            'path': os.path.abspath(file_path),
+                            'title': title,
+                            'artists': artists,
+                            'duration': get_track_duration(file_path)
+                        })
+            except Exception as e:
+                m3u_logger.error(f"Error processing file {file_path}: {e}")
+                continue
+
+    # Write the M3U file
+    with open(m3u_path, "w", encoding="utf-8") as m3u_file:
+        # Write header
+        m3u_file.write("#EXTM3U\n")
+
+        for track in track_paths:
+            if extended:
+                # Extended M3U format with track info
+                # #EXTINF:duration,Artist - Title
+                m3u_file.write(f"#EXTINF:{track['duration']},{track['artists']} - {track['title']}\n")
+
+            # Write the file path
+            m3u_file.write(f"{track['path']}\n")
+            tracks_added += 1
+
+    m3u_logger.info(f"Created M3U playlist '{m3u_path}' with {tracks_added} tracks")
+    return tracks_found, tracks_added
+
+
+def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_dir: str,
+                          playlists_dir: str, extended: bool = True, overwrite: bool = True,
+                          track_id_map: Dict[str, str] = None) -> Tuple[int, int]:
+    """
+    Generate an M3U playlist file for a specific playlist.
+
+    Args:
+        playlist_name: Name of the playlist
+        playlist_id: Spotify ID of the playlist
+        master_tracks_dir: Directory containing the master tracks
+        playlists_dir: Directory where playlist files will be created
+        extended: Whether to use extended M3U format with metadata
+        overwrite: Whether to overwrite existing playlist files
+        track_id_map: Optional mapping of track_id to file_path for optimization
+
+    Returns:
+        Tuple of (tracks_found, tracks_added) counts
+    """
+    m3u_logger.info(f"Generating M3U playlist for: {playlist_name}")
+
+    # Ensure the playlists directory exists
+    os.makedirs(playlists_dir, exist_ok=True)
+
+    # Sanitize the playlist name for use as a filename, but preserve spaces
+    safe_playlist_name = sanitize_filename(playlist_name, preserve_spaces=True)
+    m3u_path = os.path.join(playlists_dir, f"{safe_playlist_name}.m3u")
+
+    # Check if file already exists and handle accordingly
+    if os.path.exists(m3u_path) and not overwrite:
+        m3u_logger.info(f"Playlist file already exists and overwrite=False: {m3u_path}")
+        return 0, 0
+
     # If track_id_map is provided, use it for efficient playlist generation
     if track_id_map is not None:
         # Get track IDs for this playlist from the database
@@ -269,9 +450,25 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
             # Get track details for the tracks that we have files for
             tracks_to_add = []
             for track_id in track_ids:
-                if track_id in track_id_map:
-                    track = uow.track_repository.get_by_id(track_id)
-                    if track:
+                track = uow.track_repository.get_by_id(track_id)
+                if track:
+                    # Check if this is a local file
+                    if track.is_local or track_id.startswith('local_'):
+                        # Handle local file - try to find it in the music library
+                        local_path = find_local_file_path(track.title, track.artists, master_tracks_dir)
+                        if local_path:
+                            tracks_to_add.append({
+                                'id': track_id,
+                                'path': local_path,
+                                'title': track.title,
+                                'artists': track.artists,
+                                'duration': get_track_duration(local_path)
+                            })
+                            m3u_logger.info(f"Found local file for '{track.artists} - {track.title}'")
+                        else:
+                            m3u_logger.warning(f"Could not find local file for '{track.artists} - {track.title}'")
+                    elif track_id in track_id_map:
+                        # Regular Spotify track
                         file_path = track_id_map[track_id]
                         tracks_to_add.append({
                             'id': track_id,
@@ -317,7 +514,8 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
                 track_details[track_id] = {
                     'title': track.title,
                     'artists': track.artists,
-                    'album': track.album
+                    'album': track.album,
+                    'is_local': track.is_local if hasattr(track, 'is_local') else False
                 }
 
     # Find the actual files in the master directory
@@ -328,6 +526,25 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
     # First build a set of track IDs for faster lookup
     track_id_set = set(track_ids)
 
+    # First process local files
+    for track_id in track_ids:
+        if track_id.startswith('local_') and track_id in track_details:
+            track_info = track_details[track_id]
+
+            # Try to find the local file
+            local_path = find_local_file_path(track_info['title'], track_info['artists'], master_tracks_dir)
+
+            if local_path:
+                tracks_found += 1
+                track_paths.append({
+                    'path': os.path.abspath(local_path),
+                    'title': track_info['title'],
+                    'artists': track_info['artists'],
+                    'duration': get_track_duration(local_path)
+                })
+                m3u_logger.info(f"Found local file for '{track_info['artists']} - {track_info['title']}'")
+
+    # Then process regular Spotify tracks
     for root, _, files in os.walk(master_tracks_dir):
         for filename in files:
             if not filename.lower().endswith('.mp3'):
@@ -340,7 +557,7 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
                 tags = ID3(file_path)
                 if 'TXXX:TRACKID' in tags:
                     track_id = tags['TXXX:TRACKID'].text[0]
-                    if track_id in track_id_set:
+                    if track_id in track_id_set and not track_id.startswith('local_'):
                         tracks_found += 1
 
                         # Get track details if available
@@ -378,158 +595,76 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
     return tracks_found, tracks_added
 
 
-def generate_all_m3u_playlists(master_tracks_dir: str, playlists_dir: str,
-                               extended: bool = True, skip_master: bool = True,
-                               overwrite: bool = True, only_changed: bool = True,
-                               changed_playlists: List[str] = None,
-                               track_id_map: Dict[str, str] = None) -> Dict[str, Any]:
+def find_local_file_path(title: str, artists: str, music_dir: str) -> Optional[str]:
     """
-    Generate M3U playlist files for all playlists in the database.
+    Try to find a local file in the music directory that matches the given title and artist.
 
     Args:
-        master_tracks_dir: Directory containing the master tracks
-        playlists_dir: Directory where playlist files will be created
-        extended: Whether to use extended M3U format with metadata
-        skip_master: Whether to skip the MASTER playlist
-        overwrite: Whether to overwrite existing M3U files
-        only_changed: Only update playlists that have changed
-        changed_playlists: List of playlist names that have changed (if None, determine automatically)
-        track_id_map: Optional pre-built mapping of track_ids to file paths for optimization
+        title: The track title to search for
+        artists: The artist name(s) to search for
+        music_dir: The directory to search in
 
     Returns:
-        Dictionary with statistics about the generation process
+        Path to the matching file, or None if not found
     """
-    m3u_logger.info("Starting generation of all M3U playlists")
+    import Levenshtein
 
-    # Create logs directory for reports
-    logs_dir = project_root / 'logs'
-    logs_dir.mkdir(exist_ok=True)
-    m3u_logs_dir = logs_dir / 'm3u_validation'
-    m3u_logs_dir.mkdir(exist_ok=True)
+    # Clean up title and artists for comparison
+    title_clean = title.lower().strip()
+    artists_clean = artists.lower().strip()
 
-    # Ensure the playlists directory exists
-    os.makedirs(playlists_dir, exist_ok=True)
+    # Try to extract primary artist
+    primary_artist = artists_clean.split(',')[0].strip()
 
-    # Get all playlists from the database
-    with UnitOfWork() as uow:
-        playlists = uow.playlist_repository.get_all()
-        m3u_logger.info(f"Found {len(playlists)} playlists in database")
+    # Common patterns to try
+    patterns = [
+        f"{primary_artist} - {title_clean}",
+        f"{title_clean} - {primary_artist}",
+        f"{primary_artist}_{title_clean}",
+        title_clean,
+    ]
 
-    # Initialize statistics
-    stats = {
-        'total_playlists': len(playlists),
-        'playlists_created': 0,
-        'playlists_updated': 0,
-        'playlists_unchanged': 0,
-        'total_tracks_found': 0,
-        'total_tracks_added': 0,
-        'empty_playlists': [],
-        'changed_playlists': [],  # Track which playlists changed
-        'playlist_changes': {}  # Detailed changes for each playlist
-    }
-
-    # Convert changed_playlists to a set for faster lookup if provided
-    changed_playlist_set = set(changed_playlists or [])
-
-    # If no track_id_map was provided, build one (this is the expensive operation)
-    if track_id_map is None and only_changed:
-        track_id_map = build_track_id_mapping(master_tracks_dir)
-
-    # Generate a playlist file for each playlist
-    for playlist in playlists:
-        # Skip MASTER playlist if requested
-        if skip_master and playlist.name.upper() == "MASTER":
-            m3u_logger.info(f"Skipping MASTER playlist")
-            continue
-
-        # Sanitize the playlist name for use as a filename
-        safe_playlist_name = sanitize_filename(playlist.name, preserve_spaces=True)
-        m3u_path = os.path.join(playlists_dir, f"{safe_playlist_name}.m3u")
-
-        # Skip if only processing changed playlists and this one hasn't changed
-        if only_changed and changed_playlists is not None and playlist.name not in changed_playlist_set:
-            if os.path.exists(m3u_path):
-                m3u_logger.info(f"Playlist '{playlist.name}' is unchanged, skipping.")
-                stats['playlists_unchanged'] += 1
+    # First try exact matches with common patterns
+    for root, _, files in os.walk(music_dir):
+        for file in files:
+            if not file.lower().endswith('.mp3'):
                 continue
 
-        # If this is a new playlist that doesn't exist yet, we should create it
-        if not os.path.exists(m3u_path):
-            m3u_logger.info(f"New playlist file will be created: {m3u_path}")
-        else:
-            m3u_logger.info(f"Updating existing playlist file: {m3u_path}")
+            file_name = os.path.splitext(file)[0].lower()
 
-        m3u_logger.info(f"Processing playlist: {playlist.name} (ID: {playlist.playlist_id})")
+            # Check each pattern
+            for pattern in patterns:
+                if pattern in file_name:
+                    return os.path.join(root, file)
 
-        # Generate the M3U file
-        tracks_found, tracks_added = generate_m3u_playlist(
-            playlist.name,
-            playlist.playlist_id,
-            master_tracks_dir,
-            playlists_dir,
-            extended,
-            overwrite,
-            track_id_map
-        )
+    # If no exact match, try fuzzy matching
+    best_match = None
+    best_score = 0.7  # Minimum similarity threshold
 
-        stats['total_tracks_found'] += tracks_found
-        stats['total_tracks_added'] += tracks_added
+    for root, _, files in os.walk(music_dir):
+        for file in files:
+            if not file.lower().endswith('.mp3'):
+                continue
 
-        if tracks_added > 0:
-            if os.path.exists(m3u_path) and os.path.getmtime(m3u_path) < time.time() - 60:  # Older than 1 minute
-                stats['playlists_updated'] += 1
-            else:
-                stats['playlists_created'] += 1
+            file_name = os.path.splitext(file)[0].lower()
 
-            # Mark as changed for reporting
-            stats['changed_playlists'].append(playlist.name)
-        else:
-            stats['empty_playlists'].append(playlist.name)
+            # Try to match "{artist} - {title}" pattern
+            expected = f"{primary_artist} - {title_clean}"
+            similarity = Levenshtein.ratio(expected, file_name)
 
-    # Generate a report file
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = m3u_logs_dir / f"m3u_generation_{timestamp}.log"
+            if similarity > best_score:
+                best_score = similarity
+                best_match = os.path.join(root, file)
 
-    with open(report_path, "w", encoding="utf-8") as report:
-        report.write("M3U Playlist Generation Report\n")
-        report.write("============================\n\n")
-        report.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        report.write(f"Master tracks directory: {master_tracks_dir}\n")
-        report.write(f"Playlists directory: {playlists_dir}\n\n")
+            # Also try "{title} - {artist}" pattern
+            expected = f"{title_clean} - {primary_artist}"
+            similarity = Levenshtein.ratio(expected, file_name)
 
-        report.write("Statistics:\n")
-        report.write(f"  Total playlists in database: {stats['total_playlists']}\n")
-        report.write(f"  New playlists created: {stats['playlists_created']}\n")
-        report.write(f"  Existing playlists updated: {stats['playlists_updated']}\n")
-        report.write(f"  Playlists unchanged: {stats['playlists_unchanged']}\n")
-        report.write(f"  Total tracks found: {stats['total_tracks_found']}\n")
-        report.write(f"  Total tracks added to playlists: {stats['total_tracks_added']}\n")
+            if similarity > best_score:
+                best_score = similarity
+                best_match = os.path.join(root, file)
 
-        if stats['changed_playlists']:
-            report.write("\nChanged Playlists:\n")
-            for playlist_name in stats['changed_playlists']:
-                changes = stats['playlist_changes'].get(playlist_name, {})
-                report.write(f"  - {playlist_name}:\n")
-
-                if changes:
-                    report.write(
-                        f"      {changes.get('added_tracks', 'N/A')} tracks added, "
-                        f"{changes.get('removed_tracks', 'N/A')} tracks removed\n"
-                    )
-
-                    if changes.get('added_details'):
-                        report.write("      Sample additions:\n")
-                        for track in changes['added_details']:
-                            report.write(f"        * {track}\n")
-                report.write("\n")
-
-        if stats['empty_playlists']:
-            report.write("\nEmpty playlists (no tracks found):\n")
-            for playlist in stats['empty_playlists']:
-                report.write(f"  - {playlist}\n")
-
-    m3u_logger.info(f"M3U playlist generation complete. Report saved to: {report_path}")
-    return stats
+    return best_match
 
 
 def get_track_duration(file_path: str) -> int:

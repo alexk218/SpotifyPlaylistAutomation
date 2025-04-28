@@ -25,49 +25,40 @@ class TrackRepository(BaseRepository[Track]):
     def insert(self, track: Track) -> None:
         """
         Insert a new track into the database.
-
-        Args:
-            track: The Track object to insert
-
-        Raises:
-            Exception: If insert fails
         """
         query = """
-            INSERT INTO Tracks (TrackId, TrackTitle, Artists, Album, AddedToMaster)
-            VALUES (?, ?, ?, ?, ?)
-        """
+                INSERT INTO Tracks (TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, LocalPath)
+                VALUES (?, ?, ?, ?, ?, ?, ?) \
+                """
         self.execute_non_query(query, (
             track.track_id,
             track.title,
             track.artists,
             track.album,
-            track.added_to_master
+            track.added_to_master,
+            1 if track.is_local else 0,
+            track.local_path
         ))
         self.db_logger.info(f"Inserted track: {track.track_id} - {track.title}")
 
     def update(self, track: Track) -> bool:
-        """
-        Update an existing track in the database.
-
-        Args:
-            track: The Track object to update
-
-        Returns:
-            True if the track was updated, False if it wasn't found
-
-        Raises:
-            Exception: If update fails
-        """
         query = """
-            UPDATE Tracks 
-            SET TrackTitle = ?, Artists = ?, Album = ?, AddedToMaster = ?
-            WHERE TrackId = ?
-        """
+                UPDATE Tracks
+                SET TrackTitle    = ?, \
+                    Artists       = ?, \
+                    Album         = ?, \
+                    AddedToMaster = ?, \
+                    IsLocal       = ?, \
+                    LocalPath     = ?
+                WHERE TrackId = ? \
+                """
         rows_affected = self.execute_non_query(query, (
             track.title,
             track.artists,
             track.album,
             track.added_to_master,
+            1 if track.is_local else 0,  # Convert boolean to bit
+            track.local_path,
             track.track_id
         ))
 
@@ -126,9 +117,11 @@ class TrackRepository(BaseRepository[Track]):
             List of matching Track objects
         """
         query = """
-            SELECT * FROM Tracks
-            WHERE TrackTitle LIKE ? AND Artists LIKE ?
-        """
+                SELECT *
+                FROM Tracks
+                WHERE TrackTitle LIKE ?
+                  AND Artists LIKE ? \
+                """
         results = self.fetch_all(query, (f"%{title}%", f"%{artist}%"))
         return [self._map_to_model(row) for row in results]
 
@@ -143,10 +136,11 @@ class TrackRepository(BaseRepository[Track]):
             List of Track objects added since the date
         """
         query = """
-            SELECT * FROM Tracks
-            WHERE AddedToMaster >= ?
-            ORDER BY AddedToMaster DESC
-        """
+                SELECT *
+                FROM Tracks
+                WHERE AddedToMaster >= ?
+                ORDER BY AddedToMaster DESC \
+                """
         results = self.fetch_all(query, (since_date,))
         return [self._map_to_model(row) for row in results]
 
@@ -161,10 +155,11 @@ class TrackRepository(BaseRepository[Track]):
             List of Track objects in the playlist
         """
         query = """
-            SELECT t.* FROM Tracks t
-            JOIN TrackPlaylists tp ON t.TrackId = tp.TrackId
-            WHERE tp.PlaylistId = ?
-        """
+                SELECT t.*
+                FROM Tracks t
+                         JOIN TrackPlaylists tp ON t.TrackId = tp.TrackId
+                WHERE tp.PlaylistId = ? \
+                """
         results = self.fetch_all(query, (playlist_id,))
         return [self._map_to_model(row) for row in results]
 
@@ -176,10 +171,11 @@ class TrackRepository(BaseRepository[Track]):
             List of Track objects not in any playlist
         """
         query = """
-            SELECT t.* FROM Tracks t
-            LEFT JOIN TrackPlaylists tp ON t.TrackId = tp.TrackId
-            WHERE tp.TrackId IS NULL
-        """
+                SELECT t.*
+                FROM Tracks t
+                         LEFT JOIN TrackPlaylists tp ON t.TrackId = tp.TrackId
+                WHERE tp.TrackId IS NULL \
+                """
         results = self.fetch_all(query)
         return [self._map_to_model(row) for row in results]
 
@@ -191,8 +187,9 @@ class TrackRepository(BaseRepository[Track]):
             Tuple of (tracks_with_ids, total_tracks)
         """
         query = """
-            SELECT COUNT(*) as total FROM Tracks
-        """
+                SELECT COUNT(*) as total
+                FROM Tracks \
+                """
         result = self.fetch_one(query)
         total_tracks = result.total if result else 0
 
@@ -215,6 +212,8 @@ class TrackRepository(BaseRepository[Track]):
         artists = row.Artists
         album = row.Album
         added_to_master = row.AddedToMaster if hasattr(row, 'AddedToMaster') else None
+        is_local = bool(row.IsLocal) if hasattr(row, 'IsLocal') else False
+        local_path = row.LocalPath if hasattr(row, 'LocalPath') else None
 
         # Create and return a Track object
-        return Track(track_id, title, artists, album, added_to_master)
+        return Track(track_id, title, artists, album, added_to_master, is_local, local_path)
