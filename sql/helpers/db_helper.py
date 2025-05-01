@@ -77,14 +77,13 @@ def insert_playlists():
     my_playlists = fetch_playlists(spotify_client)
 
     with UnitOfWork() as uow:
-        for playlist_name, playlist_description, playlist_id in my_playlists:
+        for playlist_name, playlist_id in my_playlists:
             db_logger.info(f"Inserting playlist: {playlist_name}")
 
             # Create a Playlist domain object
             playlist = Playlist(
                 playlist_id=playlist_id,
-                name=playlist_name.strip(),
-                description=playlist_description
+                name=playlist_name.strip()
             )
 
             # Insert using the repository

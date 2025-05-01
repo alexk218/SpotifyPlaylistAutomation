@@ -70,7 +70,7 @@ def is_forbidden_playlist(name: str, description: str) -> bool:
     return False
 
 
-def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> List[Tuple[str, str, str]]:
+def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> List[Tuple[str, str]]:
     """
     Fetch all user's private playlists (self-created), excluding forbidden playlists.
     Uses cache if available and not forcing refresh.
@@ -81,7 +81,7 @@ def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> Lis
         force_refresh: Whether to force a refresh from the API
 
     Returns:
-        List of tuples containing (PlaylistName, PlaylistDescription, PlaylistId)
+        List of tuples containing (PlaylistName, PlaylistId)
     """
     # Try to get playlists from cache first
     if not force_refresh:
@@ -114,7 +114,6 @@ def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> Lis
     my_playlists = [
         (
             playlist['name'],
-            html.unescape(playlist['description'] or ""),
             playlist['id']
         )
         for playlist in all_playlists
@@ -382,7 +381,7 @@ def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[s
 
     # For each playlist, check which master tracks it contains
     # This is more efficient than checking each track against all playlists
-    for playlist_name, playlist_description, playlist_id in other_playlists:
+    for playlist_name, playlist_id in other_playlists:
         spotify_logger.info(f"Checking tracks for playlist: {playlist_name} (ID: {playlist_id})")
 
         # Get track IDs for this playlist - pass force_refresh to ensure fresh data

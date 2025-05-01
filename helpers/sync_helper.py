@@ -57,7 +57,7 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
     print("Starting incremental playlist sync...")
 
     # Get existing playlists from database
-    existing_playlists = get_db_playlists() if not force_full_refresh else {}
+    existing_playlists = get_db_playlists()
     sync_logger.info(f"Found {len(existing_playlists)} existing playlists in database")
 
     # Fetch all playlists from Spotify
@@ -71,22 +71,19 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
     unchanged_count = 0
 
     # Analyze changes (without applying them yet)
-    for playlist_name, playlist_description, playlist_id in spotify_playlists:
+    for playlist_name, playlist_id in spotify_playlists:
         # Check if playlist exists in database
         if playlist_id in existing_playlists:
             existing_playlist = existing_playlists[playlist_id]
 
             # Check if playlist details have changed
-            if (existing_playlist.name != playlist_name.strip() or
-                    existing_playlist.description != playlist_description):
+            if (existing_playlist.name != playlist_name.strip()):
 
                 # Mark for update
                 playlists_to_update.append({
                     'id': playlist_id,
                     'name': playlist_name.strip(),
-                    'description': playlist_description,
                     'old_name': existing_playlist.name,
-                    'old_description': existing_playlist.description
                 })
             else:
                 unchanged_count += 1
@@ -94,8 +91,7 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
             # Mark for addition
             playlists_to_add.append({
                 'id': playlist_id,
-                'name': playlist_name.strip(),
-                'description': playlist_description
+                'name': playlist_name.strip()
             })
 
     # Display summary of changes
@@ -113,8 +109,6 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
         sorted_playlists = sorted(playlists_to_add, key=lambda x: x['name'])
         for playlist in sorted_playlists:
             print(f"• {playlist['name']}")
-            if playlist['description']:
-                print(f"  Description: {playlist['description']}")
 
     if playlists_to_update:
         print("\nPLAYLISTS TO UPDATE:")
@@ -122,13 +116,6 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
         sorted_updates = sorted(playlists_to_update, key=lambda x: x['name'])
         for playlist in sorted_updates:
             print(f"• {playlist['old_name']} → {playlist['name']}")
-            if playlist['old_description'] != playlist['description']:
-                if playlist['old_description'] and playlist['description']:
-                    print(f"  Description changed")
-                elif playlist['description']:
-                    print(f"  Description added")
-                else:
-                    print(f"  Description removed")
 
     # Ask for confirmation if there are changes (unless auto_confirm is True)
     if (playlists_to_add or playlists_to_update) and not auto_confirm:
@@ -152,8 +139,7 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
             # Create new playlist
             new_playlist = Playlist(
                 playlist_id=playlist_data['id'],
-                name=playlist_data['name'],
-                description=playlist_data['description']
+                name=playlist_data['name']
             )
             uow.playlist_repository.insert(new_playlist)
             added_count += 1
@@ -166,7 +152,6 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
 
             # Update the playlist
             existing_playlist.name = playlist_data['name']
-            existing_playlist.description = playlist_data['description']
             uow.playlist_repository.update(existing_playlist)
             updated_count += 1
             sync_logger.info(f"Updated playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
@@ -194,7 +179,7 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
     print("Starting incremental master tracks sync analysis...")
 
     # Get existing tracks from database
-    existing_tracks = get_db_tracks() if not force_full_refresh else {}
+    existing_tracks = get_db_tracks()
     sync_logger.info(f"Found {len(existing_tracks)} existing tracks in database")
 
     # Fetch all tracks from the MASTER playlist
@@ -315,7 +300,6 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
             is_local = track_data['is_local']
 
             # Determine local path if it's a local file (can be enhanced later)
-            local_path = None
             if is_local:
                 # This would be where you could search for the local file path
                 # For now, we'll just store that it's a local file
@@ -329,7 +313,6 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
                 album=album_name,
                 added_to_master=added_at,
                 is_local=is_local,
-                local_path=local_path
             )
             uow.track_repository.insert(new_track)
             added_count += 1
@@ -346,7 +329,7 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
             # Get the existing track
             existing_track = existing_tracks[track_id]
 
-            # Update the track - keep existing local_path if it's set
+            # Update the track
             existing_track.title = track_title
             existing_track.artists = artist_names
             existing_track.album = album_name
@@ -397,7 +380,7 @@ def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh
     spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
 
     # Filter out the master playlist for association lookups
-    other_playlists = [pl for pl in spotify_playlists if pl[2] != master_playlist_id]
+    other_playlists = [pl for pl in spotify_playlists if pl[1] != master_playlist_id]
 
     print(f"Fetched {len(spotify_playlists)} playlists from Spotify ({len(other_playlists)} excluding MASTER)")
 
@@ -410,7 +393,7 @@ def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh
     all_track_ids = {track.track_id for track in all_tracks}
 
     # Now fetch tracks for each playlist directly from Spotify
-    for i, (playlist_name, _, playlist_id) in enumerate(other_playlists, 1):
+    for i, (playlist_name, playlist_id) in enumerate(other_playlists, 1):
         print(f"Processing playlist {i}/{len(other_playlists)}: {playlist_name}")
 
         # Always force a fresh API call to get the most up-to-date associations
@@ -770,22 +753,19 @@ def analyze_playlists_changes(force_full_refresh=False):
     unchanged_count = 0
 
     # Analyze changes
-    for playlist_name, playlist_description, playlist_id in spotify_playlists:
+    for playlist_name, playlist_id in spotify_playlists:
         # Check if playlist exists in database
         if playlist_id in existing_playlists:
             existing_playlist = existing_playlists[playlist_id]
 
             # Check if playlist details have changed
-            if (existing_playlist.name != playlist_name.strip() or
-                    existing_playlist.description != playlist_description):
+            if (existing_playlist.name != playlist_name.strip()):
 
                 # Mark for update
                 playlists_to_update.append({
                     'id': playlist_id,
                     'name': playlist_name.strip(),
-                    'description': playlist_description,
                     'old_name': existing_playlist.name,
-                    'old_description': existing_playlist.description
                 })
             else:
                 unchanged_count += 1
@@ -793,8 +773,7 @@ def analyze_playlists_changes(force_full_refresh=False):
             # Mark for addition
             playlists_to_add.append({
                 'id': playlist_id,
-                'name': playlist_name.strip(),
-                'description': playlist_description
+                'name': playlist_name.strip()
             })
 
     return len(playlists_to_add), len(playlists_to_update), unchanged_count, {

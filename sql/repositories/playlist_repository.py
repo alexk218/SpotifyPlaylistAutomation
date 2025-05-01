@@ -22,23 +22,13 @@ class PlaylistRepository(BaseRepository[Playlist]):
         self.id_column = "PlaylistId"
 
     def insert(self, playlist: Playlist) -> None:
-        """
-        Insert a new playlist into the database.
-
-        Args:
-            playlist: The Playlist object to insert
-
-        Raises:
-            Exception: If insert fails
-        """
         query = """
-            INSERT INTO Playlists (PlaylistId, PlaylistName, PlaylistDescription)
-            VALUES (?, ?, ?)
-        """
+                INSERT INTO Playlists (PlaylistId, PlaylistName, AddedDate)
+                VALUES (?, ?, GETDATE()) \
+                """
         self.execute_non_query(query, (
             playlist.playlist_id,
-            playlist.name,
-            playlist.description
+            playlist.name
         ))
         self.db_logger.info(f"Inserted playlist: {playlist.playlist_id} - {playlist.name}")
 
@@ -56,13 +46,12 @@ class PlaylistRepository(BaseRepository[Playlist]):
             Exception: If update fails
         """
         query = """
-            UPDATE Playlists 
-            SET PlaylistName = ?, PlaylistDescription = ?
-            WHERE PlaylistId = ?
-        """
+                UPDATE Playlists
+                SET PlaylistName = ?
+                WHERE PlaylistId = ? \
+                """
         rows_affected = self.execute_non_query(query, (
             playlist.name,
-            playlist.description,
             playlist.playlist_id
         ))
 
@@ -104,9 +93,10 @@ class PlaylistRepository(BaseRepository[Playlist]):
 
         # Try exact match first with normalized values
         query = """
-            SELECT * FROM Playlists 
-            WHERE RTRIM(LTRIM(PlaylistName)) = ?
-        """
+                SELECT *
+                FROM Playlists
+                WHERE RTRIM(LTRIM(PlaylistName)) = ? \
+                """
         result = self.fetch_one(query, (normalized_name,))
 
         if result:
@@ -114,9 +104,10 @@ class PlaylistRepository(BaseRepository[Playlist]):
 
         # If no exact match, try case-insensitive
         query = """
-            SELECT * FROM Playlists 
-            WHERE LOWER(RTRIM(LTRIM(PlaylistName))) = LOWER(?)
-        """
+                SELECT *
+                FROM Playlists
+                WHERE LOWER(RTRIM(LTRIM(PlaylistName))) = LOWER(?) \
+                """
         result = self.fetch_one(query, (normalized_name,))
 
         if result:
@@ -142,12 +133,12 @@ class PlaylistRepository(BaseRepository[Playlist]):
         normalized_search = name_part.strip()
 
         query = """
-            SELECT * FROM Playlists
-            WHERE LOWER(PlaylistName) LIKE LOWER(?)
-        """
+                SELECT *
+                FROM Playlists
+                WHERE LOWER(PlaylistName) LIKE LOWER(?) \
+                """
         results = self.fetch_all(query, (f"%{normalized_search}%",))
         return [self._map_to_model(row) for row in results]
-
 
     def get_playlists_for_track(self, track_id: str) -> List[Playlist]:
         """
@@ -160,10 +151,11 @@ class PlaylistRepository(BaseRepository[Playlist]):
             List of Playlist objects containing the track
         """
         query = """
-            SELECT p.* FROM Playlists p
-            JOIN TrackPlaylists tp ON p.PlaylistId = tp.PlaylistId
-            WHERE tp.TrackId = ?
-        """
+                SELECT p.*
+                FROM Playlists p
+                         JOIN TrackPlaylists tp ON p.PlaylistId = tp.PlaylistId
+                WHERE tp.TrackId = ? \
+                """
         results = self.fetch_all(query, (track_id,))
         return [self._map_to_model(row) for row in results]
 
@@ -190,6 +182,5 @@ class PlaylistRepository(BaseRepository[Playlist]):
         """
         playlist_id = row.PlaylistId
         name = row.PlaylistName.strip() if row.PlaylistName else ""
-        description = row.PlaylistDescription if hasattr(row, 'PlaylistDescription') else ""
 
-        return Playlist(playlist_id, name, description)
+        return Playlist(playlist_id, name)

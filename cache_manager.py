@@ -116,7 +116,7 @@ class SpotifyCache:
         Get playlists from cache if available and valid.
 
         Returns:
-            List of tuples (playlist_name, playlist_description, playlist_id) or None if cache is invalid
+            List of tuples (playlist_name, playlist_id) or None if cache is invalid
         """
         if 'data' in self._playlist_cache and 'timestamp' in self._playlist_cache:
             if self._is_cache_valid(self._playlist_cache['timestamp'], 'playlists'):
@@ -131,7 +131,7 @@ class SpotifyCache:
         Cache playlists data.
 
         Args:
-            playlists: List of tuples (playlist_name, playlist_description, playlist_id)
+            playlists: List of tuples (playlist_name, playlist_id)
         """
         self._playlist_cache = {
             'timestamp': time.time(),

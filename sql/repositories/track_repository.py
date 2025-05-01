@@ -23,12 +23,9 @@ class TrackRepository(BaseRepository[Track]):
         self.id_column = "TrackId"
 
     def insert(self, track: Track) -> None:
-        """
-        Insert a new track into the database.
-        """
         query = """
-                INSERT INTO Tracks (TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, LocalPath)
-                VALUES (?, ?, ?, ?, ?, ?, ?) \
+                INSERT INTO Tracks (TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, AddedDate)
+                VALUES (?, ?, ?, ?, ?, ?, GETDATE()) \
                 """
         self.execute_non_query(query, (
             track.track_id,
@@ -36,8 +33,7 @@ class TrackRepository(BaseRepository[Track]):
             track.artists,
             track.album,
             track.added_to_master,
-            1 if track.is_local else 0,
-            track.local_path
+            1 if track.is_local else 0
         ))
         self.db_logger.info(f"Inserted track: {track.track_id} - {track.title}")
 
@@ -48,8 +44,7 @@ class TrackRepository(BaseRepository[Track]):
                     Artists       = ?, \
                     Album         = ?, \
                     AddedToMaster = ?, \
-                    IsLocal       = ?, \
-                    LocalPath     = ?
+                    IsLocal       = ?
                 WHERE TrackId = ? \
                 """
         rows_affected = self.execute_non_query(query, (
@@ -57,8 +52,7 @@ class TrackRepository(BaseRepository[Track]):
             track.artists,
             track.album,
             track.added_to_master,
-            1 if track.is_local else 0,  # Convert boolean to bit
-            track.local_path,
+            1 if track.is_local else 0,
             track.track_id
         ))
 
@@ -197,15 +191,6 @@ class TrackRepository(BaseRepository[Track]):
         return total_tracks, total_tracks
 
     def _map_to_model(self, row: pyodbc.Row) -> Track:
-        """
-        Map a database row to a Track object.
-
-        Args:
-            row: Database row from the Tracks table
-
-        Returns:
-            Track object with properties set from the row
-        """
         # Extract values from the row
         track_id = row.TrackId
         title = row.TrackTitle
@@ -213,7 +198,6 @@ class TrackRepository(BaseRepository[Track]):
         album = row.Album
         added_to_master = row.AddedToMaster if hasattr(row, 'AddedToMaster') else None
         is_local = bool(row.IsLocal) if hasattr(row, 'IsLocal') else False
-        local_path = row.LocalPath if hasattr(row, 'LocalPath') else None
 
         # Create and return a Track object
-        return Track(track_id, title, artists, album, added_to_master, is_local, local_path)
+        return Track(track_id, title, artists, album, added_to_master, is_local)

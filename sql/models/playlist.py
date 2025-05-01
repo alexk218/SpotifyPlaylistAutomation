@@ -7,18 +7,16 @@ class Playlist:
     Contains business logic and relationships related to playlists.
     """
 
-    def __init__(self, playlist_id: str, name: str, description: Optional[str] = None):
+    def __init__(self, playlist_id: str, name: str):
         """
         Initialize a new Playlist instance.
 
         Args:
             playlist_id: Unique Spotify identifier for the playlist
             name: Name of the playlist
-            description: Optional description of the playlist
         """
         self.playlist_id = playlist_id
         self.name = name
-        self.description = description or ""
         self.tracks = []  # List of Track objects in this playlist
 
     def add_track(self, track) -> None:

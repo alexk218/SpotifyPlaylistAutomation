@@ -5,15 +5,13 @@ from typing import List, Optional
 
 class Track:
     def __init__(self, track_id: str, title: str, artists: str, album: str,
-                 added_to_master: Optional[datetime] = None, is_local: bool = False,
-                 local_path: Optional[str] = None):
-        self.track_id = track_id or f"local_{uuid.uuid4().hex[:10]}"  # Generate ID for local files
+                 added_to_master: Optional[datetime] = None, is_local: bool = False):
+        self.track_id = track_id or f"local_{uuid.uuid4().hex[:10]}"
         self.title = title
         self.artists = artists
         self.album = album
         self.added_to_master = added_to_master
         self.is_local = is_local
-        self.local_path = local_path  # Make sure this line is present
         self.playlists = []
 
     def add_to_playlist(self, playlist) -> None:
