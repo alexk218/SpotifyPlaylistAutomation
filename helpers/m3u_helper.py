@@ -1,9 +1,7 @@
 import os
 import re
-import time
-from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Tuple, Any, Set, Optional
+from typing import Dict, Tuple, Set, Optional
 
 from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
@@ -22,9 +20,6 @@ def build_track_id_mapping(master_tracks_dir: str) -> Dict[str, str]:
     """
     Build a mapping of track_id -> file_path for all MP3 files in the directory.
     This is the expensive operation we only want to do once.
-
-    Args:
-        master_tracks_dir: Directory containing master tracks
 
     Returns:
         Dictionary mapping track_ids to file paths

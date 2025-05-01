@@ -18,14 +18,37 @@ def find_new_tracks(current_tracks, stored_tracks):
 
 
 # Use fuzzy matching to find the best matching TrackId for a given filename.
-def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, max_matches=5):
-    # * Returns:  Tuple[str, float] or None: (track_id, match_ratio) if match found, None if no suitable match found
+def find_track_id_fuzzy(file_name, tracks_db, threshold=0.75, max_matches=8):
+    """
+    Use fuzzy matching to find the best matching TrackId for a given filename.
+    ALWAYS prompts the user for confirmation, never auto-accepts matches.
+
+    Args:
+        file_name: Filename to match
+        tracks_db: List of Track objects
+        threshold: Minimum similarity threshold for initial filtering
+        max_matches: Maximum number of matches to show
+
+    Returns:
+        Tuple[str, float] or None: (track_id, match_ratio) if match found, None otherwise
+    """
+    # Extract artist and title, allowing flexible formats
     try:
         name_part = os.path.splitext(file_name)[0]
-        artist, track_title = name_part.split(' - ', 1)
+
+        # Try standard "Artist - Title" format first
+        if " - " in name_part:
+            artist, track_title = name_part.split(" - ", 1)
+        else:
+            # Handle files without the separator by showing them to the user anyway
+            artist = ""
+            track_title = name_part
+            db_logger.info(f"File '{file_name}' doesn't use standard 'Artist - Title' format. Treating as title only.")
+            print(f"NOTE: '{file_name}' doesn't follow 'Artist - Title' format. Will try to match by title only.")
     except ValueError:
-        db_logger.warning(f"Filename format incorrect: {file_name}")
-        return None
+        db_logger.warning(f"Filename format issue: {file_name}")
+        artist = ""
+        track_title = name_part
 
     # Store all matches above threshold
     matches = []
@@ -33,6 +56,10 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, max_matches=5):
     # Normalize the input filename for comparison
     normalized_artist = artist.lower().replace('&', 'and')
     normalized_title = track_title.lower()
+
+    # Original artist and title for display
+    original_artist = artist
+    original_title = track_title
 
     # Handle remix information
     remix_info = ""
@@ -42,6 +69,10 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, max_matches=5):
         remix_info = "remix" + remix_parts[1] if len(remix_parts) > 1 else "remix"
 
     for track in tracks_db:
+        # Skip local files in the tracks_db list - we don't want to match to other local files
+        if track.is_local:
+            continue
+
         # Always use the new Track domain model properties
         db_artists = track.artists.lower().replace('&', 'and')
         db_title = track.title.lower()
@@ -52,23 +83,27 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, max_matches=5):
 
         # Handle "and" in artist names by also splitting those
         expanded_artists = []
-        for artist in db_artist_list:
-            if ' and ' in artist:
-                expanded_artists.extend([a.strip() for a in artist.split(' and ')])
+        for db_artist in db_artist_list:
+            if ' and ' in db_artist:
+                expanded_artists.extend([a.strip() for a in db_artist.split(' and ')])
             else:
-                expanded_artists.append(artist)
+                expanded_artists.append(db_artist)
 
         # Compare with each possible artist
-        artist_ratios = [Levenshtein.ratio(normalized_artist, db_artist) for db_artist in expanded_artists]
-        artist_ratio = max(artist_ratios) if artist_ratios else 0
+        artist_ratios = []
+        if artist:  # Only do artist matching if we have an artist name
+            artist_ratios = [Levenshtein.ratio(normalized_artist, db_artist) for db_artist in expanded_artists]
+            artist_ratio = max(artist_ratios) if artist_ratios else 0
 
-        # Add bonus if artist appears anywhere in the list
-        if any(normalized_artist in db_artist for db_artist in expanded_artists):
-            artist_ratio += 0.1
+            # Add bonus if artist matches exactly
+            if any(normalized_artist == db_artist for db_artist in expanded_artists):
+                artist_ratio = 1.0  # Perfect match
+        else:
+            artist_ratio = 0.0  # No artist to match
 
         # Normalize titles by removing parentheses and dashes
-        normalized_title = re.sub(r'[(\[].*?[)\]]', '', normalized_title).strip()  # Remove parenthetical content
-        db_title_clean = re.sub(r'[(\[].*?[)\]]', '', db_title).strip()
+        clean_normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()
+        db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
 
         # Handle special title cases (remixes, edits, etc.)
         title_variations = []
@@ -81,24 +116,42 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, max_matches=5):
         title_variations.append(standardized_db_title)
 
         # Calculate best title match from variations
-        title_ratios = [Levenshtein.ratio(normalized_title, var) for var in title_variations]
+        title_ratios = [Levenshtein.ratio(clean_normalized_title, var) for var in title_variations]
         title_ratio = max(title_ratios)
+
+        # Add perfect match bonus for exact title match
+        if clean_normalized_title in [var.lower() for var in title_variations]:
+            title_ratio = 1.0
 
         # Add bonus for remix/edit matching if present
         remix_bonus = 0
-        if any(x in track_title.lower() for x in ['remix', 'edit', 'mix']) and \
-                any(x in db_title for x in ['remix', 'edit', 'mix']):
-            remix_bonus = 0.2
+        if any(x in track_title.lower() for x in ['remix', 'edit', 'mix', 'version']) and \
+                any(x in db_title for x in ['remix', 'edit', 'mix', 'version']):
+            remix_bonus = 0.1
 
-        # Calculate weighted overall ratio
-        overall_ratio = (artist_ratio * 0.4 + title_ratio * 0.4 + remix_bonus)
+            # Add extra bonus if the same artist is doing the remix
+            remix_pattern = r'\(([^)]+)(remix|edit|version|mix)\)'
+            local_remix_match = re.search(remix_pattern, track_title.lower())
+            db_remix_match = re.search(remix_pattern, db_title.lower())
 
-        if overall_ratio >= (threshold - 0.2):  # Lower threshold for collecting potential matches
+            if local_remix_match and db_remix_match and local_remix_match.group(1) == db_remix_match.group(1):
+                remix_bonus += 0.1
+
+        # Calculate weighted overall ratio - weight artist match higher
+        # If no artist (single text field), rely more on title match
+        if artist:
+            overall_ratio = (artist_ratio * 0.6 + title_ratio * 0.3 + remix_bonus)
+        else:
+            overall_ratio = (title_ratio * 0.9 + remix_bonus)
+
+        # Include all potential matches
+        if overall_ratio >= (threshold - 0.3):  # Lower threshold for collecting potential matches
             matches.append({
                 'track_id': track_id,
                 'ratio': overall_ratio,
                 'artist': track.artists,
-                'title': track.title
+                'title': track.title,
+                'album': track.album
             })
 
     # Sort matches by ratio in descending order
@@ -111,38 +164,32 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, max_matches=5):
         db_logger.error(f"No matches found for '{file_name}' above minimum threshold")
         return None
 
-    # If we have a high confidence match (above threshold), return it without prompting
-    if top_matches[0]['ratio'] >= threshold:
-        db_logger.info(f"Fuzzy matched '{file_name}' to TrackId '{top_matches[0]['track_id']}' "
-                       f"with ratio {top_matches[0]['ratio']}")
-        return top_matches[0]['track_id'], top_matches[0]['ratio']
+    # ALWAYS show matches to the user, regardless of confidence
+    print(f"\nPotential matches for: {file_name}")
+    print(f"Original: {original_artist + ' - ' if original_artist else ''}{original_title}")
+    print("0. Skip this file (no match)")
+    for i, match in enumerate(top_matches, 1):
+        print(f"{i}. {match['artist']} - {match['title']} ({match['album']})")
+        print(f"   Confidence: {match['ratio']:.2f}")
 
-    # Only prompt user for low confidence matches
-    if top_matches[0]['ratio'] >= (threshold - 0.2):
-        print(f"\nPotential matches for: {file_name}")
-        print("0. Skip this file")
-        for i, match in enumerate(top_matches, 1):
-            print(f"{i}. {match['artist']} - {match['title']} (similarity: {match['ratio']:.2f})")
+    while True:
+        try:
+            choice = input(f"Select the correct match (0-{len(top_matches)}): ")
+            choice = int(choice)
+            if choice == 0:
+                db_logger.warning(f"User skipped matching for '{file_name}'")
+                return None
+            if 1 <= choice <= len(top_matches):
+                selected_match = top_matches[choice - 1]
+                db_logger.info(f"User selected match for '{file_name}': "
+                               f"{selected_match['artist']} - {selected_match['title']}")
+                return selected_match['track_id'], selected_match['ratio']
+            print("Invalid choice. Please try again.")
+        except ValueError:
+            print("Please enter a valid number.")
 
-        while True:
-            try:
-                choice = input("Select the correct match (0-{}): ".format(len(top_matches)))
-                choice = int(choice)
-                if choice == 0:
-                    db_logger.warning(f"User skipped matching for '{file_name}'")
-                    return None
-                if 1 <= choice <= len(top_matches):
-                    selected_match = top_matches[choice - 1]
-                    db_logger.info(f"User selected match for '{file_name}': "
-                                   f"{selected_match['artist']} - {selected_match['title']}")
-                    return selected_match['track_id'], selected_match['ratio']
-                print("Invalid choice. Please try again.")
-            except ValueError:
-                print("Please enter a valid number.")
-
-    # If no good matches, return None
-    db_logger.error(f"No suitable fuzzy match found for '{file_name}' "
-                    f"(Best ratio: {top_matches[0]['ratio'] if top_matches else 0})")
+    # We should never reach here if the user selected a valid option
+    db_logger.error(f"No suitable match selected for '{file_name}'")
     return None
 
 

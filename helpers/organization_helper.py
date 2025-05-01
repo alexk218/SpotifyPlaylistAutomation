@@ -3,8 +3,10 @@ from os import PathLike
 from pathlib import Path
 from typing import Union
 
-from mutagen.id3 import ID3
-
+from helpers.m3u_helper import (generate_all_m3u_playlists,
+                                build_track_id_mapping,
+                                sanitize_filename,
+                                compare_playlist_with_m3u)
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -24,11 +26,6 @@ def organize_songs_into_m3u_playlists(
         only_changed: bool = True
 ) -> None:
     """
-    Organize songs into M3U playlist files based on database associations.
-    This is an alternative to creating symlinks, which solves the duplicate
-    tracks problem when importing to Rekordbox.
-
-    Args:
         master_tracks_dir: Directory containing master tracks
         playlists_dir: Directory to create playlist files in
         extended: Whether to use extended M3U format with metadata
@@ -36,16 +33,10 @@ def organize_songs_into_m3u_playlists(
         overwrite: Whether to overwrite existing playlist files
         only_changed: Only update playlists that have actually changed
     """
-    from helpers.m3u_helper import (generate_all_m3u_playlists,
-                                    build_track_id_mapping,
-                                    sanitize_filename,
-                                    compare_playlist_with_m3u)
-
     print("Analyzing M3U playlist organization plan...")
     organization_logger.info("Starting M3U playlist organization analysis")
 
-    # First, build a mapping of track_id -> file_path for all MP3 files
-    # This is the key optimization - we only scan all MP3 files ONCE
+    # First, build a mapping of track_id -> file_path for all MP3 files. Scan all MP3 files ONCE.
     track_id_map = build_track_id_mapping(master_tracks_dir)
 
     # Get all playlist information from the database

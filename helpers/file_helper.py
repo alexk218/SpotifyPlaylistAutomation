@@ -89,27 +89,19 @@ def embed_track_metadata(master_tracks_dir):
     master_validation_dir.mkdir(exist_ok=True)
 
     # Initialize tracking lists for logging
-    successful_embeds = []
-    failed_embeds = []
+    planned_embeds = []
     skipped_already_tagged = []
     skipped_invalid_format = []
-    fuzzy_matches = []
+
+    # Files that need processing
+    files_to_process = []
 
     # Initialize counters
     total_files = 0
-    successful_count = 0
-    failed_count = 0
-    skipped_count = 0
     already_tagged = 0
 
-    # Statistics dictionary
-    stats = {
-        'exact_matches': 0,
-        'fuzzy_matches': 0,
-        'failed_matches': 0,
-        'invalid_format': 0
-    }
-
+    # FIRST PASS: Scan files and collect those that need processing
+    print("Scanning files...")
     for root, dirs, files in os.walk(master_tracks_dir):
         for file in files:
             if not file.lower().endswith('.mp3'):
@@ -125,75 +117,80 @@ def embed_track_metadata(master_tracks_dir):
                 db_logger.debug(f"Skipping '{file}' (already tagged)")
                 continue
 
-            try:
-                name_part = os.path.splitext(file)[0]
-                artist, track_title = name_part.split(' - ', 1)
-                db_logger.info(f"Processing: Artist: '{artist}', TrackTitle: '{track_title}'")
-            except ValueError:
-                db_logger.warning(f"Filename format incorrect: {file_path}")
-                stats['invalid_format'] += 1
-                skipped_count += 1
-                skipped_invalid_format.append(file)
-                continue
+            # Add to list of files that need processing
+            files_to_process.append((file, file_path))
 
-            # Attempt exact matching - adapted for Track domain objects
-            matching_tracks = [
-                track for track in tracks_db
-                if track.title.lower() == track_title.lower() and track.artists.lower() in artist.lower()
-            ]
+    print(f"\nFound {total_files} MP3 files")
+    print(f"{already_tagged} files already have TrackId")
+    print(f"{len(files_to_process)} files need processing")
 
-            if matching_tracks:
-                db_logger.info(f"Exact match found for '{file}'")
-                track = matching_tracks[0]
-                stats['exact_matches'] += 1
-                if embed_track_id(file_path, track.track_id):
-                    successful_count += 1
-                    successful_embeds.append({
-                        'file': file,
-                        'artist': artist,
-                        'title': track_title,
-                        'track_id': track.track_id,
-                        'match_type': 'exact'
-                    })
-                else:
-                    failed_count += 1
-                    failed_embeds.append({
-                        'file': file,
-                        'reason': 'Failed to embed TrackId',
-                        'track_id': track.track_id
-                    })
-            else:
-                # Attempt fuzzy matching
-                db_logger.info(f"No exact match found for '{file}'. Attempting fuzzy matching...")
-                match_result = find_track_id_fuzzy(file, tracks_db, threshold=0.6)
+    if not files_to_process:
+        print("No files need processing. All done!")
+        return 0, total_files
 
-                if match_result:
-                    track_id, match_ratio = match_result
-                    stats['fuzzy_matches'] += 1
-                    if embed_track_id(file_path, track_id):
-                        successful_count += 1
-                        fuzzy_matches.append({
-                            'file': file,
-                            'artist': artist,
-                            'title': track_title,
-                            'track_id': track_id,
-                            'match_type': 'fuzzy',
-                            'ratio': match_ratio
-                        })
-                    else:
-                        failed_count += 1
-                        failed_embeds.append({
-                            'file': file,
-                            'reason': 'Failed to embed TrackId (fuzzy match)',
-                            'track_id': track_id
-                        })
-                else:
-                    stats['failed_matches'] += 1
-                    skipped_count += 1
-                    failed_embeds.append({
-                        'file': file,
-                        'reason': 'No matching TrackId found'
-                    })
+    # SECOND PASS: Interactive matching and preview
+    print("\nStarting interactive matching...")
+
+    for i, (file, file_path) in enumerate(files_to_process, 1):
+        print(f"\nProcessing file {i}/{len(files_to_process)}: {file}")
+
+        # Try to find a match
+        match_result = find_track_id_fuzzy(file, tracks_db, threshold=0.75)
+
+        if match_result:
+            track_id, match_ratio = match_result
+
+            # Get track details for confirmation display
+            track_details = None
+            for track in tracks_db:
+                if track.track_id == track_id:
+                    track_details = track
+                    break
+
+            if track_details:
+                planned_embeds.append({
+                    'file': file,
+                    'file_path': file_path,
+                    'track_id': track_id,
+                    'match_ratio': match_ratio,
+                    'track_details': track_details
+                })
+
+    # THIRD PASS: Show preview and ask for final confirmation
+    if planned_embeds:
+        print("\n=== PREVIEW OF PLANNED EMBEDDINGS ===")
+        print(f"Planning to embed {len(planned_embeds)} files:")
+
+        for i, embed in enumerate(planned_embeds, 1):
+            print(f"\n{i}. {embed['file']}")
+            print(f"   → {embed['track_details'].artists} - {embed['track_details'].title}")
+            print(f"   → {embed['track_details'].album}")
+            print(f"   → Track ID: {embed['track_id']}")
+            print(f"   → Confidence: {embed['match_ratio']:.2f}")
+
+        # Ask for final confirmation
+        confirmation = input("\nProceed with embedding these TrackIds? (y/n): ")
+        if confirmation.lower() != 'y':
+            print("Embedding cancelled. No changes were made.")
+            return 0, total_files
+    else:
+        print("\nNo matches found for any files.")
+        return 0, total_files
+
+    # FOURTH PASS: Actually perform the embedding
+    print("\nEmbedding TrackIds...")
+    successful_embeds = []
+    failed_embeds = []
+    successful_count = 0
+    failed_count = 0
+
+    for embed in planned_embeds:
+        if embed_track_id(embed['file_path'], embed['track_id']):
+            successful_count += 1
+            successful_embeds.append(embed)
+        else:
+            failed_count += 1
+            failed_embeds.append(embed)
 
     # Generate detailed log file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -208,43 +205,31 @@ def embed_track_metadata(master_tracks_dir):
         f.write("-----------------\n")
         f.write(f"Total MP3 files processed: {total_files}\n")
         f.write(f"Already tagged (skipped): {already_tagged}\n")
-        f.write(f"Newly processed: {total_files - already_tagged}\n")
+        f.write(f"Newly processed: {len(files_to_process)}\n")
+        f.write(f"Matches found: {len(planned_embeds)}\n")
         f.write(f"Successfully embedded: {successful_count}\n")
         f.write(f"Failed to embed: {failed_count}\n")
-        f.write(f"Skipped files: {skipped_count}\n")
-        f.write("\nMatching Statistics\n")
-        f.write(f"Exact matches: {stats['exact_matches']}\n")
-        f.write(f"Fuzzy matches: {stats['fuzzy_matches']}\n")
-        f.write(f"Failed matches: {stats['failed_matches']}\n")
-        f.write(f"Invalid filename format: {stats['invalid_format']}\n")
-
-        if total_files != already_tagged:
-            f.write(f"\nSuccess rate: {(successful_count / (total_files - already_tagged) * 100):.2f}%\n")
 
         # Write successful embeddings
-        if successful_embeds or fuzzy_matches:
+        if successful_embeds:
             f.write("\nSuccessful Embeddings:\n")
             f.write("=====================\n")
-            for embed in successful_embeds + fuzzy_matches:
+            for embed in successful_embeds:
                 f.write(f"• {embed['file']}\n")
-                f.write(f"  Artist: {embed['artist']}\n")
-                f.write(f"  Title: {embed['title']}\n")
+                f.write(f"  Track: {embed['track_details'].artists} - {embed['track_details'].title}\n")
+                f.write(f"  Album: {embed['track_details'].album}\n")
                 f.write(f"  TrackId: {embed['track_id']}\n")
-                f.write(f"  Match Type: {embed['match_type']}")
-                if embed['match_type'] == 'fuzzy':
-                    f.write(f" (ratio: {embed['ratio']:.2f})")
-                f.write("\n\n")
+                f.write(f"  Confidence: {embed['match_ratio']:.2f}\n\n")
 
         # Write failed embeddings
         if failed_embeds:
             f.write("\nFailed Embeddings:\n")
             f.write("=================\n")
-            for fail in failed_embeds:
-                f.write(f"• {fail['file']}\n")
-                f.write(f"  Reason: {fail['reason']}\n")
-                if 'track_id' in fail:
-                    f.write(f"  TrackId: {fail['track_id']}\n")
-                f.write("\n")
+            for embed in failed_embeds:
+                f.write(f"• {embed['file']}\n")
+                f.write(f"  Track: {embed['track_details'].artists} - {embed['track_details'].title}\n")
+                f.write(f"  TrackId: {embed['track_id']}\n")
+                f.write(f"  Reason: Failed to write to file\n\n")
 
         # Write skipped files
         if skipped_already_tagged:
@@ -253,13 +238,8 @@ def embed_track_metadata(master_tracks_dir):
             for file in skipped_already_tagged:
                 f.write(f"• {file}\n")
 
-        if skipped_invalid_format:
-            f.write("\nSkipped (Invalid Format):\n")
-            f.write("=======================\n")
-            for file in skipped_invalid_format:
-                f.write(f"• {file}\n")
-
-    print(f"\nEmbedding complete! Detailed report saved to: {log_path}")
+    print(f"\nEmbedding complete! {successful_count} successful, {failed_count} failed.")
+    print(f"Detailed report saved to: {log_path}")
     return successful_count, total_files
 
 
