@@ -1,9 +1,12 @@
+import hashlib
 import os
 import os
 import re
 import shutil
+import urllib
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 import Levenshtein
 from mutagen import File
@@ -511,3 +514,102 @@ def validate_song_lengths(master_tracks_dir, min_length_minutes=5):
         print(f"\nValidation complete! All songs are {min_length_minutes} minutes or longer.")
 
     return len(short_songs), total_files
+
+# ! LOCAL FILES ON SPOTIFY
+def parse_local_file_uri(uri):
+    """
+    Parse a Spotify local file URI into its components.
+    Format: spotify:local:Artist:Album:Track:Duration
+
+    Returns a dictionary with title, artist, etc.
+    """
+    parts = uri.split(':')
+    if len(parts) < 6 or parts[0] != 'spotify' or parts[1] != 'local':
+        return None
+
+    return {
+        'artist': unquote(parts[2].replace('+', ' ')),
+        'album': unquote(parts[3].replace('+', ' ')),
+        'title': unquote(parts[4].replace('+', ' ')),
+        'duration': parts[5] if len(parts) >= 6 else '0'
+    }
+
+
+def normalize_local_file_uri(uri):
+    """
+    Parse a Spotify local file URI and extract the components.
+    Handles both spotify:local: URIs and https://open.spotify.com/local/ URLs.
+
+    Returns a dictionary with 'artist', 'album', 'title', and 'duration'.
+    """
+    if not uri:
+        return {'artist': '', 'album': '', 'title': '', 'duration': '0'}
+
+    try:
+        # Handle Spotify URI format
+        if uri.startswith('spotify:local:'):
+            parts = uri.split(':')
+            # Format: spotify:local:artist:album:title:duration
+            if len(parts) >= 6:
+                return {
+                    'artist': urllib.parse.unquote_plus(parts[2]),
+                    'album': urllib.parse.unquote_plus(parts[3]),
+                    'title': urllib.parse.unquote_plus(parts[4]),
+                    'duration': parts[5]
+                }
+            else:
+                # Handle incomplete URI
+                return {
+                    'artist': urllib.parse.unquote_plus(parts[2]) if len(parts) > 2 else '',
+                    'album': urllib.parse.unquote_plus(parts[3]) if len(parts) > 3 else '',
+                    'title': urllib.parse.unquote_plus(parts[4]) if len(parts) > 4 else '',
+                    'duration': parts[5] if len(parts) > 5 else '0'
+                }
+
+        # Handle web URL format
+        elif uri.startswith('https://open.spotify.com/local/'):
+            path = uri.replace('https://open.spotify.com/local/', '')
+            parts = path.split('/')
+            # Format: artist/album/title/duration
+            return {
+                'artist': urllib.parse.unquote_plus(parts[0]) if len(parts) > 0 else '',
+                'album': urllib.parse.unquote_plus(parts[1]) if len(parts) > 1 else '',
+                'title': urllib.parse.unquote_plus(parts[2]) if len(parts) > 2 else '',
+                'duration': parts[3] if len(parts) > 3 else '0'
+            }
+
+        # Handle other formats or return empty
+        return {'artist': '', 'album': '', 'title': '', 'duration': '0'}
+
+    except Exception as e:
+        db_logger.error(f"Error parsing local file URI '{uri}': {e}")
+        return {'artist': '', 'album': '', 'title': '', 'duration': '0'}
+
+
+def generate_local_track_id(metadata):
+    """
+    Generate a consistent track ID for local files based on artist and title.
+
+    Args:
+        metadata: Dictionary with 'artist' and 'title' or a URI string
+
+    Returns:
+        A consistent local track ID
+    """
+    # Handle both dictionary and URI string inputs
+    if isinstance(metadata, str):
+        metadata = normalize_local_file_uri(metadata)
+
+    # Extract and normalize title and artist
+    title = metadata.get('title', '')
+    artist = metadata.get('artist', '')
+
+    # Normalize strings - remove special characters, convert to lowercase
+    normalized_title = ''.join(c.lower() for c in title if c.isalnum() or c in ' &-_').strip()
+    normalized_artist = ''.join(c.lower() for c in artist if c.isalnum() or c in ' &-_').strip()
+
+    # Create ID string and hash it
+    id_string = f"{normalized_artist}_{normalized_title}".lower()
+    track_id = f"local_{hashlib.md5(id_string.encode()).hexdigest()[:16]}"
+
+    return track_id

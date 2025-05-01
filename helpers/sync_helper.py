@@ -1,7 +1,7 @@
-import os
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Set, Tuple, Optional, Any
+import hashlib
+import time
+from typing import Dict, Tuple
 
 from drivers.spotify_client import (
     authenticate_spotify,
@@ -9,6 +9,8 @@ from drivers.spotify_client import (
     fetch_master_tracks,
     get_playlist_track_ids
 )
+from helpers.file_helper import parse_local_file_uri, generate_local_track_id, \
+    normalize_local_file_uri
 from sql.core.unit_of_work import UnitOfWork
 from sql.models.playlist import Playlist
 from sql.models.track import Track
@@ -198,15 +200,20 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
         # Check if this is a local file (track_id is None)
         is_local = track_id is None
 
-        # For local files, generate a predictable ID based on the title and artist
         if is_local:
-            # Create a stable identifier for local files
-            import hashlib
-            local_id = f"local_{hashlib.md5(f'{track_title}_{artist_names}'.encode()).hexdigest()[:16]}"
-            track_id = local_id
+            # Clean the strings
+            normalized_title = ''.join(c for c in track_title if c.isalnum() or c in ' &-_')
+            normalized_artist = ''.join(c for c in artist_names if c.isalnum() or c in ' &-_')
 
-            # Log the local file
-            sync_logger.info(f"Processing local file: {track_title} by {artist_names} -> {track_id}")
+            # Generate ID
+            metadata = {'title': normalized_title, 'artist': normalized_artist}
+            track_id = generate_local_track_id(metadata)
+
+            # Debug output
+            sync_logger.info(f"Processing local file: '{track_title}' by '{artist_names}'")
+            sync_logger.info(f"Generated ID: {track_id}")
+            print(f"Processing local file: '{track_title}' by '{artist_names}'")
+            print(f"Generated ID: {track_id}")
 
         # Check if track exists in database
         if track_id in existing_tracks:
@@ -398,6 +405,28 @@ def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh
 
         # Always force a fresh API call to get the most up-to-date associations
         playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
+
+        # Log number of local files
+        local_files = [tid for tid in playlist_track_ids if tid.startswith('local_')]
+        sync_logger.info(f"Found {len(local_files)} local files in playlist '{playlist_name}'")
+        print(f"Found {len(local_files)} local files in playlist '{playlist_name}'")  # Add print for debugging
+
+        # Log how many tracks were found for this playlist
+        valid_tracks = [tid for tid in playlist_track_ids if tid in all_track_ids]
+        sync_logger.info(f"Found {len(valid_tracks)} valid tracks in playlist '{playlist_name}'")
+
+        # Add special handling for local files
+        for track_id in playlist_track_ids:
+            # Check for different ID formats for local files
+            is_local_file = track_id.startswith('local_') or track_id.startswith('spotify:local:')
+
+            # Normalize local file IDs
+            if is_local_file and track_id.startswith('spotify:local:'):
+                # Extract data and create consistent ID
+                parsed_local = parse_local_file_uri(track_id)
+                metadata_string = f"{parsed_local.title}_{parsed_local.artist}"
+                normalized_id = f"local_{hashlib.md5(metadata_string.encode()).hexdigest()[:16]}"
+                track_id = normalized_id
 
         # Log how many tracks were found for this playlist
         valid_tracks = [tid for tid in playlist_track_ids if tid in all_track_ids]

@@ -67,8 +67,8 @@ def find_track_id_fuzzy(file_name, tracks_db, threshold=0.6, interactive=False, 
             artist_ratio += 0.1
 
         # Normalize titles by removing parentheses and dashes
-        normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()  # Remove parenthetical content
-        db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
+        normalized_title = re.sub(r'[(\[].*?[)\]]', '', normalized_title).strip()  # Remove parenthetical content
+        db_title_clean = re.sub(r'[(\[].*?[)\]]', '', db_title).strip()
 
         # Handle special title cases (remixes, edits, etc.)
         title_variations = []
