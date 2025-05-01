@@ -1,6 +1,5 @@
 import hashlib
 import os
-import os
 import re
 import shutil
 import urllib
@@ -12,6 +11,8 @@ import Levenshtein
 from mutagen import File
 from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
 
+from helpers.track_helper import find_track_id_fuzzy, has_track_id
+from sql.helpers.db_helper import fetch_all_tracks_db
 from sql.helpers.db_helper import get_track_added_date
 from utils.logger import setup_logger
 
@@ -77,12 +78,7 @@ def embed_track_id(file_path, track_id):
         return False
 
 
-def embed_track_metadata(master_tracks_dir, interactive=False):
-    import os
-    from datetime import datetime
-    from helpers.track_helper import find_track_id_fuzzy, has_track_id
-    from sql.helpers.db_helper import fetch_all_tracks_db
-
+def embed_track_metadata(master_tracks_dir):
     tracks_db = fetch_all_tracks_db()
     db_logger.debug(f"Fetched all tracks.")
 
@@ -169,7 +165,7 @@ def embed_track_metadata(master_tracks_dir, interactive=False):
             else:
                 # Attempt fuzzy matching
                 db_logger.info(f"No exact match found for '{file}'. Attempting fuzzy matching...")
-                match_result = find_track_id_fuzzy(file, tracks_db, threshold=0.6, interactive=interactive)
+                match_result = find_track_id_fuzzy(file, tracks_db, threshold=0.6)
 
                 if match_result:
                     track_id, match_ratio = match_result
@@ -514,6 +510,7 @@ def validate_song_lengths(master_tracks_dir, min_length_minutes=5):
         print(f"\nValidation complete! All songs are {min_length_minutes} minutes or longer.")
 
     return len(short_songs), total_files
+
 
 # ! LOCAL FILES ON SPOTIFY
 def parse_local_file_uri(uri):

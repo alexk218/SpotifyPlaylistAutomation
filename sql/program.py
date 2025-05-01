@@ -17,7 +17,6 @@ load_dotenv()
 
 MASTER_TRACKS_DIRECTORY = os.getenv("MASTER_TRACKS_DIRECTORY")
 MASTER_TRACKS_DIRECTORY_SSD = os.getenv("MASTER_TRACKS_DIRECTORY_SSD")
-PLAYLISTS_DIRECTORY = os.getenv("PLAYLISTS_DIRECTORY")
 QUARANTINE_DIRECTORY = os.getenv("QUARANTINE_DIRECTORY")
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
@@ -36,14 +35,18 @@ def main():
     parser.add_argument('--sync-playlists', action='store_true', help='Sync playlists incrementally')
     parser.add_argument('--sync-tracks', action='store_true', help='Sync master tracks incrementally')
     parser.add_argument('--sync-associations', action='store_true', help='Sync track-playlist associations')
-    parser.add_argument('--sync-all', action='store_true', help='Sync playlists, tracks, and associations incrementally')
+    parser.add_argument('--sync-all', action='store_true',
+                        help='Sync playlists, tracks, and associations incrementally')
     parser.add_argument('--force-refresh', action='store_true', help='Force full refresh from Spotify API')
+
+    # SSD option for all file operations
+    parser.add_argument('--ssd', action='store_true', help='Use SSD directories instead of standard directories')
 
     # File operations
     parser.add_argument('--generate-m3u', action='store_true',
                         help='Generate M3U playlist files that reference original tracks (for Rekordbox)')
-    parser.add_argument('--m3u-dir', type=str, default=M3U_PLAYLISTS_DIRECTORY,
-                        help='Directory where M3U playlist files will be created')
+    parser.add_argument('--m3u-dir', type=str, default=None,
+                        help='Override directory where M3U playlist files will be created')
     parser.add_argument('--no-extended-m3u', action='store_true',
                         help='Generate simple M3U files without extended track information')
     parser.add_argument('--no-overwrite', action='store_true',
@@ -53,7 +56,6 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                         help='Simulate the organization process without creating symlinks or files')
     parser.add_argument('--embed-metadata', action='store_true', help='Embed TrackId into song file metadata')
-    parser.add_argument('--interactive', action='store_true', help='Enable interactive mode for fuzzy matching')
     parser.add_argument('--remove-track-ids', action='store_true', help='Remove TrackId from all MP3 files')
     parser.add_argument('--cleanup-tracks', action='store_true',
                         help='Clean up unwanted files from tracks_master directory by moving them to quarantine')
@@ -77,6 +79,14 @@ def main():
 
     args = parser.parse_args()
 
+    # Determine which directories to use based on --ssd flag
+    tracks_dir = MASTER_TRACKS_DIRECTORY_SSD if args.ssd else MASTER_TRACKS_DIRECTORY
+    m3u_dir = M3U_PLAYLISTS_DIRECTORY_SSD if args.ssd else M3U_PLAYLISTS_DIRECTORY
+
+    # Override m3u_dir if explicitly provided
+    if args.m3u_dir:
+        m3u_dir = args.m3u_dir
+
     # * Database operations
     if args.clear_db:
         clear_db()
@@ -93,9 +103,8 @@ def main():
 
     # * File operations
     if args.generate_m3u:
-        m3u_dir = args.m3u_dir
         organize_songs_into_m3u_playlists(
-            MASTER_TRACKS_DIRECTORY,
+            tracks_dir,
             m3u_dir,
             extended=not args.no_extended_m3u,
             dry_run=args.dry_run,
@@ -104,23 +113,23 @@ def main():
         )
 
     if args.embed_metadata:
-        embed_track_metadata(MASTER_TRACKS_DIRECTORY, interactive=args.interactive)
+        embed_track_metadata(tracks_dir)
 
     if args.remove_track_ids:
-        remove_all_track_ids(MASTER_TRACKS_DIRECTORY)
+        remove_all_track_ids(tracks_dir)
 
     if args.cleanup_tracks:
-        cleanup_tracks(MASTER_TRACKS_DIRECTORY, QUARANTINE_DIRECTORY)
+        cleanup_tracks(tracks_dir, QUARANTINE_DIRECTORY)
 
     # * Validation
     if args.count_track_ids:
-        count_tracks_with_id(MASTER_TRACKS_DIRECTORY)
+        count_tracks_with_id(tracks_dir)
 
     if args.validate_tracks or args.validate_all:
-        validate_master_tracks(MASTER_TRACKS_DIRECTORY)
+        validate_master_tracks(tracks_dir)
 
     if args.validate_lengths or args.validate_all:
-        validate_song_lengths(MASTER_TRACKS_DIRECTORY)
+        validate_song_lengths(tracks_dir)
 
     # * Cache management
     if args.clear_cache:
