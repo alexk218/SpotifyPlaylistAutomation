@@ -3,10 +3,10 @@ from os import PathLike
 from pathlib import Path
 from typing import Union
 
-from helpers.m3u_helper import (generate_all_m3u_playlists,
-                                build_track_id_mapping,
-                                sanitize_filename,
-                                compare_playlist_with_m3u)
+from helpers.m3u_helper import (
+    build_track_id_mapping,
+    sanitize_filename,
+    compare_playlist_with_m3u, generate_all_m3u_playlists)
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
