@@ -590,24 +590,25 @@ def api_analyze_tracks():
 @app.route('/api/analyze-associations', methods=['POST'])
 def api_analyze_associations():
     try:
-        # We need to create a custom function for this
+        # Import the analysis function
         from helpers.sync_helper import analyze_track_playlist_associations
 
         master_playlist_id = request.json.get('master_playlist_id') or MASTER_PLAYLIST_ID
         force_refresh = request.json.get('force_refresh', False)
 
-        # A custom function to get analysis without executing
+        # Get the analysis results
         changes = analyze_track_playlist_associations(
             master_playlist_id,
             force_full_refresh=force_refresh
         )
 
-        # Format changes for display
+        # Format changes for display that matches what your React component expects
         formatted_changes = {
             "tracks_with_changes": len(changes['tracks_with_changes']),
             "associations_to_add": changes['associations_to_add'],
             "associations_to_remove": changes['associations_to_remove'],
-            "samples": changes['samples'][:20]  # First 20 changes for display
+            "samples": changes['samples'],
+            "all_changes": changes['samples']
         }
 
         return jsonify({

@@ -299,108 +299,115 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
         force_full_refresh: Whether to force a full refresh
 
     Returns:
-        Dictionary with statistics about the analysis
+        Dictionary with analysis results
     """
+    sync_logger.info("Analyzing track-playlist association changes")
+
+    # Get all tracks from database
+    with UnitOfWork() as uow:
+        all_tracks = uow.track_repository.get_all()
+        total_tracks = len(all_tracks)
+        sync_logger.info(f"Found {total_tracks} tracks in database")
+
+    # Get all playlists from database
+    with UnitOfWork() as uow:
+        all_playlists = uow.playlist_repository.get_all()
+        total_playlists = len(all_playlists)
+        sync_logger.info(f"Found {total_playlists} playlists in database")
+
+    # Fetch all playlists directly from Spotify to ensure associations are fresh
     spotify_client = authenticate_spotify()
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
 
-    # Build a track_id_map for analysis
-    all_track_ids = set()
-    with UnitOfWork() as uow:
-        tracks = uow.track_repository.get_all()
-        all_track_ids = {track.track_id for track in tracks}
+    # Filter out the master playlist for association lookups
+    other_playlists = [pl for pl in spotify_playlists if pl[1] != master_playlist_id]
 
-    # Get all current association data in a single operation
-    current_associations = {}
-    with UnitOfWork() as uow:
-        for track_id in all_track_ids:
-            playlist_ids = set(uow.track_playlist_repository.get_playlist_ids_for_track(track_id))
-            current_associations[track_id] = playlist_ids
+    # We'll track all associations to completely refresh the database
+    track_playlist_map = {}
 
-    # Fetch all playlists from Spotify
-    user_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+    # First, build a list of all track IDs for reference
+    all_track_ids = {track.track_id for track in all_tracks}
 
-    # Get current playlist tracks from Spotify - this is expensive but necessary
-    spotify_playlist_tracks = {}
-    for _, playlist_id in user_playlists:
-        if playlist_id != master_playlist_id:  # Skip MASTER playlist
-            track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=force_full_refresh)
-            spotify_playlist_tracks[playlist_id] = set(track_ids)
+    # Now fetch tracks for each playlist directly from Spotify
+    for i, (playlist_name, playlist_id) in enumerate(other_playlists, 1):
+        # Always force a fresh API call to get the most up-to-date associations
+        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
 
-    # Now determine what should change
+        # Log how many tracks were found for this playlist
+        valid_tracks = [tid for tid in playlist_track_ids if tid in all_track_ids]
+
+        # For each track in this playlist, update its associations
+        for track_id in valid_tracks:
+            if track_id not in track_playlist_map:
+                track_playlist_map[track_id] = set()
+
+            track_playlist_map[track_id].add(playlist_name)
+
+    # Count some statistics for reporting
+    tracks_with_playlists = len(track_playlist_map)
+    total_associations = sum(len(playlists) for playlists in track_playlist_map.values())
+
+    # Compare with existing associations to see what will actually change
+    actual_changes = {}
     tracks_with_changes = []
     associations_to_add = 0
     associations_to_remove = 0
+    samples = []  # For UI display
 
-    # For each track in our database, check which playlists it should be in
-    for track_id in all_track_ids:
-        # Determine which playlists this track should be in according to Spotify
-        should_be_in = set()
-        for playlist_id, tracks in spotify_playlist_tracks.items():
-            if track_id in tracks:
-                should_be_in.add(playlist_id)
+    with UnitOfWork() as uow:
+        # Check each track to see what will change
+        for track_id, new_playlist_names in track_playlist_map.items():
+            # Get current associations for this track
+            current_playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_track(track_id)
+            current_playlist_names = []
 
-        # Compare with current associations
-        current = current_associations.get(track_id, set())
+            # Convert playlist IDs to names for comparison
+            for pid in current_playlist_ids:
+                playlist = uow.playlist_repository.get_by_id(pid)
+                if playlist:
+                    current_playlist_names.append(playlist.name)
 
-        to_add = should_be_in - current
-        to_remove = current - should_be_in
+            # Identify changes
+            new_playlist_names_set = set(new_playlist_names)
+            current_playlist_names_set = set(current_playlist_names)
 
-        if to_add or to_remove:
-            # Get track details for reporting
-            track_info = None
-            with UnitOfWork() as uow:
+            to_add = new_playlist_names_set - current_playlist_names_set
+            to_remove = current_playlist_names_set - new_playlist_names_set
+
+            # Only record if there are changes
+            if to_add or to_remove:
                 track = uow.track_repository.get_by_id(track_id)
                 if track:
                     track_info = f"{track.artists} - {track.title}"
-                else:
-                    track_info = f"Unknown Track (ID: {track_id})"
+                    actual_changes[track_id] = {
+                        'track_info': track_info,
+                        'to_add': to_add,
+                        'to_remove': to_remove
+                    }
+                    tracks_with_changes.append({
+                        'track_id': track_id,
+                        'track_info': track_info,
+                        'add_to': list(to_add),
+                        'remove_from': list(to_remove)
+                    })
+                    associations_to_add += len(to_add)
+                    associations_to_remove += len(to_remove)
 
-            # Record this change
-            tracks_with_changes.append({
-                'track_id': track_id,
-                'track_info': track_info,
-                'add_to': list(to_add),
-                'remove_from': list(to_remove)
-            })
+                    # Add to samples for UI
+                    samples.append({
+                        'track': track_info,
+                        'add_to': list(to_add),
+                        'remove_from': list(to_remove)
+                    })
 
-            associations_to_add += len(to_add)
-            associations_to_remove += len(to_remove)
-
-    # Prepare sample data
-    samples = []
-    for change in tracks_with_changes[:20]:  # First 20 for display
-        # Get playlist names for reporting
-        add_names = []
-        remove_names = []
-
-        with UnitOfWork() as uow:
-            for pid in change['add_to']:
-                pl = uow.playlist_repository.get_by_id(pid)
-                if pl:
-                    add_names.append(pl.name)
-                else:
-                    add_names.append(f"Unknown Playlist (ID: {pid})")
-
-            for pid in change['remove_from']:
-                pl = uow.playlist_repository.get_by_id(pid)
-                if pl:
-                    remove_names.append(pl.name)
-                else:
-                    remove_names.append(f"Unknown Playlist (ID: {pid})")
-
-        samples.append({
-            'track': change['track_info'],
-            'add_to': add_names,
-            'remove_from': remove_names
-        })
-
-    # Calculate some statistics
+    # Prepare stats for return
     stats = {
-        'tracks_with_playlists': len(current_associations),
-        'tracks_without_playlists': len(all_track_ids) - len(current_associations),
-        'total_associations': sum(len(playlists) for playlists in current_associations.values())
+        "tracks_with_playlists": tracks_with_playlists,
+        "tracks_without_playlists": len(all_track_ids) - tracks_with_playlists,
+        "total_associations": total_associations,
     }
 
+    # Return the analysis results
     return {
         "tracks_with_changes": tracks_with_changes,
         "associations_to_add": associations_to_add,
