@@ -189,6 +189,9 @@ def api_generate_cache():
 @app.route('/api/embed-metadata', methods=['POST'])
 def api_embed_metadata():
     master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
+    confirmed = request.json.get('confirmed', False)
+    user_selections = request.json.get('userSelections', [])
+    skipped_files = request.json.get('skippedFiles', [])
 
     if not master_tracks_dir:
         return jsonify({
@@ -196,6 +199,75 @@ def api_embed_metadata():
             "message": "Master tracks directory not specified in request or environment"
         }), 400
 
+    # If we've received confirmation with user selections, actually embed the metadata
+    if confirmed and user_selections:
+        try:
+            successful_embeds = 0
+            failed_embeds = 0
+            results = []
+
+            for selection in user_selections:
+                file_name = selection.get('fileName')
+                track_id = selection.get('trackId')
+                confidence = selection.get('confidence')
+
+                # Find the full file path
+                file_path = None
+                for root, _, files in os.walk(master_tracks_dir):
+                    if file_name in files:
+                        file_path = os.path.join(root, file_name)
+                        break
+
+                if file_path and track_id:
+                    # Use the embed_track_id function from file_helper.py
+                    from helpers.file_helper import embed_track_id
+                    success = embed_track_id(file_path, track_id)
+
+                    if success:
+                        successful_embeds += 1
+                        results.append({
+                            "file": file_name,
+                            "track_id": track_id,
+                            "success": True
+                        })
+                    else:
+                        failed_embeds += 1
+                        results.append({
+                            "file": file_name,
+                            "track_id": track_id,
+                            "success": False,
+                            "reason": "Failed to write to file"
+                        })
+                else:
+                    failed_embeds += 1
+                    results.append({
+                        "file": file_name,
+                        "track_id": track_id,
+                        "success": False,
+                        "reason": "File not found or track ID missing"
+                    })
+
+            return jsonify({
+                "success": True,
+                "message": f"Embedded TrackId into {successful_embeds} files. {failed_embeds} files failed.",
+                "results": results,
+                "successful_embeds": successful_embeds,
+                "failed_embeds": failed_embeds,
+                "skipped_files": len(skipped_files)
+            })
+
+        except Exception as e:
+            import traceback
+            error_str = traceback.format_exc()
+            print(f"Error embedding metadata: {e}")
+            print(error_str)
+            return jsonify({
+                "success": False,
+                "message": str(e),
+                "traceback": error_str
+            }), 500
+
+    # If not confirmed, analyze files that need processing
     try:
         # Get list of all files first without making changes
         all_files = []
@@ -227,13 +299,191 @@ def api_embed_metadata():
             "success": True,
             "message": f"Found {len(files_without_id)} files without TrackId out of {total_files} total files.",
             "needs_confirmation": len(files_without_id) > 0,
+            "requires_fuzzy_matching": True,  # New flag to indicate this needs the special UI
             "details": {
                 "files_to_process": files_without_id,
                 "total_files": total_files
             }
         })
     except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error analyzing metadata embedding: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@app.route('/api/fuzzy-match-track', methods=['POST'])
+def api_fuzzy_match_track():
+    """Get potential matches for a specific file using fuzzy matching."""
+    try:
+        file_name = request.json.get('fileName')
+        master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
+
+        if not file_name:
+            return jsonify({"success": False, "message": "No file name provided"}), 400
+
+        if not master_tracks_dir:
+            return jsonify({"success": False, "message": "No master tracks directory provided"}), 400
+
+        # Load tracks from database for matching
+        with UnitOfWork() as uow:
+            tracks_db = uow.track_repository.get_all()
+
+        # Use the existing fuzzy matching logic from track_helper.py
+        import Levenshtein
+
+        # Extract artist and title from filename using same logic as find_track_id_fuzzy
+        try:
+            name_part = os.path.splitext(file_name)[0]
+
+            # Try standard "Artist - Title" format first
+            if " - " in name_part:
+                artist, track_title = name_part.split(" - ", 1)
+            else:
+                # Handle files without the separator
+                artist = ""
+                track_title = name_part
+                print(f"NOTE: '{file_name}' doesn't follow 'Artist - Title' format. Will try to match by title only.")
+        except ValueError:
+            print(f"Filename format issue: {file_name}")
+            artist = ""
+            track_title = name_part
+
+        # Normalize the input filename for comparison (same as in find_track_id_fuzzy)
+        normalized_artist = artist.lower().replace('&', 'and')
+        normalized_title = track_title.lower()
+
+        # Original artist and title for display
+        original_artist = artist
+        original_title = track_title
+
+        # Handle remix information
+        remix_info = ""
+        if "remix" in normalized_title.lower():
+            remix_parts = normalized_title.lower().split("remix")
+            normalized_title = remix_parts[0].strip()
+            remix_info = "remix" + remix_parts[1] if len(remix_parts) > 1 else "remix"
+
+        # Store all matches above threshold
+        matches = []
+
+        # Calculate match scores for each track (same logic as in find_track_id_fuzzy)
+        for track in tracks_db:
+            # Skip local files in the tracks_db list
+            if track.is_local:
+                continue
+
+            # Always use the new Track domain model properties
+            db_artists = track.artists.lower().replace('&', 'and')
+            db_title = track.title.lower()
+            track_id = track.track_id
+
+            # Split artists into list and normalize each
+            db_artist_list = [a.strip() for a in db_artists.split(',')]
+
+            # Handle "and" in artist names by also splitting those
+            expanded_artists = []
+            for db_artist in db_artist_list:
+                if ' and ' in db_artist:
+                    expanded_artists.extend([a.strip() for a in db_artist.split(' and ')])
+                else:
+                    expanded_artists.append(db_artist)
+
+            # Compare with each possible artist
+            artist_ratios = []
+            if artist:  # Only do artist matching if we have an artist name
+                artist_ratios = [Levenshtein.ratio(normalized_artist, db_artist) for db_artist in expanded_artists]
+                artist_ratio = max(artist_ratios) if artist_ratios else 0
+
+                # Add bonus if artist matches exactly
+                if any(normalized_artist == db_artist for db_artist in expanded_artists):
+                    artist_ratio = 1.0  # Perfect match
+            else:
+                artist_ratio = 0.0  # No artist to match
+
+            # Normalize titles by removing parentheses and dashes
+            import re
+            clean_normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()
+            db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
+
+            # Handle special title cases (remixes, edits, etc.)
+            title_variations = []
+            # Original title
+            title_variations.append(db_title)
+            # Clean title without parentheses
+            title_variations.append(db_title_clean)
+            # Title with standardized format
+            standardized_db_title = db_title.replace(' - ', ' ').replace("'s", "s")
+            title_variations.append(standardized_db_title)
+
+            # Calculate best title match from variations
+            title_ratios = [Levenshtein.ratio(clean_normalized_title, var) for var in title_variations]
+            title_ratio = max(title_ratios)
+
+            # Add perfect match bonus for exact title match
+            if clean_normalized_title in [var.lower() for var in title_variations]:
+                title_ratio = 1.0
+
+            # Add bonus for remix/edit matching if present
+            remix_bonus = 0
+            if any(x in track_title.lower() for x in ['remix', 'edit', 'mix', 'version']) and \
+                    any(x in db_title for x in ['remix', 'edit', 'mix', 'version']):
+                remix_bonus = 0.1
+
+                # Add extra bonus if the same artist is doing the remix
+                remix_pattern = r'\(([^)]+)(remix|edit|version|mix)\)'
+                local_remix_match = re.search(remix_pattern, track_title.lower())
+                db_remix_match = re.search(remix_pattern, db_title.lower())
+
+                if local_remix_match and db_remix_match and local_remix_match.group(1) == db_remix_match.group(1):
+                    remix_bonus += 0.1
+
+            # Calculate weighted overall ratio - weight artist match higher
+            # If no artist (single text field), rely more on title match
+            if artist:
+                overall_ratio = (artist_ratio * 0.6 + title_ratio * 0.3 + remix_bonus)
+            else:
+                overall_ratio = (title_ratio * 0.9 + remix_bonus)
+
+            # Include all potential matches
+            if overall_ratio >= 0.45:  # Lower threshold for showing more options
+                matches.append({
+                    'track_id': track_id,
+                    'ratio': overall_ratio,
+                    'artist': track.artists,
+                    'title': track.title,
+                    'album': track.album
+                })
+
+        # Sort matches by ratio in descending order
+        matches.sort(key=lambda x: x['ratio'], reverse=True)
+
+        # Take top matches
+        top_matches = matches[:8]  # Limit to 8 matches for UI
+
+        # Return the original file info and potential matches
+        return jsonify({
+            "success": True,
+            "file_name": file_name,
+            "original_artist": original_artist,
+            "original_title": original_title,
+            "matches": top_matches
+        })
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error in fuzzy match: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
 
 
 @app.route('/api/generate-m3u', methods=['POST'])
