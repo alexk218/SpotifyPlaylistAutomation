@@ -562,14 +562,41 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
 
     # Fetch all playlists (excluding forbidden ones)
     user_playlists = fetch_playlists(spotify_client, force_refresh=True)
-    other_playlists = [pl for pl in user_playlists if pl[2] != master_playlist_id]
 
+    # FIXED: Check structure of user_playlists to determine how to filter
+    # Print a sample to debug
+    if user_playlists and len(user_playlists) > 0:
+        sample_pl = user_playlists[0]
+        spotify_logger.info(f"Sample playlist structure: {sample_pl}")
+        print(f"Sample playlist structure: {sample_pl}")
+
+    # FIXED: Safely filter out the MASTER playlist
+    other_playlists = []
+    for pl in user_playlists:
+        # Check if the playlist tuple has enough elements and if it's not the MASTER playlist
+        if isinstance(pl, tuple) and len(pl) >= 2:
+            # Assume playlist_id is either at index 1 or 2
+            pl_id = pl[1] if len(pl) == 2 else pl[2]
+            if pl_id != master_playlist_id:
+                other_playlists.append(pl)
+        else:
+            # Log unexpected playlist format
+            spotify_logger.warning(f"Unexpected playlist format: {pl}")
+
+    # Rest of your function remains the same...
     # Track which songs come from which playlists
     new_tracks_by_playlist = {}
 
     # Process each playlist
     print("\nAnalyzing playlists...")
-    for i, (playlist_name, _, playlist_id) in enumerate(other_playlists, 1):
+    for i, pl in enumerate(other_playlists, 1):
+        # FIXED: Safely extract name and ID based on tuple length
+        if len(pl) == 2:
+            playlist_name, playlist_id = pl
+            # In this case, there's no third element
+        else:
+            playlist_name, _, playlist_id = pl
+
         print(f"Checking playlist {i}/{len(other_playlists)}: {playlist_name}")
         spotify_logger.info(f"Checking tracks in playlist: {playlist_name}")
 
