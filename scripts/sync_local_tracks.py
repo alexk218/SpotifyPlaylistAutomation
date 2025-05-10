@@ -91,6 +91,25 @@ def scan_directory(directory):
 
 def generate_cache(music_directory, output_path):
     """Generate a cache file of all local tracks with their Spotify TrackIds."""
+    print(f"[INFO] Scanning directory: {music_directory}")
+    print(f"[INFO] Output directory: {output_path}")
+
+    if not music_directory or not os.path.exists(music_directory):
+        print(f"[ERROR] Music directory does not exist: {music_directory}")
+        raise ValueError(f"Music directory does not exist: {music_directory}")
+
+    if not output_path:
+        print(f"[ERROR] Output directory not specified")
+        raise ValueError("Output directory not specified")
+
+    # Create output directory if it doesn't exist
+    try:
+        os.makedirs(output_path, exist_ok=True)
+        print(f"[INFO] Created or verified output directory: {output_path}")
+    except Exception as e:
+        print(f"[ERROR] Failed to create output directory: {e}")
+        raise
+
     start_time = time.time()
 
     # Scan the directory

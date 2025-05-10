@@ -165,6 +165,349 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
     return added_count, updated_count, unchanged_count
 
 
+def analyze_playlists_changes(force_full_refresh=False):
+    """
+    Analyze what changes would be made to playlists without executing them.
+
+    Args:
+        force_full_refresh: Whether to force a full refresh, ignoring existing data
+
+    Returns:
+        Tuple of (added_count, updated_count, unchanged_count, changes_details)
+    """
+    # Get existing playlists from database
+    existing_playlists = get_db_playlists() if not force_full_refresh else {}
+
+    # Fetch all playlists from Spotify
+    spotify_client = authenticate_spotify()
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+
+    # Track changes for analysis
+    playlists_to_add = []
+    playlists_to_update = []
+    unchanged_count = 0
+
+    # Analyze changes
+    for playlist_name, playlist_id in spotify_playlists:
+        # Check if playlist exists in database
+        if playlist_id in existing_playlists:
+            existing_playlist = existing_playlists[playlist_id]
+
+            # Check if playlist details have changed
+            if (existing_playlist.name != playlist_name.strip()):
+                # Mark for update
+                playlists_to_update.append({
+                    'id': playlist_id,
+                    'name': playlist_name.strip(),
+                    'old_name': existing_playlist.name,
+                })
+            else:
+                unchanged_count += 1
+        else:
+            # Mark for addition
+            playlists_to_add.append({
+                'id': playlist_id,
+                'name': playlist_name.strip()
+            })
+
+    return len(playlists_to_add), len(playlists_to_update), unchanged_count, {
+        'to_add': playlists_to_add,
+        'to_update': playlists_to_update
+    }
+
+
+def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = False):
+    """
+    Analyze what changes would be made to tracks without executing them.
+
+    Args:
+        master_playlist_id: ID of the master playlist
+        force_full_refresh: Whether to force a full refresh, ignoring existing data
+
+    Returns:
+        Tuple of (tracks_to_add, tracks_to_update, unchanged_tracks)
+    """
+    # Get existing tracks from database
+    existing_tracks = get_db_tracks() if not force_full_refresh else {}
+
+    # Fetch all tracks from the MASTER playlist
+    spotify_client = authenticate_spotify()
+    master_tracks = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_full_refresh)
+
+    # Analyze changes without applying them
+    tracks_to_add = []
+    tracks_to_update = []
+    unchanged_tracks = []
+
+    for track_data in master_tracks:
+        track_id, track_title, artist_names, album_name, added_at = track_data
+
+        # Handle local files
+        is_local = track_id is None
+
+        if is_local:
+            # Clean the strings
+            normalized_title = ''.join(c for c in track_title if c.isalnum() or c in ' &-_')
+            normalized_artist = ''.join(c for c in artist_names if c.isalnum() or c in ' &-_')
+
+            # Generate ID
+            metadata = {'title': normalized_title, 'artist': normalized_artist}
+            track_id = generate_local_track_id(metadata)
+
+        # Check if track exists in database
+        if track_id in existing_tracks:
+            existing_track = existing_tracks[track_id]
+
+            # Check if track details have changed
+            if (existing_track.title != track_title or
+                    existing_track.artists != artist_names or
+                    existing_track.album != album_name):
+
+                # Mark for update
+                tracks_to_update.append({
+                    'id': track_id,
+                    'title': track_title,
+                    'artists': artist_names,
+                    'album': album_name,
+                    'is_local': is_local,
+                    'old_title': existing_track.title,
+                    'old_artists': existing_track.artists,
+                    'old_album': existing_track.album
+                })
+            else:
+                unchanged_tracks.append(track_id)
+        else:
+            # Mark for addition
+            tracks_to_add.append({
+                'id': track_id,
+                'title': track_title,
+                'artists': artist_names,
+                'album': album_name,
+                'added_at': added_at,
+                'is_local': is_local
+            })
+
+    return tracks_to_add, tracks_to_update, unchanged_tracks
+
+
+def analyze_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False) -> dict:
+    """
+    Analyze what changes would be made to track-playlist associations without actually making them.
+
+    Args:
+        master_playlist_id: ID of the master playlist
+        force_full_refresh: Whether to force a full refresh
+
+    Returns:
+        Dictionary with statistics about the analysis
+    """
+    spotify_client = authenticate_spotify()
+
+    # Build a track_id_map for analysis
+    all_track_ids = set()
+    with UnitOfWork() as uow:
+        tracks = uow.track_repository.get_all()
+        all_track_ids = {track.track_id for track in tracks}
+
+    # Get all current association data in a single operation
+    current_associations = {}
+    with UnitOfWork() as uow:
+        for track_id in all_track_ids:
+            playlist_ids = set(uow.track_playlist_repository.get_playlist_ids_for_track(track_id))
+            current_associations[track_id] = playlist_ids
+
+    # Fetch all playlists from Spotify
+    user_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+
+    # Get current playlist tracks from Spotify - this is expensive but necessary
+    spotify_playlist_tracks = {}
+    for _, playlist_id in user_playlists:
+        if playlist_id != master_playlist_id:  # Skip MASTER playlist
+            track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=force_full_refresh)
+            spotify_playlist_tracks[playlist_id] = set(track_ids)
+
+    # Now determine what should change
+    tracks_with_changes = []
+    associations_to_add = 0
+    associations_to_remove = 0
+
+    # For each track in our database, check which playlists it should be in
+    for track_id in all_track_ids:
+        # Determine which playlists this track should be in according to Spotify
+        should_be_in = set()
+        for playlist_id, tracks in spotify_playlist_tracks.items():
+            if track_id in tracks:
+                should_be_in.add(playlist_id)
+
+        # Compare with current associations
+        current = current_associations.get(track_id, set())
+
+        to_add = should_be_in - current
+        to_remove = current - should_be_in
+
+        if to_add or to_remove:
+            # Get track details for reporting
+            track_info = None
+            with UnitOfWork() as uow:
+                track = uow.track_repository.get_by_id(track_id)
+                if track:
+                    track_info = f"{track.artists} - {track.title}"
+                else:
+                    track_info = f"Unknown Track (ID: {track_id})"
+
+            # Record this change
+            tracks_with_changes.append({
+                'track_id': track_id,
+                'track_info': track_info,
+                'add_to': list(to_add),
+                'remove_from': list(to_remove)
+            })
+
+            associations_to_add += len(to_add)
+            associations_to_remove += len(to_remove)
+
+    # Prepare sample data
+    samples = []
+    for change in tracks_with_changes[:20]:  # First 20 for display
+        # Get playlist names for reporting
+        add_names = []
+        remove_names = []
+
+        with UnitOfWork() as uow:
+            for pid in change['add_to']:
+                pl = uow.playlist_repository.get_by_id(pid)
+                if pl:
+                    add_names.append(pl.name)
+                else:
+                    add_names.append(f"Unknown Playlist (ID: {pid})")
+
+            for pid in change['remove_from']:
+                pl = uow.playlist_repository.get_by_id(pid)
+                if pl:
+                    remove_names.append(pl.name)
+                else:
+                    remove_names.append(f"Unknown Playlist (ID: {pid})")
+
+        samples.append({
+            'track': change['track_info'],
+            'add_to': add_names,
+            'remove_from': remove_names
+        })
+
+    # Calculate some statistics
+    stats = {
+        'tracks_with_playlists': len(current_associations),
+        'tracks_without_playlists': len(all_track_ids) - len(current_associations),
+        'total_associations': sum(len(playlists) for playlists in current_associations.values())
+    }
+
+    return {
+        "tracks_with_changes": tracks_with_changes,
+        "associations_to_add": associations_to_add,
+        "associations_to_remove": associations_to_remove,
+        "samples": samples,
+        "stats": stats
+    }
+
+
+def analyze_master_sync(spotify_client, master_playlist_id: str):
+    """
+    Analyze what changes would be made by sync_to_master_playlist without executing them.
+
+    Args:
+        spotify_client: Authenticated Spotify client
+        master_playlist_id: ID of the MASTER playlist
+
+    Returns:
+        Dictionary with analysis results
+    """
+    # Get current tracks in MASTER playlist
+    master_track_ids = set(get_playlist_track_ids(spotify_client, master_playlist_id, force_refresh=True))
+
+    # Fetch all playlists
+    user_playlists = fetch_playlists(spotify_client, force_refresh=True)
+
+    # Filter playlists safely
+    other_playlists = []
+    for pl in user_playlists:
+        if isinstance(pl, tuple):
+            playlist_name = pl[0] if len(pl) > 0 else "Unknown"
+
+            if len(pl) == 2:
+                playlist_id = pl[1]
+            elif len(pl) >= 3:
+                playlist_id = pl[2]
+            else:
+                continue
+
+            if playlist_id != master_playlist_id:
+                other_playlists.append((playlist_name, playlist_id))
+
+    # Track which songs come from which playlists
+    new_tracks_by_playlist = {}
+
+    # Process each playlist
+    for playlist_name, playlist_id in other_playlists:
+        # Get tracks for this playlist
+        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
+
+        # Filter out local files and find tracks not in master
+        new_track_ids = []
+        for track_id in playlist_track_ids:
+            if track_id.startswith('spotify:local:') or track_id.startswith('local_'):
+                continue
+
+            if track_id not in master_track_ids:
+                new_track_ids.append(track_id)
+
+        if not new_track_ids:
+            continue
+
+        # Get track details
+        playlist_tracks = []
+        for j in range(0, len(new_track_ids), 50):
+            batch = new_track_ids[j:j + 50]
+            try:
+                tracks_info = spotify_client.tracks(batch)
+                for track in tracks_info['tracks']:
+                    if track:
+                        track_info = {
+                            'id': track['id'],
+                            'name': track['name'],
+                            'artists': ', '.join(artist['name'] for artist in track['artists'])
+                        }
+                        playlist_tracks.append(track_info)
+            except Exception as e:
+                print(f"Error fetching details for track batch: {e}")
+                continue
+
+        if playlist_tracks:
+            new_tracks_by_playlist[playlist_name] = playlist_tracks
+
+    # Calculate statistics
+    total_tracks = sum(len(tracks) for tracks in new_tracks_by_playlist.values())
+
+    # Prepare sample data for display
+    sample_playlists = []
+    for playlist_name, tracks in sorted(new_tracks_by_playlist.items())[:5]:  # Limit to 5 playlists
+        sample_tracks = sorted(tracks, key=lambda x: (x['artists'], x['name']))[:5]  # Limit to 5 tracks per playlist
+        sample_playlists.append({
+            'name': playlist_name,
+            'track_count': len(tracks),
+            'sample_tracks': sample_tracks
+        })
+
+    # Create analysis result
+    analysis = {
+        'total_tracks_to_add': total_tracks,
+        'playlists_with_new_tracks': len(new_tracks_by_playlist),
+        'sample_playlists': sample_playlists,
+        'needs_confirmation': total_tracks > 0
+    }
+
+    return analysis
+
+
 def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: bool = False) -> Tuple[int, int, int]:
     """
     Incrementally sync tracks from the MASTER playlist to the database.
