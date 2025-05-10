@@ -508,7 +508,8 @@ def analyze_master_sync(spotify_client, master_playlist_id: str):
     return analysis
 
 
-def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: bool = False) -> Tuple[int, int, int]:
+def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: bool = False,
+                                   auto_confirm: bool = False) -> Tuple[int, int, int]:
     """
     Incrementally sync tracks from the MASTER playlist to the database.
     Only fetches and updates tracks that have changed. Does NOT update playlist associations.
@@ -625,11 +626,12 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
 
     # Ask for confirmation
     if tracks_to_add or tracks_to_update:
-        confirmation = input("\nWould you like to proceed with these changes to the database? (y/n): ")
-        if confirmation.lower() != 'y':
-            sync_logger.info("Sync cancelled by user")
-            print("Sync cancelled.")
-            return 0, 0, len(unchanged_tracks)
+        if not auto_confirm:  # Add this condition
+            confirmation = input("\nWould you like to proceed with these changes to the database? (y/n): ")
+            if confirmation.lower() != 'y':
+                sync_logger.info("Sync cancelled by user")
+                print("Sync cancelled.")
+                return 0, 0, len(unchanged_tracks)
     else:
         print("\nNo track changes needed. Database is up to date.")
         return 0, 0, len(unchanged_tracks)
@@ -697,7 +699,8 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
     return added_count, updated_count, len(unchanged_tracks)
 
 
-def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False) -> Dict[str, int]:
+def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False,
+                                     auto_confirm: bool = False) -> Dict[str, int]:
     """
     Sync track-playlist associations for all tracks in the database.
     This function makes direct API calls to Spotify for all tracks and playlists,
@@ -876,17 +879,18 @@ def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh
             "no_changes": True
         }
 
-    confirmation = input("\nWould you like to update track-playlist associations in the database? (y/n): ")
-    if confirmation.lower() != 'y':
-        sync_logger.info("Association sync cancelled by user")
-        print("Sync cancelled.")
-        return {
-            "tracks_with_playlists": tracks_with_playlists,
-            "tracks_without_playlists": len(all_track_ids) - tracks_with_playlists,
-            "total_associations": total_associations,
-            "associations_added": 0,
-            "associations_removed": 0
-        }
+    if not auto_confirm:  # Add this condition
+        confirmation = input("\nWould you like to update track-playlist associations in the database? (y/n): ")
+        if confirmation.lower() != 'y':
+            sync_logger.info("Association sync cancelled by user")
+            print("Sync cancelled.")
+            return {
+                "tracks_with_playlists": tracks_with_playlists,
+                "tracks_without_playlists": len(all_track_ids) - tracks_with_playlists,
+                "total_associations": total_associations,
+                "associations_added": 0,
+                "associations_removed": 0
+            }
 
     # Track statistics for newly synced associations
     associations_added = 0

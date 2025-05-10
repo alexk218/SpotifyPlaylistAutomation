@@ -31,7 +31,7 @@ from helpers.validation_helper import validate_master_tracks
 from sql.helpers.db_helper import clear_db, insert_playlists, insert_tracks_and_associations, MASTER_PLAYLIST_ID
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["https://xpui.app.spotify.com", "https://open.spotify.com", "http://localhost:4000"])
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
 
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
@@ -630,6 +630,7 @@ def api_analyze_associations():
 
 
 # Modified sync-database to handle the confirmation flow
+# 2. Fix the sync-database route
 @app.route('/api/sync-database', methods=['POST'])
 def api_sync_database():
     from helpers.sync_helper import (
@@ -801,7 +802,14 @@ def api_sync_database():
                     "analyses": all_analyses,
                     "needs_confirmation": needs_confirmation
                 })
-            return None
+
+            # Handle the execution case for 'all' when confirmed
+            # Add execution code here for when action='all' and is_confirmed=True
+            # For now, let's return a message that this isn't implemented yet
+            return jsonify({
+                "success": False,
+                "message": "Confirmation execution for 'all' action not implemented yet"
+            })
 
         else:
             return jsonify({"success": False, "message": "Invalid action"}), 400
