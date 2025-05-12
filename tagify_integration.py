@@ -1287,6 +1287,386 @@ def api_sync_database():
         }), 500
 
 
+@app.route('/api/validate-track-metadata', methods=['POST'])
+def api_validate_track_metadata():
+    try:
+        # Get parameters from request
+        master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
+        confidence_threshold = request.json.get('confidence_threshold', 0.75)
+
+        if not master_tracks_dir:
+            return jsonify({
+                "success": False,
+                "message": "Master tracks directory not specified"
+            }), 400
+
+        # Track statistics
+        total_files = 0
+        files_with_track_id = 0
+        files_without_track_id = 0
+        potential_mismatches = []
+        duplicate_track_ids = {}
+
+        # Get all tracks from database for comparison
+        with UnitOfWork() as uow:
+            db_tracks = uow.track_repository.get_all()
+            db_tracks_by_id = {track.track_id: track for track in db_tracks}
+
+        # Create a map of IDs to expected filenames for comparison
+        expected_filenames = {}
+        for track_id, track in db_tracks_by_id.items():
+            artist = track.get_primary_artist()
+            title = track.title
+            expected_filename = f"{artist} - {title}"
+            expected_filenames[track_id] = expected_filename.lower()
+
+        # Scan local files
+        for root, _, files in os.walk(master_tracks_dir):
+            for file in files:
+                if not file.lower().endswith('.mp3'):
+                    continue
+
+                total_files += 1
+                file_path = os.path.join(root, file)
+                filename_no_ext = os.path.splitext(file)[0].lower()
+
+                try:
+                    tags = ID3(file_path)
+                    if 'TXXX:TRACKID' in tags:
+                        track_id = tags['TXXX:TRACKID'].text[0]
+                        files_with_track_id += 1
+
+                        # Add to duplicate detection
+                        if track_id in duplicate_track_ids:
+                            duplicate_track_ids[track_id].append(file)
+                        else:
+                            duplicate_track_ids[track_id] = [file]
+
+                        # Check if track_id exists in database
+                        if track_id in db_tracks_by_id:
+                            db_track = db_tracks_by_id[track_id]
+                            expected_filename = expected_filenames[track_id]
+
+                            # Calculate filename similarity
+                            import Levenshtein
+                            similarity = Levenshtein.ratio(filename_no_ext, expected_filename)
+
+                            # Flag potential mismatches
+                            if similarity < confidence_threshold:
+                                potential_mismatches.append({
+                                    'file': file,
+                                    'track_id': track_id,
+                                    'embedded_artist_title': f"{db_track.artists} - {db_track.title}",
+                                    'filename': filename_no_ext,
+                                    'confidence': similarity,
+                                    'full_path': file_path
+                                })
+                        else:
+                            # Track ID not found in database
+                            potential_mismatches.append({
+                                'file': file,
+                                'track_id': track_id,
+                                'embedded_artist_title': "Unknown (TrackId not in database)",
+                                'filename': filename_no_ext,
+                                'confidence': 0,
+                                'full_path': file_path,
+                                'reason': 'track_id_not_in_db'
+                            })
+                    else:
+                        files_without_track_id += 1
+                except Exception as e:
+                    files_without_track_id += 1
+
+        # Filter duplicate_track_ids to only include actual duplicates
+        real_duplicates = {k: v for k, v in duplicate_track_ids.items() if len(v) > 1}
+
+        # Sort potential mismatches by confidence
+        potential_mismatches.sort(key=lambda x: x['confidence'])
+
+        return jsonify({
+            "success": True,
+            "summary": {
+                "total_files": total_files,
+                "files_with_track_id": files_with_track_id,
+                "files_without_track_id": files_without_track_id,
+                "potential_mismatches": len(potential_mismatches),
+                "duplicate_track_ids": len(real_duplicates)
+            },
+            "potential_mismatches": potential_mismatches,
+            "duplicate_track_ids": real_duplicates
+        })
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error validating track metadata: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@app.route('/api/validate-playlists', methods=['POST'])
+def api_validate_playlists():
+    try:
+        # Get parameters from request
+        master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
+        playlists_dir = request.json.get('playlistsDir')
+
+        if not master_tracks_dir:
+            return jsonify({
+                "success": False,
+                "message": "Master tracks directory not specified"
+            }), 400
+
+        if not playlists_dir:
+            return jsonify({
+                "success": False,
+                "message": "Playlists directory not specified"
+            }), 400
+
+        # Build track ID mapping first for efficiency
+        from helpers.m3u_helper import build_track_id_mapping
+        track_id_map = build_track_id_mapping(master_tracks_dir)
+
+        # Get all playlists from database
+        with UnitOfWork() as uow:
+            db_playlists = uow.playlist_repository.get_all()
+            # Filter out the MASTER playlist
+            db_playlists = [p for p in db_playlists if p.name.upper() != "MASTER"]
+
+        # Analyze each playlist's integrity
+        playlist_analysis = []
+
+        for playlist in db_playlists:
+            playlist_name = playlist.name
+            playlist_id = playlist.playlist_id
+
+            # Check if this playlist has an M3U file
+            from helpers.m3u_helper import sanitize_filename
+            safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
+            m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+
+            if os.path.exists(m3u_path):
+                # Use the optimized comparison function
+                from helpers.m3u_helper import compare_playlist_with_m3u
+                has_changes, added, removed = compare_playlist_with_m3u(
+                    playlist_id,
+                    m3u_path,
+                    master_tracks_dir,
+                    track_id_map
+                )
+
+                # Check which tracks should be in this playlist
+                with UnitOfWork() as uow:
+                    expected_tracks = uow.track_repository.get_tracks_in_playlist(playlist_id)
+                    expected_track_details = [
+                        {
+                            'id': track.track_id,
+                            'title': track.title,
+                            'artists': track.artists
+                        }
+                        for track in expected_tracks
+                    ]
+
+                # Get tracks in the M3U file
+                from helpers.m3u_helper import get_m3u_track_ids
+                m3u_track_ids = get_m3u_track_ids(m3u_path, track_id_map)
+
+                # Get details for tracks in M3U that shouldn't be there
+                tracks_to_remove = []
+                for track_id in removed:
+                    with UnitOfWork() as uow:
+                        track = uow.track_repository.get_by_id(track_id)
+                        if track:
+                            tracks_to_remove.append({
+                                'id': track_id,
+                                'title': track.title,
+                                'artists': track.artists
+                            })
+
+                # Get details for tracks missing from M3U
+                tracks_to_add = []
+                for track_id in added:
+                    with UnitOfWork() as uow:
+                        track = uow.track_repository.get_by_id(track_id)
+                        if track:
+                            tracks_to_add.append({
+                                'id': track_id,
+                                'title': track.title,
+                                'artists': track.artists
+                            })
+
+                playlist_analysis.append({
+                    'name': playlist_name,
+                    'id': playlist_id,
+                    'has_m3u': True,
+                    'needs_update': has_changes,
+                    'expected_track_count': len(expected_tracks),
+                    'm3u_track_count': len(m3u_track_ids),
+                    'tracks_missing_from_m3u': tracks_to_add,
+                    'unexpected_tracks_in_m3u': tracks_to_remove
+                })
+            else:
+                # M3U file doesn't exist
+                with UnitOfWork() as uow:
+                    expected_tracks = uow.track_repository.get_tracks_in_playlist(playlist_id)
+
+                playlist_analysis.append({
+                    'name': playlist_name,
+                    'id': playlist_id,
+                    'has_m3u': False,
+                    'needs_update': True,
+                    'expected_track_count': len(expected_tracks),
+                    'm3u_track_count': 0,
+                    'tracks_missing_from_m3u': [],
+                    'unexpected_tracks_in_m3u': []
+                })
+
+        # Count playlists needing updates
+        playlists_needing_update = sum(1 for p in playlist_analysis if p['needs_update'])
+        missing_m3u_files = sum(1 for p in playlist_analysis if not p['has_m3u'])
+
+        # Sort by issue severity
+        playlist_analysis.sort(key=lambda x: (
+            not x['has_m3u'],  # Missing M3U files first
+            len(x['tracks_missing_from_m3u']) + len(x['unexpected_tracks_in_m3u']),  # Then by number of issues
+            x['name']  # Then alphabetically
+        ), reverse=True)
+
+        return jsonify({
+            "success": True,
+            "summary": {
+                "total_playlists": len(playlist_analysis),
+                "playlists_needing_update": playlists_needing_update,
+                "missing_m3u_files": missing_m3u_files
+            },
+            "playlist_analysis": playlist_analysis
+        })
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error validating playlists: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@app.route('/api/correct-track-id', methods=['POST'])
+def api_correct_track_id():
+    try:
+        file_path = request.json.get('file_path')
+        new_track_id = request.json.get('new_track_id')
+
+        if not file_path or not new_track_id:
+            return jsonify({
+                "success": False,
+                "message": "Both file_path and new_track_id are required"
+            }), 400
+
+        # Check if new track ID exists in database
+        with UnitOfWork() as uow:
+            track = uow.track_repository.get_by_id(new_track_id)
+            if not track:
+                return jsonify({
+                    "success": False,
+                    "message": f"Track ID '{new_track_id}' not found in database"
+                }), 400
+
+        # Get existing track ID if any
+        old_track_id = None
+        try:
+            tags = ID3(file_path)
+            if 'TXXX:TRACKID' in tags:
+                old_track_id = tags['TXXX:TRACKID'].text[0]
+        except Exception:
+            pass
+
+        # Use the embed_track_id function
+        from helpers.file_helper import embed_track_id
+        success = embed_track_id(file_path, new_track_id)
+
+        if success:
+            return jsonify({
+                "success": True,
+                "message": f"Successfully updated TrackId from '{old_track_id}' to '{new_track_id}'",
+                "old_track_id": old_track_id,
+                "new_track_id": new_track_id
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": f"Failed to update TrackId in file: {file_path}"
+            }), 500
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error correcting track ID: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@app.route('/api/regenerate-playlist', methods=['POST'])
+def api_regenerate_playlist():
+    try:
+        # Get parameters from request
+        master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
+        playlists_dir = request.json.get('playlistsDir')
+        playlist_id = request.json.get('playlist_id')
+        extended = request.json.get('extended', True)
+        overwrite = request.json.get('overwrite', True)
+
+        if not master_tracks_dir:
+            return jsonify({
+                "success": False,
+                "message": "Master tracks directory not specified"
+            }), 400
+
+        if not playlists_dir:
+            return jsonify({
+                "success": False,
+                "message": "Playlists directory not specified"
+            }), 400
+
+        if not playlist_id:
+            return jsonify({
+                "success": False,
+                "message": "Playlist ID not specified"
+            }), 400
+
+        # Import the regenerate function
+        from helpers.m3u_helper import regenerate_single_playlist
+
+        # Regenerate the playlist
+        result = regenerate_single_playlist(
+            playlist_id,
+            master_tracks_dir,
+            playlists_dir,
+            extended=extended,
+            overwrite=overwrite
+        )
+
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error regenerating playlist: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
 def run_command(command, wait=True):
     """Run a command and optionally wait for it to complete."""
     print(f"Running: {' '.join(str(c) for c in command)}")

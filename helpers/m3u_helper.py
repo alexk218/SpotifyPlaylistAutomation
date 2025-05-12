@@ -317,6 +317,7 @@ def generate_all_m3u_playlists(
 
     return stats
 
+
 def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_dir: str,
                           playlists_dir: str, extended: bool = True, overwrite: bool = True,
                           track_id_map: Dict[str, str] = None) -> Tuple[int, int]:
@@ -634,3 +635,57 @@ def sanitize_filename(name: str, preserve_spaces: bool = True) -> str:
         else:
             # Replace spaces and invalid characters
             return re.sub(r'\s+|[<>:"/\\|?*]', '_', name)
+
+
+def regenerate_single_playlist(playlist_id: str, master_tracks_dir: str, playlists_dir: str, extended: bool = True,
+                               overwrite: bool = True, track_id_map: Dict[str, str] = None) -> Dict[str, Any]:
+    """
+    Regenerate a single M3U playlist for a specific playlist.
+
+    Args:
+        playlist_id: ID of the playlist to regenerate
+        master_tracks_dir: Directory containing master tracks
+        playlists_dir: Directory to create playlist files in
+        extended: Whether to use extended M3U format with metadata
+        overwrite: Whether to overwrite existing playlist files
+        track_id_map: Pre-built mapping of track_id to file_path for optimization
+
+    Returns:
+        Dictionary with statistics about the operation
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(playlists_dir, exist_ok=True)
+
+    # Get the specific playlist from database
+    with UnitOfWork() as uow:
+        playlist = uow.playlist_repository.get_by_id(playlist_id)
+        if not playlist:
+            return {
+                'success': False,
+                'message': f'Playlist ID {playlist_id} not found in database'
+            }
+
+    # Build track ID mapping if not provided
+    if track_id_map is None:
+        track_id_map = build_track_id_mapping(master_tracks_dir)
+
+    # Generate the M3U file
+    tracks_found, tracks_added = generate_m3u_playlist(
+        playlist_name=playlist.name,
+        playlist_id=playlist_id,
+        master_tracks_dir=master_tracks_dir,
+        playlists_dir=playlists_dir,
+        extended=extended,
+        overwrite=overwrite,
+        track_id_map=track_id_map
+    )
+
+    return {
+        'success': True,
+        'message': f'Successfully regenerated playlist: {playlist.name}',
+        'stats': {
+            'playlist_name': playlist.name,
+            'tracks_found': tracks_found,
+            'tracks_added': tracks_added
+        }
+    }
