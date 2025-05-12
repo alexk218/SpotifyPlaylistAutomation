@@ -192,6 +192,7 @@ def api_embed_metadata():
     confirmed = request.json.get('confirmed', False)
     user_selections = request.json.get('userSelections', [])
     skipped_files = request.json.get('skippedFiles', [])
+    auto_confirm_threshold = request.json.get('auto_confirm_threshold', 0.75)
 
     if not master_tracks_dir:
         return jsonify({
@@ -273,6 +274,7 @@ def api_embed_metadata():
         all_files = []
         total_files = 0
         files_without_id = []
+        auto_matched_files = []
 
         for root, _, files in os.walk(master_tracks_dir):
             for file in files:
@@ -292,17 +294,43 @@ def api_embed_metadata():
                     pass
 
                 if not has_id:
-                    files_without_id.append(file)
+                    # Try to find high confidence exact matches
+                    exact_match = None
+                    with UnitOfWork() as uow:
+                        tracks_db = uow.track_repository.get_all()
+                        for track in tracks_db:
+                            if track.is_local and (track.title == file or track.title == os.path.splitext(file)[0]):
+                                # Found exact match
+                                exact_match = {
+                                    'fileName': file,
+                                    'trackId': track.track_id,
+                                    'confidence': 1.0  # 100% confidence
+                                }
+                                break
 
-        # Return analysis with all files that need processing
+                    if exact_match and exact_match['confidence'] >= auto_confirm_threshold:
+                        # Auto-match this file - embed the TrackId immediately
+                        from helpers.file_helper import embed_track_id
+                        success = embed_track_id(file_path, exact_match['trackId'])
+                        if success:
+                            auto_matched_files.append(exact_match)
+                        else:
+                            # If embedding failed, add to manual process list
+                            files_without_id.append(file)
+                    else:
+                        # No high confidence match, add to manual process list
+                        files_without_id.append(file)
+
+        # Return analysis with files that need processing
         return jsonify({
             "success": True,
-            "message": f"Found {len(files_without_id)} files without TrackId out of {total_files} total files.",
+            "message": f"Found {len(files_without_id)} files without TrackId out of {total_files} total files. Auto-matched {len(auto_matched_files)} files.",
             "needs_confirmation": len(files_without_id) > 0,
-            "requires_fuzzy_matching": True,  # New flag to indicate this needs the special UI
+            "requires_fuzzy_matching": len(files_without_id) > 0,
             "details": {
                 "files_to_process": files_without_id,
-                "total_files": total_files
+                "total_files": total_files,
+                "auto_matched_files": auto_matched_files
             }
         })
     except Exception as e:
