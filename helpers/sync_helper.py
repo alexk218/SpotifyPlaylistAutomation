@@ -306,6 +306,8 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
     # Get all tracks from database
     with UnitOfWork() as uow:
         all_tracks = uow.track_repository.get_all()
+        # Create a lookup dictionary for tracks by ID for quick access
+        tracks_by_id = {track.track_id: track for track in all_tracks}
         total_tracks = len(all_tracks)
         sync_logger.info(f"Found {total_tracks} tracks in database")
 
@@ -376,17 +378,23 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
 
             # Only record if there are changes
             if to_add or to_remove:
-                track = uow.track_repository.get_by_id(track_id)
+                # Get the track object from our lookup dictionary for efficiency
+                track = tracks_by_id.get(track_id)
                 if track:
                     track_info = f"{track.artists} - {track.title}"
                     actual_changes[track_id] = {
                         'track_info': track_info,
+                        'track_id': track_id,
+                        'title': track.title,
+                        'artists': track.artists,
                         'to_add': to_add,
                         'to_remove': to_remove
                     }
                     tracks_with_changes.append({
                         'track_id': track_id,
                         'track_info': track_info,
+                        'title': track.title,
+                        'artists': track.artists,
                         'add_to': list(to_add),
                         'remove_from': list(to_remove)
                     })
@@ -396,6 +404,9 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
                     # Add to samples for UI
                     samples.append({
                         'track': track_info,
+                        'track_info': track_info,
+                        'title': track.title,
+                        'artists': track.artists,
                         'add_to': list(to_add),
                         'remove_from': list(to_remove)
                     })
@@ -413,6 +424,7 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
         "associations_to_add": associations_to_add,
         "associations_to_remove": associations_to_remove,
         "samples": samples,
+        "all_changes": samples,
         "stats": stats
     }
 
@@ -707,7 +719,7 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
 
 
 def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False,
-                                     auto_confirm: bool = False) -> Dict[str, int]:
+                                     auto_confirm: bool = False, precomputed_changes: dict = None) -> Dict[str, int]:
     """
     Sync track-playlist associations for all tracks in the database.
     This function makes direct API calls to Spotify for all tracks and playlists,
@@ -722,6 +734,71 @@ def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh
     """
     sync_logger.info("Starting track-playlist association sync")
     print("Starting track-playlist association sync...")
+
+    # If we have precomputed changes, use them instead of rescanning
+    if precomputed_changes and 'tracks_with_changes' in precomputed_changes:
+        print(f"Using precomputed changes for {len(precomputed_changes['tracks_with_changes'])} tracks")
+        sync_logger.info(f"Using precomputed changes for {len(precomputed_changes['tracks_with_changes'])} tracks")
+
+        associations_added = 0
+        associations_removed = 0
+
+        # Process each track with identified changes
+        for change in precomputed_changes['tracks_with_changes']:
+            track_id = change['track_id']
+            track_info = change.get('track_info', f"ID:{track_id}")
+            playlists_to_add = set(change.get('add_to', []))
+            playlists_to_remove = set(change.get('remove_from', []))
+
+            with UnitOfWork() as uow:
+                # Get current playlist associations
+                current_playlist_ids = set(uow.track_playlist_repository.get_playlist_ids_for_track(track_id))
+                current_playlist_names = []
+
+                # Map playlist IDs to names
+                for pid in current_playlist_ids:
+                    playlist = uow.playlist_repository.get_by_id(pid)
+                    if playlist:
+                        current_playlist_names.append(playlist.name)
+
+                # Get current playlist name set
+                current_names_set = set(current_playlist_names)
+
+                # Calculate the new set of playlist names
+                updated_names_set = (current_names_set - playlists_to_remove) | playlists_to_add
+
+                # Update with the new set of playlists
+                result = sync_track_playlist_associations_for_single_track(uow, track_id, updated_names_set)
+
+                # Update stats
+                associations_added += result["added"]
+                associations_removed += result["removed"]
+
+                # Log changes
+                if result["added"] > 0 or result["removed"] > 0:
+                    sync_logger.info(f"Updated associations for '{track_info}': "
+                                     f"added {result['added']}, removed {result['removed']}")
+
+                # Show progress for large operations
+                if i % 10 == 0:
+                    print(f"Progress: {i}/{len(precomputed_changes['tracks_with_changes'])} tracks processed")
+
+        # Final stats
+        stats = {
+            "tracks_with_playlists": precomputed_changes.get('tracks_with_playlists', 0),
+            "tracks_without_playlists": precomputed_changes.get('tracks_without_playlists', 0),
+            "total_associations": precomputed_changes.get('total_associations', 0),
+            "associations_added": associations_added,
+            "associations_removed": associations_removed,
+            "tracks_with_changes": len(precomputed_changes['tracks_with_changes'])
+        }
+
+        print(f"\nTrack-playlist association sync complete:")
+        print(f"  - {associations_added} associations added")
+        print(f"  - {associations_removed} associations removed")
+        print(f"  - {len(precomputed_changes['tracks_with_changes'])} tracks had association changes")
+
+        return stats
 
     # Get all tracks from database
     with UnitOfWork() as uow:
@@ -1168,6 +1245,7 @@ def analyze_playlists_changes(force_full_refresh=False):
 def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = False):
     """
     Analyze what changes would be made to tracks without executing them.
+    Fixed to correctly identify local tracks that are already in the database.
 
     Args:
         master_playlist_id: ID of the master playlist
@@ -1178,6 +1256,15 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
     """
     # Get existing tracks from database
     existing_tracks = get_db_tracks() if not force_full_refresh else {}
+
+    # Create a lookup dictionary for local tracks in the database
+    # This will help us match local files more effectively
+    local_tracks_lookup = {}
+    for track_id, track in existing_tracks.items():
+        if track.is_local or track_id.startswith('local_'):
+            # Create alternative keys for matching
+            normalized_key = f"{track.artists}_{track.title}".lower().replace(' ', '')
+            local_tracks_lookup[normalized_key] = track_id
 
     # Fetch all tracks from the MASTER playlist
     spotify_client = authenticate_spotify()
@@ -1190,6 +1277,28 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
 
     for track_data in master_tracks:
         track_id, track_title, artist_names, album_name, added_at = track_data
+
+        # Handle local files
+        is_local = track_id is None
+
+        if is_local:
+            # Clean the strings
+            normalized_title = ''.join(c for c in track_title if c.isalnum() or c in ' &-_')
+            normalized_artist = ''.join(c for c in artist_names if c.isalnum() or c in ' &-_')
+
+            # Generate a lookup key for local track matching
+            normalized_key = f"{normalized_artist}_{normalized_title}".lower().replace(' ', '')
+
+            # First check if we can find this local track by our normalized key
+            if normalized_key in local_tracks_lookup:
+                # Found the track in our local tracks
+                track_id = local_tracks_lookup[normalized_key]
+                sync_logger.info(f"Matched local file: '{track_title}' with existing track ID: {track_id}")
+            else:
+                # Generate a new ID for this local track
+                metadata = {'title': normalized_title, 'artist': normalized_artist}
+                track_id = generate_local_track_id(metadata)
+                sync_logger.info(f"Generated new ID for local file: '{track_title}' -> {track_id}")
 
         # Check if track exists in database
         if track_id in existing_tracks:
@@ -1206,6 +1315,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
                     'title': track_title,
                     'artists': artist_names,
                     'album': album_name,
+                    'is_local': is_local,
                     'old_title': existing_track.title,
                     'old_artists': existing_track.artists,
                     'old_album': existing_track.album
@@ -1213,13 +1323,36 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
             else:
                 unchanged_tracks.append(track_id)
         else:
+            # Try an alternative lookup for local tracks by artist and title
+            if is_local:
+                # Create a normalized key for checking
+                normalized_key = f"{normalized_artist}_{normalized_title}".lower().replace(' ', '')
+
+                # Check if we can find a match by normalized artist+title
+                found_match = False
+                for existing_id, existing_track in existing_tracks.items():
+                    if existing_track.is_local:
+                        existing_normalized_key = f"{existing_track.artists}_{existing_track.title}".lower().replace(
+                            ' ', '')
+                        if existing_normalized_key == normalized_key:
+                            # Found a match - consider it unchanged
+                            unchanged_tracks.append(existing_id)
+                            found_match = True
+                            sync_logger.info(
+                                f"Found alternative match for local file: '{track_title}' -> {existing_id}")
+                            break
+
+                if found_match:
+                    continue
+
             # Mark for addition
             tracks_to_add.append({
                 'id': track_id,
                 'title': track_title,
                 'artists': artist_names,
                 'album': album_name,
-                'added_at': added_at
+                'added_at': added_at,
+                'is_local': is_local
             })
 
     return tracks_to_add, tracks_to_update, unchanged_tracks

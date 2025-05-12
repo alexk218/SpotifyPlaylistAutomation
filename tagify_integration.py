@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from flask_cors import CORS
@@ -183,6 +184,126 @@ def api_generate_cache():
             "success": False,
             "message": f"Error: {str(e)}",
             "traceback": traceback_str
+        }), 500
+
+
+@app.route('/api/direct-tracks-compare', methods=['GET'])
+def api_direct_tracks_compare():
+    """
+    Directly compare Spotify tracks with local tracks from the database.
+    Returns information about missing tracks without requiring a cache file.
+    """
+    try:
+        # Get master playlist ID (from query param or environment)
+        playlist_id = request.args.get('master_playlist_id') or MASTER_PLAYLIST_ID
+
+        if not playlist_id:
+            return jsonify({
+                "success": False,
+                "message": "Master playlist ID not provided"
+            }), 400
+
+        # 1. Get all tracks from the master playlist in the database
+        with UnitOfWork() as uow:
+            master_tracks = uow.track_repository.get_all()
+
+            # Convert to a list of dicts for JSON serialization
+            master_tracks_list = []
+            for track in master_tracks:
+                master_tracks_list.append({
+                    'id': track.track_id,
+                    'name': track.title,
+                    'artists': track.artists,
+                    'album': track.album,
+                    'added_at': track.added_to_master.isoformat() if track.added_to_master else None
+                })
+
+            # 2. Get all local tracks (tracks that have paths associated with them)
+            # Create a set of track IDs that are verified to exist locally
+            local_track_ids = set()
+            local_tracks_info = []
+
+            # Scan the master tracks directory to find which files have TrackIds
+            master_tracks_dir = request.args.get('master_tracks_dir') or MASTER_TRACKS_DIRECTORY_SSD
+
+            if not master_tracks_dir or not os.path.exists(master_tracks_dir):
+                return jsonify({
+                    "success": False,
+                    "message": f"Master tracks directory does not exist: {master_tracks_dir}"
+                }), 400
+
+            # Scan local files to find which ones have TrackIds embedded
+            for root, _, files in os.walk(master_tracks_dir):
+                for filename in files:
+                    if not filename.lower().endswith('.mp3'):
+                        continue
+
+                    file_path = os.path.join(root, filename)
+
+                    # Check if this file has a TrackId
+                    try:
+                        from mutagen.id3 import ID3, ID3NoHeaderError
+                        try:
+                            tags = ID3(file_path)
+                            if 'TXXX:TRACKID' in tags:
+                                track_id = tags['TXXX:TRACKID'].text[0]
+                                local_track_ids.add(track_id)
+                                local_tracks_info.append({
+                                    'path': file_path,
+                                    'filename': filename,
+                                    'track_id': track_id,
+                                    'size': os.path.getsize(file_path),
+                                    'modified': os.path.getmtime(file_path)
+                                })
+                        except ID3NoHeaderError:
+                            pass
+                    except Exception as e:
+                        print(f"Error reading ID3 tags from {file_path}: {e}")
+
+            # 3. Compare to find missing tracks
+            missing_tracks = []
+            for track in master_tracks_list:
+                # Skip tracks without an ID (shouldn't happen but just in case)
+                if not track['id']:
+                    continue
+
+                # Skip tracks that are local files
+                if track['id'].startswith('local_'):
+                    continue
+
+                # If track ID is not in local tracks, it's missing
+                if track['id'] not in local_track_ids:
+                    missing_tracks.append(track)
+
+            # Sort missing tracks by added_at date, newest first
+            missing_tracks.sort(
+                key=lambda x: x['added_at'] if x['added_at'] else '0',
+                reverse=True
+            )
+
+            # 4. Return the results
+            return jsonify({
+                "success": True,
+                "database_time": datetime.now().isoformat(),
+                "master_tracks": master_tracks_list,
+                "local_tracks": {
+                    "count": len(local_track_ids),
+                    "tracks": local_tracks_info[:100]  # Limit to avoid huge payloads
+                },
+                "missing_tracks": missing_tracks,
+                "music_directory": master_tracks_dir,
+                "master_playlist_id": playlist_id
+            })
+
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error in direct tracks compare: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
         }), 500
 
 
@@ -942,13 +1063,13 @@ def api_analyze_associations():
             force_full_refresh=force_refresh
         )
 
-        # Format changes for display that matches what your React component expects
+        # Make sure we include all the data needed for the UI
         formatted_changes = {
-            "tracks_with_changes": len(changes['tracks_with_changes']),
+            "tracks_with_changes": changes['tracks_with_changes'],
             "associations_to_add": changes['associations_to_add'],
             "associations_to_remove": changes['associations_to_remove'],
             "samples": changes['samples'],
-            "all_changes": changes['samples']
+            "all_changes": changes.get('all_changes', changes['samples'])  # Use all_changes if available
         }
 
         return jsonify({
@@ -970,8 +1091,6 @@ def api_analyze_associations():
         }), 500
 
 
-# Modified sync-database to handle the confirmation flow
-# 2. Fix the sync-database route
 @app.route('/api/sync-database', methods=['POST'])
 def api_sync_database():
     from helpers.sync_helper import (
@@ -1046,10 +1165,12 @@ def api_sync_database():
 
             # Otherwise, proceed with execution
             master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
+            precomputed_changes = data.get('precomputed_changes')
             stats = sync_track_playlist_associations(
                 master_playlist_id,
                 force_full_refresh=force_refresh,
-                auto_confirm=True
+                auto_confirm=True,
+                precomputed_changes=precomputed_changes
             )
             return jsonify({
                 "success": True,
@@ -1123,7 +1244,7 @@ def api_sync_database():
                     },
                     "associations": {
                         **associations_changes,
-                        "all_changes": associations_changes["samples"]  # Full list of changes
+                        "all_changes": associations_changes.get("tracks_with_changes", [])  # Full list of changes
                     }
                 }
 
