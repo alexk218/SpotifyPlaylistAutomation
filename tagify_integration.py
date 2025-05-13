@@ -1555,7 +1555,42 @@ def api_validate_track_metadata():
                     })
 
         # Filter duplicate_track_ids to only include actual duplicates
-        real_duplicates = {k: v for k, v in duplicate_track_ids.items() if len(v) > 1}
+        real_duplicates = {}
+        for track_id, files in duplicate_track_ids.items():
+            if len(files) > 1:
+                # Get track title from database
+                if track_id in db_tracks_by_id:
+                    track = db_tracks_by_id[track_id]
+                    artist = track.get_primary_artist()
+                    track_title = f"{artist} - {track.title}"
+
+                # Create detailed file information for each duplicate
+                file_details = []
+                for file in files:
+                    file_path = os.path.join(master_tracks_dir, file)
+                    if os.path.exists(file_path):
+                        # Get file duration
+                        try:
+                            from mutagen.mp3 import MP3
+                            audio = MP3(file_path)
+                            duration = audio.info.length
+                            duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                        except Exception as e:
+                            duration = 0
+                            duration_formatted = "Unknown"
+                            print(f"Error getting duration for {file_path}: {e}")
+
+                        file_details.append({
+                            'filename': file,
+                            'path': file_path,
+                            'duration': duration,
+                            'duration_formatted': duration_formatted
+                        })
+
+                real_duplicates[track_id] = {
+                    'track_title': track_title,
+                    'files': file_details
+                }
 
         # Sort potential mismatches by confidence
         potential_mismatches.sort(key=lambda x: x['confidence'])
@@ -1973,6 +2008,42 @@ def api_remove_track_id():
         import traceback
         error_str = traceback.format_exc()
         print(f"Error removing track ID: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@app.route('/api/delete-file', methods=['POST'])
+def api_delete_file():
+    try:
+        file_path = request.json.get('file_path')
+
+        if not file_path:
+            return jsonify({
+                "success": False,
+                "message": "file_path is required"
+            }), 400
+
+        if not os.path.exists(file_path):
+            return jsonify({
+                "success": False,
+                "message": f"File not found: {file_path}"
+            }), 404
+
+        # Delete the file
+        os.remove(file_path)
+
+        return jsonify({
+            "success": True,
+            "message": f"File deleted: {os.path.basename(file_path)}"
+        })
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error deleting file: {e}")
         print(error_str)
         return jsonify({
             "success": False,
