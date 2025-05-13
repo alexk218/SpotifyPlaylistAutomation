@@ -678,10 +678,37 @@ def api_generate_m3u():
 
         # If confirmed parameter is true, actually generate the M3U files
         if confirmed:
-            from helpers.m3u_helper import build_track_id_mapping
+            from helpers.m3u_helper import build_track_id_mapping, sanitize_filename
 
             # Build track ID mapping for efficiency
             track_id_map = build_track_id_mapping(master_tracks_dir)
+
+            # Build a comprehensive map of all M3U files with multiple keys for robust matching
+            m3u_files_map = {}
+            for root, dirs, files in os.walk(playlists_dir):
+                for file in files:
+                    if file.lower().endswith('.m3u'):
+                        file_path = os.path.join(root, file)
+                        file_name = os.path.splitext(file)[0]
+
+                        # Map original name
+                        m3u_files_map[file_name] = os.path.relpath(root, playlists_dir)
+
+                        # Map lowercase name
+                        m3u_files_map[file_name.lower()] = os.path.relpath(root, playlists_dir)
+
+                        # Map sanitized name
+                        sanitized_name = sanitize_filename(file_name, preserve_spaces=True)
+                        m3u_files_map[sanitized_name] = os.path.relpath(root, playlists_dir)
+                        m3u_files_map[sanitized_name.lower()] = os.path.relpath(root, playlists_dir)
+
+            # Convert root paths to empty string
+            for key, value in m3u_files_map.items():
+                if value == '.' or value == './':
+                    m3u_files_map[key] = ''
+
+            # Log the mapping for debugging
+            print(f"Found {len(m3u_files_map)} M3U files in various folders")
 
             # Generate only the playlists that need updating
             success_count = 0
@@ -690,29 +717,94 @@ def api_generate_m3u():
 
             for playlist_id in playlists_to_update:
                 try:
-                    from helpers.m3u_helper import regenerate_single_playlist
-                    result = regenerate_single_playlist(
+                    # Get the playlist details to determine correct filename
+                    with UnitOfWork() as uow:
+                        playlist = uow.playlist_repository.get_by_id(playlist_id)
+                        if not playlist:
+                            print(f"Playlist ID {playlist_id} not found in database, skipping")
+                            continue
+
+                    playlist_name = playlist.name
+                    print(f"Processing playlist: '{playlist_name}' (ID: {playlist_id})")
+
+                    # Sanitize the playlist name
+                    safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
+                    print(f"Sanitized name: '{safe_name}'")
+
+                    # Try various name patterns to find existing location
+                    playlist_folder = ''
+                    search_patterns = [
+                        safe_name,
+                        safe_name.lower(),
+                        playlist_name,
+                        playlist_name.lower()
+                    ]
+
+                    # Log search patterns
+                    print(f"Searching for patterns: {search_patterns}")
+
+                    # Find existing location using multiple patterns
+                    for pattern in search_patterns:
+                        if pattern in m3u_files_map:
+                            playlist_folder = m3u_files_map[pattern]
+                            print(f"Found existing location for pattern '{pattern}': {playlist_folder}")
+                            break
+
+                    # If not found with exact patterns, try partial matching
+                    if not playlist_folder:
+                        for filename, location in m3u_files_map.items():
+                            if (safe_name.lower() in filename.lower() or
+                                    playlist_name.lower() in filename.lower()):
+                                playlist_folder = location
+                                print(f"Found location using partial match: {playlist_folder}")
+                                break
+
+                    # Determine the M3U path
+                    if playlist_folder:
+                        # Ensure the subfolder exists
+                        folder_path = os.path.join(playlists_dir, playlist_folder)
+                        os.makedirs(folder_path, exist_ok=True)
+                        m3u_path = os.path.join(folder_path, f"{safe_name}.m3u")
+                        print(f"Will generate in existing location: {m3u_path}")
+                    else:
+                        # New playlist - generate in root directory
+                        m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+                        print(f"New playlist - will generate in root: {m3u_path}")
+
+                    # Ensure the directory exists
+                    os.makedirs(os.path.dirname(m3u_path), exist_ok=True)
+
+                    # Generate the M3U file
+                    from helpers.m3u_helper import generate_m3u_playlist
+                    tracks_found, tracks_added = generate_m3u_playlist(
+                        playlist_name=playlist.name,
                         playlist_id=playlist_id,
                         master_tracks_dir=master_tracks_dir,
-                        playlists_dir=playlists_dir,
+                        m3u_path=m3u_path,
                         extended=extended,
                         overwrite=overwrite,
                         track_id_map=track_id_map
                     )
 
-                    if result['success']:
-                        success_count += 1
-                        updated_playlists.append({
-                            'id': playlist_id,
-                            'name': result['stats']['playlist_name'] if 'stats' in result else "Unknown",
-                            'tracks_added': result['stats'].get('tracks_added', 0) if 'stats' in result else 0
-                        })
+                    # Verify the file was created
+                    if os.path.exists(m3u_path):
+                        print(f"Verified playlist was generated at: {m3u_path}")
                     else:
-                        failed_count += 1
-                        print(f"Failed to regenerate playlist {playlist_id}: {result.get('message', 'Unknown error')}")
+                        print(f"WARNING: Failed to verify playlist generation at: {m3u_path}")
+
+                    success_count += 1
+                    updated_playlists.append({
+                        'id': playlist_id,
+                        'name': playlist.name,
+                        'tracks_added': tracks_added,
+                        'location': playlist_folder or 'root',
+                        'm3u_path': m3u_path
+                    })
                 except Exception as e:
                     failed_count += 1
-                    print(f"Error regenerating playlist {playlist_id}: {str(e)}")
+                    print(f"Failed to regenerate playlist {playlist_id}: {str(e)}")
+                    import traceback
+                    print(traceback.format_exc())
 
             return jsonify({
                 "success": True,
@@ -1582,6 +1674,16 @@ def api_validate_playlists():
             # Filter out the MASTER playlist
             db_playlists = [p for p in db_playlists if p.name.upper() != "MASTER"]
 
+        # Find all M3U files in all subdirectories
+        from helpers.m3u_helper import sanitize_filename
+        m3u_files = {}  # Dict of {sanitized_name: m3u_path}
+
+        for root, dirs, files in os.walk(playlists_dir):
+            for file in files:
+                if file.lower().endswith('.m3u'):
+                    sanitized_name = os.path.splitext(file)[0]
+                    m3u_files[sanitized_name] = os.path.join(root, file)
+
         # Analyze each playlist's integrity
         playlist_analysis = []
 
@@ -1589,10 +1691,10 @@ def api_validate_playlists():
             playlist_name = playlist.name
             playlist_id = playlist.playlist_id
 
-            # Check if this playlist has an M3U file
-            from helpers.m3u_helper import sanitize_filename
+            # Check if this playlist has an M3U file (in any subdirectory)
             safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
-            m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+            m3u_path = m3u_files.get(safe_name)
+            has_m3u = m3u_path is not None
 
             # Get all track-playlist associations from the database
             with UnitOfWork() as uow:
@@ -1633,7 +1735,7 @@ def api_validate_playlists():
 
             # Process M3U file if it exists
             m3u_track_ids = set()
-            if os.path.exists(m3u_path):
+            if has_m3u:
                 # Get tracks in the M3U file
                 from helpers.m3u_helper import get_m3u_track_ids
                 m3u_track_ids = get_m3u_track_ids(m3u_path, track_id_map)
@@ -1689,12 +1791,20 @@ def api_validate_playlists():
             needs_update = (len(m3u_track_ids) != len(all_track_ids_in_playlist) or  # Total count mismatch
                             len(missing_tracks) > 0 or  # Missing tracks that should be included
                             len(unexpected_tracks) > 0 or  # Unexpected tracks that shouldn't be there
-                            not os.path.exists(m3u_path))  # Missing M3U file
+                            not has_m3u)  # Missing M3U file
+
+            m3u_location = ""
+            if has_m3u and m3u_path:
+                rel_path = os.path.relpath(os.path.dirname(m3u_path), playlists_dir)
+                if rel_path == ".":
+                    m3u_location = "root"
+                else:
+                    m3u_location = rel_path
 
             playlist_analysis.append({
                 'name': playlist_name,
                 'id': playlist_id,
-                'has_m3u': os.path.exists(m3u_path),
+                'has_m3u': has_m3u,
                 'needs_update': needs_update,
                 'total_associations': len(all_track_ids_in_playlist),
                 'tracks_with_local_files': len(local_track_files),
@@ -1704,7 +1814,8 @@ def api_validate_playlists():
                 'total_discrepancy': total_discrepancy,
                 'identified_discrepancy': identified_discrepancy,
                 'unidentified_discrepancy': unidentified_discrepancy,
-                'not_downloaded_tracks': not_downloaded_tracks
+                'not_downloaded_tracks': not_downloaded_tracks,
+                'location': m3u_location,
             })
 
         # Count playlists needing updates
@@ -1838,36 +1949,127 @@ def api_regenerate_playlist():
         playlist_name = None
         with UnitOfWork() as uow:
             playlist = uow.playlist_repository.get_by_id(playlist_id)
-            if playlist:
-                playlist_name = playlist.name
+            if not playlist:
+                return jsonify({
+                    "success": False,
+                    "message": f"Playlist ID {playlist_id} not found in database"
+                }), 404
 
-        # Import the regenerate function
-        from helpers.m3u_helper import sanitize_filename
+            playlist_name = playlist.name
 
-        # Manually ensure the M3U file is deleted before regeneration if force is specified
-        if force and playlist_name:
-            safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
-            m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
-            if os.path.exists(m3u_path):
-                try:
-                    os.remove(m3u_path)
-                    print(f"Forcibly removed existing M3U file: {m3u_path}")
-                except Exception as e:
-                    print(f"Error removing existing M3U file: {e}")
+        # Import helpers
+        from helpers.m3u_helper import sanitize_filename, build_track_id_mapping
+
+        # Sanitize the playlist name for file matching
+        safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
+
+        # LOG EVERYTHING FOR DEBUGGING
+        print(f"Playlist name: '{playlist_name}'")
+        print(f"Sanitized name: '{safe_name}'")
+
+        # IMPROVED SEARCH: Build a case-insensitive lookup for files
+        m3u_files_map = {}
+        for root, dirs, files in os.walk(playlists_dir):
+            for file in files:
+                if file.lower().endswith('.m3u'):
+                    file_lower = file.lower()
+                    name_without_ext = os.path.splitext(file)[0]
+                    name_without_ext_lower = name_without_ext.lower()
+                    # Map both lowercase filename and sanitized lowercase name to the full path
+                    m3u_files_map[file_lower] = os.path.join(root, file)
+                    m3u_files_map[name_without_ext_lower + '.m3u'] = os.path.join(root, file)
+                    # Also map sanitized version to handle special characters
+                    sanitized_lower = sanitize_filename(name_without_ext, preserve_spaces=True).lower() + '.m3u'
+                    m3u_files_map[sanitized_lower] = os.path.join(root, file)
+
+        # Try multiple search patterns to find the file
+        existing_m3u_path = None
+        search_patterns = [
+            f"{safe_name}.m3u",
+            f"{safe_name.lower()}.m3u",
+            f"{playlist_name}.m3u",
+            f"{playlist_name.lower()}.m3u"
+        ]
+
+        # Log all patterns we're searching for
+        print(f"Searching for patterns: {search_patterns}")
+        print(f"Available M3U files: {list(m3u_files_map.keys())}")
+
+        for pattern in search_patterns:
+            if pattern.lower() in m3u_files_map:
+                existing_m3u_path = m3u_files_map[pattern.lower()]
+                print(f"Found existing M3U file with pattern '{pattern}' at: {existing_m3u_path}")
+                break
+
+        # FALLBACK: If we still can't find it, do a more lenient search
+        if not existing_m3u_path:
+            # Try a more flexible match (checking if playlist name is contained in any m3u filename)
+            for filename, filepath in m3u_files_map.items():
+                name_part = os.path.splitext(filename)[0].lower()
+                if safe_name.lower() in name_part or playlist_name.lower() in name_part:
+                    existing_m3u_path = filepath
+                    print(f"Found existing M3U using partial match at: {existing_m3u_path}")
+                    break
+
+        # If not found, it's a new playlist - use the root directory
+        if not existing_m3u_path:
+            existing_m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+            print(f"No existing file found. Will create at: {existing_m3u_path}")
+
+        # If force is specified and the file exists, remove it
+        if force and existing_m3u_path and os.path.exists(existing_m3u_path):
+            try:
+                os.remove(existing_m3u_path)
+                print(f"Forcibly removed existing M3U file: {existing_m3u_path}")
+            except Exception as e:
+                print(f"Error removing existing M3U file: {e}")
+
+        # Build track ID mapping for efficiency
+        track_id_map = build_track_id_mapping(master_tracks_dir)
+
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(existing_m3u_path), exist_ok=True)
 
         # Regenerate the playlist
-        result = None
+        from helpers.m3u_helper import generate_m3u_playlist
+
         try:
-            from helpers.m3u_helper import regenerate_single_playlist
-            result = regenerate_single_playlist(
-                playlist_id,
-                master_tracks_dir,
-                playlists_dir,
+            tracks_found, tracks_added = generate_m3u_playlist(
+                playlist_name=playlist_name,
+                playlist_id=playlist_id,
+                master_tracks_dir=master_tracks_dir,
+                m3u_path=existing_m3u_path,
                 extended=extended,
-                overwrite=overwrite
+                overwrite=overwrite,
+                track_id_map=track_id_map
             )
+
+            if os.path.exists(existing_m3u_path):
+                print(f"Verified playlist was regenerated at: {existing_m3u_path}")
+            else:
+                print(f"WARNING: Failed to verify playlist generation at: {existing_m3u_path}")
+
+            # Get location relative to the playlists directory for display
+            m3u_location = "root"
+            if existing_m3u_path != os.path.join(playlists_dir, f"{safe_name}.m3u"):
+                rel_path = os.path.relpath(os.path.dirname(existing_m3u_path), playlists_dir)
+                if rel_path != ".":
+                    m3u_location = rel_path
+
+            result = {
+                'success': True,
+                'message': f'Successfully regenerated playlist: {playlist_name} with {tracks_added} tracks',
+                'stats': {
+                    'playlist_name': playlist_name,
+                    'tracks_found': tracks_found,
+                    'tracks_added': tracks_added,
+                    'm3u_path': existing_m3u_path,
+                    'location': m3u_location,
+                    'file_size': os.path.getsize(existing_m3u_path) if os.path.exists(existing_m3u_path) else 0
+                }
+            }
         except Exception as e:
-            print(f"Error in regenerate_single_playlist: {e}")
+            print(f"Error in generate_m3u_playlist: {e}")
             raise
 
         # If we're still here, regeneration was successful

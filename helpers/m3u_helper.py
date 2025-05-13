@@ -353,20 +353,45 @@ def generate_all_m3u_playlists(
     return stats
 
 
-def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_dir: str,
-                          playlists_dir: str, extended: bool = True, overwrite: bool = True,
-                          track_id_map: Dict[str, str] = None) -> Tuple[int, int]:
+def generate_m3u_playlist(
+        playlist_name: str,
+        playlist_id: str,
+        master_tracks_dir: str,
+        playlists_dir: str = None,  # Keep for backward compatibility
+        m3u_path: str = None,  # New parameter for explicit output path
+        extended: bool = True,
+        overwrite: bool = True,
+        track_id_map: Dict[str, str] = None
+) -> Tuple[int, int]:
     """
     Generate an M3U playlist file for a specific playlist.
+
+    Args:
+        playlist_name: Name of the playlist
+        playlist_id: ID of the playlist
+        master_tracks_dir: Directory containing master tracks
+        playlists_dir: Directory to create playlist files in (legacy parameter)
+        m3u_path: Explicit path where to save the M3U file (overrides playlists_dir)
+        extended: Whether to use extended M3U format with metadata
+        overwrite: Whether to overwrite existing playlist files
+        track_id_map: Pre-built mapping of track ID to file path
+
+    Returns:
+        Tuple of (tracks_found, tracks_added)
     """
     m3u_logger.info(f"Generating M3U playlist for: {playlist_name}")
 
-    # Ensure the playlists directory exists
-    os.makedirs(playlists_dir, exist_ok=True)
+    # Determine the output path
+    if m3u_path is None and playlists_dir is not None:
+        # Backward compatibility: construct the path from playlist name and directory
+        safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
+        m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
 
-    # Sanitize the playlist name for use as a filename, but preserve spaces
-    safe_playlist_name = sanitize_filename(playlist_name, preserve_spaces=True)
-    m3u_path = os.path.join(playlists_dir, f"{safe_playlist_name}.m3u")
+    if m3u_path is None:
+        raise ValueError("Either output_path or playlists_dir must be provided")
+
+    # Ensure the output directory exists
+    os.makedirs(os.path.dirname(m3u_path), exist_ok=True)
 
     # Log the full path we're writing to
     print(f"Writing M3U to: {m3u_path}")
