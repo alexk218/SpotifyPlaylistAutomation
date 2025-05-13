@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from mutagen.id3 import ID3
 
 from drivers.spotify_client import sync_to_master_playlist, authenticate_spotify
+from helpers.m3u_helper import find_local_file_path
 from sql.core.unit_of_work import UnitOfWork
 
 # Load environment variables
@@ -1448,80 +1449,132 @@ def api_validate_playlists():
             safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
             m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
 
-            if os.path.exists(m3u_path):
-                # Use the optimized comparison function
-                from helpers.m3u_helper import compare_playlist_with_m3u
-                has_changes, added, removed = compare_playlist_with_m3u(
-                    playlist_id,
-                    m3u_path,
-                    master_tracks_dir,
-                    track_id_map
-                )
+            # Get all track-playlist associations from the database
+            with UnitOfWork() as uow:
+                all_track_ids_in_playlist = set(uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
+                expected_tracks = []
 
-                # Check which tracks should be in this playlist
-                with UnitOfWork() as uow:
-                    expected_tracks = uow.track_repository.get_tracks_in_playlist(playlist_id)
-                    expected_track_details = [
-                        {
-                            'id': track.track_id,
+                # Get details for all tracks in the playlist
+                for track_id in all_track_ids_in_playlist:
+                    track = uow.track_repository.get_by_id(track_id)
+                    if track:
+                        expected_tracks.append({
+                            'id': track_id,
                             'title': track.title,
-                            'artists': track.artists
-                        }
-                        for track in expected_tracks
-                    ]
+                            'artists': track.artists,
+                            'album': track.album or '',
+                            'is_local': track.is_local
+                        })
 
+            # Track which database IDs actually exist locally
+            local_track_files = set()
+
+            # For Spotify tracks (non-local), check the track_id_map
+            for track_id in all_track_ids_in_playlist:
+                if not track_id.startswith('local_'):
+                    if track_id in track_id_map:
+                        local_track_files.add(track_id)
+                else:
+                    # For local tracks, we need to find them by name
+                    with UnitOfWork() as uow:
+                        track = uow.track_repository.get_by_id(track_id)
+                        if track:
+                            # Search for the file by artist/title
+                            from helpers.m3u_helper import find_local_file_path
+                            local_path = find_local_file_path(track.title, track.artists, master_tracks_dir)
+                            if local_path:
+                                local_track_files.add(track_id)
+
+            # Process M3U file if it exists
+            if os.path.exists(m3u_path):
                 # Get tracks in the M3U file
                 from helpers.m3u_helper import get_m3u_track_ids
                 m3u_track_ids = get_m3u_track_ids(m3u_path, track_id_map)
 
-                # Get details for tracks in M3U that shouldn't be there
-                tracks_to_remove = []
-                for track_id in removed:
+                # These are tracks that should be in the M3U but aren't
+                missing_track_ids = local_track_files - m3u_track_ids
+
+                # These are tracks in the M3U that shouldn't be there
+                unexpected_track_ids = m3u_track_ids - all_track_ids_in_playlist
+
+                # Get details for missing tracks
+                missing_tracks = []
+                for track_id in missing_track_ids:
                     with UnitOfWork() as uow:
                         track = uow.track_repository.get_by_id(track_id)
                         if track:
-                            tracks_to_remove.append({
+                            missing_tracks.append({
                                 'id': track_id,
                                 'title': track.title,
-                                'artists': track.artists
+                                'artists': track.artists,
+                                'album': track.album or '',
+                                'is_local': track.is_local
                             })
 
-                # Get details for tracks missing from M3U
-                tracks_to_add = []
-                for track_id in added:
+                # Get details for unexpected tracks
+                unexpected_tracks = []
+                for track_id in unexpected_track_ids:
                     with UnitOfWork() as uow:
                         track = uow.track_repository.get_by_id(track_id)
                         if track:
-                            tracks_to_add.append({
+                            unexpected_tracks.append({
                                 'id': track_id,
                                 'title': track.title,
-                                'artists': track.artists
+                                'artists': track.artists,
+                                'album': track.album or '',
+                                'is_local': track.is_local
                             })
+
+                # Calculate the total discrepancy
+                # This counts both identified missing/unexpected tracks AND any other track count discrepancies
+                total_discrepancy = len(all_track_ids_in_playlist) - len(m3u_track_ids)
+                identified_discrepancy = len(missing_track_ids) + len(unexpected_track_ids)
+                unidentified_discrepancy = abs(total_discrepancy) - identified_discrepancy
+
+                # The playlist needs an update if there's any discrepancy whatsoever
+                needs_update = (len(missing_tracks) > 0 or
+                                len(unexpected_tracks) > 0 or
+                                len(local_track_files) != len(m3u_track_ids) or
+                                abs(total_discrepancy) > 0)
+
+                # Debug logging
+                print(f"Playlist: {playlist_name}")
+                print(f"  - All track-playlist associations: {len(all_track_ids_in_playlist)}")
+                print(f"  - Tracks with local files: {len(local_track_files)}")
+                print(f"  - Tracks in M3U: {len(m3u_track_ids)}")
+                print(f"  - Missing tracks identified: {len(missing_tracks)}")
+                print(f"  - Unexpected tracks: {len(unexpected_tracks)}")
+                print(f"  - Total discrepancy: {total_discrepancy}")
+                print(f"  - Unidentified discrepancy: {unidentified_discrepancy}")
+                print(f"  - Needs update: {needs_update}")
 
                 playlist_analysis.append({
                     'name': playlist_name,
                     'id': playlist_id,
                     'has_m3u': True,
-                    'needs_update': has_changes,
-                    'expected_track_count': len(expected_tracks),
+                    'needs_update': needs_update,
+                    'total_associations': len(all_track_ids_in_playlist),
+                    'tracks_with_local_files': len(local_track_files),
                     'm3u_track_count': len(m3u_track_ids),
-                    'tracks_missing_from_m3u': tracks_to_add,
-                    'unexpected_tracks_in_m3u': tracks_to_remove
+                    'tracks_missing_from_m3u': missing_tracks,
+                    'unexpected_tracks_in_m3u': unexpected_tracks,
+                    'total_discrepancy': total_discrepancy,
+                    'unidentified_discrepancy': unidentified_discrepancy
                 })
             else:
-                # M3U file doesn't exist
-                with UnitOfWork() as uow:
-                    expected_tracks = uow.track_repository.get_tracks_in_playlist(playlist_id)
-
+                # M3U file doesn't exist - definitely needs an update
                 playlist_analysis.append({
                     'name': playlist_name,
                     'id': playlist_id,
                     'has_m3u': False,
                     'needs_update': True,
-                    'expected_track_count': len(expected_tracks),
+                    'total_associations': len(all_track_ids_in_playlist),
+                    'tracks_with_local_files': len(local_track_files),
                     'm3u_track_count': 0,
-                    'tracks_missing_from_m3u': [],
-                    'unexpected_tracks_in_m3u': []
+                    'tracks_missing_from_m3u': expected_tracks,
+                    'unexpected_tracks_in_m3u': [],
+                    'total_discrepancy': len(all_track_ids_in_playlist),
+                    'unidentified_discrepancy': 0
                 })
 
         # Count playlists needing updates
@@ -1531,7 +1584,9 @@ def api_validate_playlists():
         # Sort by issue severity
         playlist_analysis.sort(key=lambda x: (
             not x['has_m3u'],  # Missing M3U files first
-            len(x['tracks_missing_from_m3u']) + len(x['unexpected_tracks_in_m3u']),  # Then by number of issues
+            abs(x['total_discrepancy']),  # Then by total discrepancy
+            len(x['tracks_missing_from_m3u']) + len(x['unexpected_tracks_in_m3u']),
+            # Then by number of identified issues
             x['name']  # Then alphabetically
         ), reverse=True)
 
