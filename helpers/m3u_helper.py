@@ -5,6 +5,8 @@ from typing import Dict, Tuple, Set, Optional, List, Any
 
 from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
+from mutagen.wave import WAVE
+from mutagen.aiff import AIFF
 
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
@@ -19,20 +21,22 @@ project_root = current_file.parent.parent
 def build_track_id_mapping(master_tracks_dir: str) -> Dict[str, str]:
     """
     Build a mapping of track_id -> file_path for all MP3 files in the directory.
-    This is the expensive operation we only want to do once.
+    This is an expensive operation we only want to do once.
 
     Returns:
         Dictionary mapping track_ids to file paths
     """
     track_id_to_path = {}
     total_files = 0
+    wav_aiff_files = []
 
-    print("Scanning MP3 files for Track IDs...")
+    print("Scanning music files for Track IDs...")
     m3u_logger.info(f"Building track ID mapping from {master_tracks_dir}")
 
     for root, _, files in os.walk(master_tracks_dir):
         for filename in files:
-            if not filename.lower().endswith('.mp3'):
+            file_ext = os.path.splitext(filename.lower())[1]
+            if file_ext not in ['.mp3', '.wav', '.aiff']:
                 continue
 
             total_files += 1
@@ -41,18 +45,26 @@ def build_track_id_mapping(master_tracks_dir: str) -> Dict[str, str]:
 
             file_path = os.path.join(root, filename)
 
-            try:
-                tags = ID3(file_path)
-                if 'TXXX:TRACKID' in tags:
-                    track_id = tags['TXXX:TRACKID'].text[0]
-                    track_id_to_path[track_id] = file_path
-            except Exception as e:
-                # Skip files with errors
-                m3u_logger.debug(f"Error reading ID3 tag from {file_path}: {e}")
-                pass
+            if file_ext == '.mp3':
+                try:
+                    tags = ID3(file_path)
+                    if 'TXXX:TRACKID' in tags:
+                        track_id = tags['TXXX:TRACKID'].text[0]
+                        track_id_to_path[track_id] = file_path
+                except Exception as e:
+                    # Skip files with errors
+                    m3u_logger.debug(f"Error reading ID3 tag from {file_path}: {e}")
+                    pass
+            else:  # WAV or AIFF file
+                # For WAV/AIFF files, we'll generate a virtual track ID based on filename
+                # This allows us to reference them in playlists without embedding TrackId
+                normalized_filename = os.path.splitext(filename)[0].lower().replace(' ', '_')
+                virtual_track_id = f"local_wav_aiff_{normalized_filename}"
+                track_id_to_path[virtual_track_id] = file_path
+                m3u_logger.info(f"Added WAV/AIFF file with virtual track ID: {virtual_track_id} -> {file_path}")
 
-    print(f"Total MP3 files: {total_files}")
-    print(f"Files with valid Track IDs: {len(track_id_to_path)}")
+    print(f"Total music files: {total_files}")
+    print(f"Files with valid Track IDs or virtual IDs: {len(track_id_to_path)}")
     m3u_logger.info(f"Built track ID mapping with {len(track_id_to_path)} entries from {total_files} files")
     return track_id_to_path
 
@@ -346,18 +358,6 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
                           track_id_map: Dict[str, str] = None) -> Tuple[int, int]:
     """
     Generate an M3U playlist file for a specific playlist.
-
-    Args:
-        playlist_name: Name of the playlist
-        playlist_id: Spotify ID of the playlist
-        master_tracks_dir: Directory containing the master tracks
-        playlists_dir: Directory where playlist files will be created
-        extended: Whether to use extended M3U format with metadata
-        overwrite: Whether to overwrite existing playlist files
-        track_id_map: Optional mapping of track_id to file_path for optimization
-
-    Returns:
-        Tuple of (tracks_found, tracks_added) counts
     """
     m3u_logger.info(f"Generating M3U playlist for: {playlist_name}")
 
@@ -392,28 +392,47 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
             track_ids = set(uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
             m3u_logger.info(f"Found {len(track_ids)} tracks for playlist in database")
 
-            # Get track details for the tracks that we have files for
+            # Now scan for any WAV/AIFF files that match the local files in this playlist
+            local_tracks = [track_id for track_id in track_ids if track_id.startswith('local_')]
+
+            # Get track details for all tracks in the playlist
             tracks_to_add = []
             for track_id in track_ids:
                 track = uow.track_repository.get_by_id(track_id)
                 if track:
                     # Check if this is a local file
                     if track.is_local or track_id.startswith('local_'):
-                        # Handle local file - try to find it in the music library
-                        local_path = find_local_file_path(track.title, track.artists, master_tracks_dir)
-                        if local_path:
+                        # For local files, check if we have the track ID in our mapping
+                        if track_id in track_id_map:
+                            # We have the file with the embedded TrackId (MP3) or virtual ID (WAV/AIFF)
+                            file_path = track_id_map[track_id]
                             tracks_to_add.append({
                                 'id': track_id,
-                                'path': local_path,
+                                'path': file_path,
                                 'title': track.title,
                                 'artists': track.artists,
-                                'duration': get_track_duration(local_path)
+                                'duration': get_track_duration(file_path)
                             })
-                            m3u_logger.info(f"Found local file for '{track.artists} - {track.title}'")
+                            m3u_logger.info(f"Found file for '{track.artists} - {track.title}' via track_id_map")
                         else:
-                            m3u_logger.warning(f"Could not find local file for '{track.artists} - {track.title}'")
+                            # If not in track_id_map, try to find by filename for WAV/AIFF files
+                            local_path = find_local_file_path_with_extensions(
+                                track.title, track.artists, master_tracks_dir, extensions=['.wav', '.aiff', '.mp3']
+                            )
+                            if local_path:
+                                tracks_to_add.append({
+                                    'id': track_id,
+                                    'path': local_path,
+                                    'title': track.title,
+                                    'artists': track.artists,
+                                    'duration': get_track_duration(local_path)
+                                })
+                                m3u_logger.info(
+                                    f"Found local file for '{track.artists} - {track.title}' via filename search")
+                            else:
+                                m3u_logger.warning(f"Could not find local file for '{track.artists} - {track.title}'")
                     elif track_id in track_id_map:
-                        # Regular Spotify track
+                        # Regular Spotify track with embedded TrackId
                         file_path = track_id_map[track_id]
                         tracks_to_add.append({
                             'id': track_id,
@@ -544,6 +563,100 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
     return tracks_found, tracks_added
 
 
+def find_local_file_path_with_extensions(title: str, artists: str, music_dir: str,
+                                         extensions: List[str] = ['.mp3', '.wav', '.aiff']) -> Optional[str]:
+    """
+    Try to find a local file in the music directory that matches the given title and artist,
+    checking multiple file extensions.
+
+    Args:
+        title: The track title to search for
+        artists: The artist name(s) to search for
+        music_dir: The directory to search in
+        extensions: List of file extensions to look for
+
+    Returns:
+        Path to the matching file, or None if not found
+    """
+    import Levenshtein
+    import re
+
+    # Clean up title and artists for comparison
+    title_clean = title.lower().strip()
+    artists_clean = artists.lower().strip()
+
+    # Try to extract primary artist
+    primary_artist = artists_clean.split(',')[0].strip()
+
+    # Find all music files with the specified extensions in the directory tree
+    all_music_files = []
+    for root, _, files in os.walk(music_dir):
+        for file in files:
+            file_ext = os.path.splitext(file.lower())[1]
+            if file_ext in extensions:
+                file_path = os.path.join(root, file)
+                file_name = os.path.splitext(file)[0].lower()
+                all_music_files.append((file_path, file_name))
+
+    # Common patterns to try for exact matches
+    patterns = [
+        f"{primary_artist} - {title_clean}",
+        f"{title_clean} - {primary_artist}",
+        f"{primary_artist}_{title_clean}",
+        title_clean,
+    ]
+
+    # Step 1: Try exact matches with common patterns
+    for file_path, file_name in all_music_files:
+        for pattern in patterns:
+            if pattern in file_name:
+                return file_path
+
+    # Step 2: Try more flexible matching - remove special characters and spaces
+    clean_title = re.sub(r'[^\w\s]', '', title_clean).strip()
+    clean_artist = re.sub(r'[^\w\s]', '', primary_artist).strip()
+
+    for file_path, file_name in all_music_files:
+        clean_filename = re.sub(r'[^\w\s]', '', file_name).strip()
+        if f"{clean_artist} {clean_title}" in clean_filename:
+            return file_path
+        if f"{clean_title} {clean_artist}" in clean_filename:
+            return file_path
+
+    # Step 3: If still no match, try fuzzy matching
+    best_match = None
+    best_score = 0.7  # Minimum similarity threshold
+
+    for file_path, file_name in all_music_files:
+        # Try to match "{artist} - {title}" pattern
+        expected = f"{primary_artist} - {title_clean}"
+        similarity = Levenshtein.ratio(expected, file_name)
+
+        if similarity > best_score:
+            best_score = similarity
+            best_match = file_path
+
+        # Also try "{title} - {artist}" pattern
+        expected = f"{title_clean} - {primary_artist}"
+        similarity = Levenshtein.ratio(expected, file_name)
+
+        if similarity > best_score:
+            best_score = similarity
+            best_match = file_path
+
+        # Simple match just by title if the title is distinctive enough (longer than 4 characters)
+        if len(title_clean) > 4:
+            if title_clean in file_name:
+                # Bonus if the title is found as a distinct word or phrase
+                if re.search(r'\b' + re.escape(title_clean) + r'\b', file_name):
+                    similarity = 0.85  # Higher confidence for exact title match
+                    if similarity > best_score:
+                        best_score = similarity
+                        best_match = file_path
+
+    return best_match
+
+
 def find_local_file_path(title: str, artists: str, music_dir: str) -> Optional[str]:
     """
     Try to find a local file in the music directory that matches the given title and artist.
@@ -646,10 +759,21 @@ def get_track_duration(file_path: str) -> int:
         Duration in seconds, or 0 if not available
     """
     try:
-        audio = MP3(file_path)
-        return int(audio.info.length)
-    except Exception:
-        return 0  # Default duration if we can't read it
+        file_ext = os.path.splitext(file_path.lower())[1]
+
+        if file_ext == '.mp3':
+            audio = MP3(file_path)
+            return int(audio.info.length)
+        elif file_ext == '.wav':
+            audio = WAVE(file_path)
+            return int(audio.info.length)
+        elif file_ext in ['.aiff', '.aif']:
+            audio = AIFF(file_path)
+            return int(audio.info.length)
+        return 0
+    except Exception as e:
+        m3u_logger.error(f"Error getting duration for {file_path}: {e}")
+        return 0
 
 
 # Use existing functions from file_helper instead of duplicating code
