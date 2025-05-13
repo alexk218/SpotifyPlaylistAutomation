@@ -547,6 +547,7 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
 def find_local_file_path(title: str, artists: str, music_dir: str) -> Optional[str]:
     """
     Try to find a local file in the music directory that matches the given title and artist.
+    Uses multiple matching strategies to find the most likely file.
 
     Args:
         title: The track title to search for
@@ -557,6 +558,7 @@ def find_local_file_path(title: str, artists: str, music_dir: str) -> Optional[s
         Path to the matching file, or None if not found
     """
     import Levenshtein
+    import re
 
     # Clean up title and artists for comparison
     title_clean = title.lower().strip()
@@ -565,7 +567,16 @@ def find_local_file_path(title: str, artists: str, music_dir: str) -> Optional[s
     # Try to extract primary artist
     primary_artist = artists_clean.split(',')[0].strip()
 
-    # Common patterns to try
+    # Find all MP3 files in the directory tree first
+    all_mp3_files = []
+    for root, _, files in os.walk(music_dir):
+        for file in files:
+            if file.lower().endswith('.mp3'):
+                file_path = os.path.join(root, file)
+                file_name = os.path.splitext(file)[0].lower()
+                all_mp3_files.append((file_path, file_name))
+
+    # Common patterns to try for exact matches
     patterns = [
         f"{primary_artist} - {title_clean}",
         f"{title_clean} - {primary_artist}",
@@ -573,45 +584,53 @@ def find_local_file_path(title: str, artists: str, music_dir: str) -> Optional[s
         title_clean,
     ]
 
-    # First try exact matches with common patterns
-    for root, _, files in os.walk(music_dir):
-        for file in files:
-            if not file.lower().endswith('.mp3'):
-                continue
+    # Step 1: Try exact matches with common patterns
+    for file_path, file_name in all_mp3_files:
+        for pattern in patterns:
+            if pattern in file_name:
+                return file_path
 
-            file_name = os.path.splitext(file)[0].lower()
+    # Step 2: Try more flexible matching - remove special characters and spaces
+    clean_title = re.sub(r'[^\w\s]', '', title_clean).strip()
+    clean_artist = re.sub(r'[^\w\s]', '', primary_artist).strip()
 
-            # Check each pattern
-            for pattern in patterns:
-                if pattern in file_name:
-                    return os.path.join(root, file)
+    for file_path, file_name in all_mp3_files:
+        clean_filename = re.sub(r'[^\w\s]', '', file_name).strip()
+        if f"{clean_artist} {clean_title}" in clean_filename:
+            return file_path
+        if f"{clean_title} {clean_artist}" in clean_filename:
+            return file_path
 
-    # If no exact match, try fuzzy matching
+    # Step 3: If still no match, try fuzzy matching
     best_match = None
     best_score = 0.7  # Minimum similarity threshold
 
-    for root, _, files in os.walk(music_dir):
-        for file in files:
-            if not file.lower().endswith('.mp3'):
-                continue
+    for file_path, file_name in all_mp3_files:
+        # Try to match "{artist} - {title}" pattern
+        expected = f"{primary_artist} - {title_clean}"
+        similarity = Levenshtein.ratio(expected, file_name)
 
-            file_name = os.path.splitext(file)[0].lower()
+        if similarity > best_score:
+            best_score = similarity
+            best_match = file_path
 
-            # Try to match "{artist} - {title}" pattern
-            expected = f"{primary_artist} - {title_clean}"
-            similarity = Levenshtein.ratio(expected, file_name)
+        # Also try "{title} - {artist}" pattern
+        expected = f"{title_clean} - {primary_artist}"
+        similarity = Levenshtein.ratio(expected, file_name)
 
-            if similarity > best_score:
-                best_score = similarity
-                best_match = os.path.join(root, file)
+        if similarity > best_score:
+            best_score = similarity
+            best_match = file_path
 
-            # Also try "{title} - {artist}" pattern
-            expected = f"{title_clean} - {primary_artist}"
-            similarity = Levenshtein.ratio(expected, file_name)
-
-            if similarity > best_score:
-                best_score = similarity
-                best_match = os.path.join(root, file)
+        # Simple match just by title if the title is distinctive enough (longer than 4 characters)
+        if len(title_clean) > 4:
+            if title_clean in file_name:
+                # Bonus if the title is found as a distinct word or phrase
+                if re.search(r'\b' + re.escape(title_clean) + r'\b', file_name):
+                    similarity = 0.85  # Higher confidence for exact title match
+                    if similarity > best_score:
+                        best_score = similarity
+                        best_match = file_path
 
     return best_match
 
