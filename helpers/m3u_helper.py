@@ -160,21 +160,44 @@ def compare_playlist_with_m3u(playlist_id: str, m3u_path: str, master_tracks_dir
         # Get track IDs from M3U file
         m3u_track_ids = get_m3u_track_ids(m3u_path, track_id_map)
 
-        # Find which database tracks actually exist locally
-        local_db_track_ids = db_track_ids.intersection(track_id_map.keys())
+        # Track which database IDs actually exist locally
+        local_db_track_ids = set()
+        for track_id in db_track_ids:
+            # For Spotify tracks, check if they're in the track_id_map
+            if not track_id.startswith('local_'):
+                if track_id in track_id_map:
+                    local_db_track_ids.add(track_id)
+            else:
+                # For local tracks, we need a different approach
+                # Get track details from the database
+                with UnitOfWork() as uow:
+                    track = uow.track_repository.get_by_id(track_id)
+                    if track:
+                        # Search for the file in the master tracks directory
+                        local_path = find_local_file_path(track.title, track.artists, master_tracks_dir)
+                        if local_path:
+                            # The track exists locally, so add it to our set
+                            local_db_track_ids.add(track_id)
+
+        # Now we have:
+        # db_track_ids: All tracks in the playlist according to the database
+        # local_db_track_ids: Tracks in the playlist that actually exist locally
+        # m3u_track_ids: Tracks currently in the M3U file
 
         # Compare to find differences
+        # Tracks that should be in M3U but aren't
         added_tracks = local_db_track_ids - m3u_track_ids
+        # Tracks in M3U that shouldn't be there
         removed_tracks = m3u_track_ids - local_db_track_ids
         has_changes = bool(added_tracks or removed_tracks)
 
         # Log the comparison details
         m3u_logger.info(f"Playlist '{playlist_id}' comparison (using track_id_map):")
-        m3u_logger.info(f" - Database tracks: {len(db_track_ids)}")
-        m3u_logger.info(f" - Local tracks: {len(local_db_track_ids)}")
+        m3u_logger.info(f" - All database tracks: {len(db_track_ids)}")
+        m3u_logger.info(f" - Database tracks with local files: {len(local_db_track_ids)}")
         m3u_logger.info(f" - M3U tracks: {len(m3u_track_ids)}")
-        m3u_logger.info(f" - Added tracks: {len(added_tracks)}")
-        m3u_logger.info(f" - Removed tracks: {len(removed_tracks)}")
+        m3u_logger.info(f" - Missing tracks (to add): {len(added_tracks)}")
+        m3u_logger.info(f" - Unexpected tracks (to remove): {len(removed_tracks)}")
 
         return has_changes, added_tracks, removed_tracks
 
