@@ -466,6 +466,7 @@ def api_fuzzy_match_track():
     try:
         file_name = request.json.get('fileName')
         master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
+        current_track_id = request.json.get('currentTrackId')
 
         print(f"Received fuzzy match request for file: {file_name}")
         print(f"Using master tracks dir: {master_tracks_dir}")
@@ -662,6 +663,10 @@ def api_fuzzy_match_track():
                     'album': track.album,
                     'is_local': False
                 })
+
+        # Filter out the current track ID from matches to avoid suggesting the same ID
+        if current_track_id:
+            matches = [match for match in matches if match['track_id'] != current_track_id]
 
         # Sort by match quality
         matches.sort(key=lambda x: x['ratio'], reverse=True)
@@ -1460,15 +1465,35 @@ def api_validate_track_metadata():
 
                             # Flag potential mismatches
                             if similarity < confidence_threshold:
+                                try:
+                                    from mutagen.mp3 import MP3
+                                    audio = MP3(file_path)
+                                    duration = audio.info.length  # Duration in seconds
+                                    duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                                except Exception as e:
+                                    duration = 0
+                                    duration_formatted = "Unknown"
+                                    print(f"Error getting duration for {file_path}: {e}")
                                 potential_mismatches.append({
                                     'file': file,
                                     'track_id': track_id,
                                     'embedded_artist_title': f"{db_track.artists} - {db_track.title}",
                                     'filename': filename_no_ext,
                                     'confidence': similarity,
-                                    'full_path': file_path
+                                    'full_path': file_path,
+                                    'duration': duration,
+                                    'duration_formatted': duration_formatted
                                 })
                         else:
+                            try:
+                                from mutagen.mp3 import MP3
+                                audio = MP3(file_path)
+                                duration = audio.info.length
+                                duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                            except Exception as e:
+                                duration = 0
+                                duration_formatted = "Unknown"
+                                print(f"Error getting duration for {file_path}: {e}")
                             # Track ID not found in database
                             potential_mismatches.append({
                                 'file': file,
@@ -1477,9 +1502,21 @@ def api_validate_track_metadata():
                                 'filename': filename_no_ext,
                                 'confidence': 0,
                                 'full_path': file_path,
-                                'reason': 'track_id_not_in_db'
+                                'reason': 'track_id_not_in_db',
+                                'duration': duration,
+                                'duration_formatted': duration_formatted
                             })
                     else:
+                        try:
+                            from mutagen.mp3 import MP3
+                            audio = MP3(file_path)
+                            duration = audio.info.length
+                            duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                        except Exception as e:
+                            duration = 0
+                            duration_formatted = "Unknown"
+                            print(f"Error getting duration for {file_path}: {e}")
+
                         files_without_track_id += 1
                         # Add to list of files missing TrackId
                         files_missing_trackid.append({
@@ -1489,9 +1526,20 @@ def api_validate_track_metadata():
                             'filename': filename_no_ext,
                             'confidence': 0,
                             'full_path': file_path,
-                            'reason': 'missing_track_id'
+                            'reason': 'missing_track_id',
+                            'duration': duration,
+                            'duration_formatted': duration_formatted
                         })
                 except Exception as e:
+                    try:
+                        from mutagen.mp3 import MP3
+                        audio = MP3(file_path)
+                        duration = audio.info.length
+                        duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                    except Exception as e:
+                        duration = 0
+                        duration_formatted = "Unknown"
+                        print(f"Error getting duration for {file_path}: {e}")
                     files_without_track_id += 1
                     # Add to list of files missing TrackId with error message
                     files_missing_trackid.append({
@@ -1501,7 +1549,9 @@ def api_validate_track_metadata():
                         'filename': filename_no_ext,
                         'confidence': 0,
                         'full_path': file_path,
-                        'reason': 'error_reading_tags'
+                        'reason': 'error_reading_tags',
+                        'duration': duration,
+                        'duration_formatted': duration_formatted
                     })
 
         # Filter duplicate_track_ids to only include actual duplicates
