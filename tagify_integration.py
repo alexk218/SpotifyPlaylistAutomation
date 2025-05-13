@@ -1820,6 +1820,90 @@ def api_remove_track_id():
         }), 500
 
 
+@app.route('/api/search-tracks', methods=['POST'])
+def api_search_tracks():
+    try:
+        # Get parameters from request
+        master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
+        query = request.json.get('query', '').lower()
+
+        if not master_tracks_dir:
+            return jsonify({
+                "success": False,
+                "message": "Master tracks directory not specified"
+            }), 400
+
+        if not query:
+            return jsonify({
+                "success": True,
+                "results": []
+            })
+
+        # Results array
+        results = []
+
+        # Scan the files in the master directory
+        for root, _, files in os.walk(master_tracks_dir):
+            for file in files:
+                if not file.lower().endswith('.mp3'):
+                    continue
+
+                file_path = os.path.join(root, file)
+                filename_no_ext = os.path.splitext(file)[0].lower()
+
+                # Check if query is in filename
+                if query in filename_no_ext:
+                    # Get TrackId if present
+                    track_id = None
+                    embedded_artist_title = "Unknown"
+                    try:
+                        tags = ID3(file_path)
+                        if 'TXXX:TRACKID' in tags:
+                            track_id = tags['TXXX:TRACKID'].text[0]
+
+                        # Try to get artist and title from ID3 tags
+                        artist = ""
+                        title = ""
+                        if 'TPE1' in tags:  # Artist
+                            artist = str(tags['TPE1'])
+                        if 'TIT2' in tags:  # Title
+                            title = str(tags['TIT2'])
+
+                        if artist and title:
+                            embedded_artist_title = f"{artist} - {title}"
+                        else:
+                            embedded_artist_title = filename_no_ext
+                    except Exception as e:
+                        print(f"Error reading ID3 tags from {file_path}: {e}")
+
+                    results.append({
+                        'file': file,
+                        'track_id': track_id,
+                        'embedded_artist_title': embedded_artist_title,
+                        'filename': filename_no_ext,
+                        'confidence': 1.0 if track_id else 0,
+                        'full_path': file_path
+                    })
+
+        # Sort results by relevance (tracks with IDs first, then by filename match)
+        results.sort(key=lambda x: (x['track_id'] is None, x['file'].lower().find(query)))
+
+        return jsonify({
+            "success": True,
+            "results": results
+        })
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error searching tracks: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
 def run_command(command, wait=True):
     """Run a command and optionally wait for it to complete."""
     print(f"Running: {' '.join(str(c) for c in command)}")
