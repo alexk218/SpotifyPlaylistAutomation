@@ -345,16 +345,29 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
     safe_playlist_name = sanitize_filename(playlist_name, preserve_spaces=True)
     m3u_path = os.path.join(playlists_dir, f"{safe_playlist_name}.m3u")
 
+    # Log the full path we're writing to
+    print(f"Writing M3U to: {m3u_path}")
+    m3u_logger.info(f"Writing M3U to: {m3u_path}")
+
     # Check if file already exists and handle accordingly
-    if os.path.exists(m3u_path) and not overwrite:
-        m3u_logger.info(f"Playlist file already exists and overwrite=False: {m3u_path}")
-        return 0, 0
+    if os.path.exists(m3u_path):
+        if not overwrite:
+            m3u_logger.info(f"Playlist file already exists and overwrite=False: {m3u_path}")
+            return 0, 0
+        else:
+            # Delete the existing file to ensure it's completely regenerated
+            try:
+                os.remove(m3u_path)
+                m3u_logger.info(f"Removed existing M3U file for fresh regeneration: {m3u_path}")
+            except Exception as e:
+                m3u_logger.error(f"Error removing existing M3U file: {e}")
 
     # If track_id_map is provided, use it for efficient playlist generation
     if track_id_map is not None:
         # Get track IDs for this playlist from the database
         with UnitOfWork() as uow:
             track_ids = set(uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
+            m3u_logger.info(f"Found {len(track_ids)} tracks for playlist in database")
 
             # Get track details for the tracks that we have files for
             tracks_to_add = []
@@ -406,6 +419,10 @@ def generate_m3u_playlist(playlist_name: str, playlist_id: str, master_tracks_di
 
         m3u_logger.info(f"Created M3U playlist '{m3u_path}' with {tracks_added} tracks")
         m3u_logger.info(f"Found {tracks_found} tracks out of {len(track_ids)} total in playlist")
+
+        # Print additional log information
+        print(f"Created M3U playlist '{m3u_path}' with {tracks_added} tracks")
+        print(f"Found {tracks_found} tracks out of {len(track_ids)} total in playlist")
 
         return tracks_found, tracks_added
 
@@ -660,32 +677,126 @@ def regenerate_single_playlist(playlist_id: str, master_tracks_dir: str, playlis
     with UnitOfWork() as uow:
         playlist = uow.playlist_repository.get_by_id(playlist_id)
         if not playlist:
+            error_msg = f'Playlist ID {playlist_id} not found in database'
+            print(error_msg)
             return {
                 'success': False,
-                'message': f'Playlist ID {playlist_id} not found in database'
+                'message': error_msg
             }
 
     # Build track ID mapping if not provided
     if track_id_map is None:
+        print(f"Building track ID mapping for {master_tracks_dir}")
         track_id_map = build_track_id_mapping(master_tracks_dir)
+        print(f"Found {len(track_id_map)} track IDs in mapping")
+
+    # Force overwrite to true to ensure changes are applied
+    overwrite = True
+
+    # Log which playlist we're regenerating
+    print(f"Regenerating playlist: {playlist.name} (ID: {playlist_id})")
+
+    # Get track IDs for this playlist
+    with UnitOfWork() as uow:
+        track_ids = uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id)
+        print(f"Found {len(track_ids)} tracks for playlist in database")
+
+        # Check for local files
+        local_track_ids = [tid for tid in track_ids if tid.startswith('local_')]
+        spotify_track_ids = [tid for tid in track_ids if not tid.startswith('local_')]
+        print(f"   - {len(local_track_ids)} local tracks")
+        print(f"   - {len(spotify_track_ids)} Spotify tracks")
+
+        # Get details for each track to help with local file lookup
+        track_details = {}
+        for track_id in track_ids:
+            track = uow.track_repository.get_by_id(track_id)
+            if track:
+                track_details[track_id] = {
+                    'title': track.title,
+                    'artists': track.artists,
+                    'album': track.album,
+                    'is_local': track.is_local
+                }
+
+    # Special handling for local files - search the master directory for matching files
+    for track_id in local_track_ids:
+        # Only search if this track ID is not in our mapping already
+        if track_id not in track_id_map and track_id in track_details:
+            details = track_details[track_id]
+            title = details['title']
+            artists = details['artists']
+
+            # Search for the file - we can call the existing find_local_file_path function
+            from helpers.m3u_helper import find_local_file_path
+            local_path = find_local_file_path(title, artists, master_tracks_dir)
+            if local_path:
+                # Add to our mapping so generate_m3u_playlist can find it
+                track_id_map[track_id] = local_path
+                print(f"Found local file for {artists} - {title}: {local_path}")
 
     # Generate the M3U file
-    tracks_found, tracks_added = generate_m3u_playlist(
-        playlist_name=playlist.name,
-        playlist_id=playlist_id,
-        master_tracks_dir=master_tracks_dir,
-        playlists_dir=playlists_dir,
-        extended=extended,
-        overwrite=overwrite,
-        track_id_map=track_id_map
-    )
+    safe_name = sanitize_filename(playlist.name, preserve_spaces=True)
+    m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+
+    # Delete existing file if it exists to force regeneration
+    if os.path.exists(m3u_path) and overwrite:
+        try:
+            os.remove(m3u_path)
+            print(f"Removed existing M3U file: {m3u_path}")
+        except Exception as e:
+            print(f"Error removing existing M3U file: {e}")
+            # Continue anyway, as the file will be overwritten
+
+    try:
+        tracks_found, tracks_added = generate_m3u_playlist(
+            playlist_name=playlist.name,
+            playlist_id=playlist_id,
+            master_tracks_dir=master_tracks_dir,
+            playlists_dir=playlists_dir,
+            extended=extended,
+            overwrite=overwrite,
+            track_id_map=track_id_map
+        )
+    except Exception as e:
+        error_msg = f"Error generating M3U playlist: {str(e)}"
+        print(error_msg)
+        return {
+            'success': False,
+            'message': error_msg
+        }
+
+    print(f"Generated M3U with {tracks_found} tracks found, {tracks_added} tracks added")
+
+    # Verify that the file was actually created
+    if not os.path.exists(m3u_path):
+        error_msg = f"M3U file was not created at: {m3u_path}"
+        print(error_msg)
+        return {
+            'success': False,
+            'message': error_msg
+        }
+
+    # Check file size to ensure it has content
+    file_size = os.path.getsize(m3u_path)
+    print(f"Generated M3U file size: {file_size} bytes")
+
+    if file_size == 0:
+        error_msg = f"Generated M3U file is empty: {m3u_path}"
+        print(error_msg)
+        return {
+            'success': False,
+            'message': error_msg
+        }
 
     return {
         'success': True,
-        'message': f'Successfully regenerated playlist: {playlist.name}',
+        'message': f'Successfully regenerated playlist: {playlist.name} with {tracks_added} tracks',
         'stats': {
             'playlist_name': playlist.name,
             'tracks_found': tracks_found,
-            'tracks_added': tracks_added
+            'tracks_added': tracks_added,
+            'm3u_path': m3u_path,
+            'file_size': file_size
         }
     }

@@ -1622,7 +1622,7 @@ def api_regenerate_playlist():
         playlists_dir = request.json.get('playlistsDir')
         playlist_id = request.json.get('playlist_id')
         extended = request.json.get('extended', True)
-        overwrite = request.json.get('overwrite', True)
+        force = request.json.get('force', True)
 
         if not master_tracks_dir:
             return jsonify({
@@ -1642,23 +1642,120 @@ def api_regenerate_playlist():
                 "message": "Playlist ID not specified"
             }), 400
 
+        # Always force overwrite when regenerating
+        overwrite = True
+
+        # Log detailed information for debugging
+        print(f"Regenerating playlist {playlist_id} at {playlists_dir}")
+        print(f"Master tracks directory: {master_tracks_dir}")
+
+        # Get the playlist name for more useful messages
+        playlist_name = None
+        with UnitOfWork() as uow:
+            playlist = uow.playlist_repository.get_by_id(playlist_id)
+            if playlist:
+                playlist_name = playlist.name
+
         # Import the regenerate function
-        from helpers.m3u_helper import regenerate_single_playlist
+        from helpers.m3u_helper import sanitize_filename
+
+        # Manually ensure the M3U file is deleted before regeneration if force is specified
+        if force and playlist_name:
+            safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
+            m3u_path = os.path.join(playlists_dir, f"{safe_name}.m3u")
+            if os.path.exists(m3u_path):
+                try:
+                    os.remove(m3u_path)
+                    print(f"Forcibly removed existing M3U file: {m3u_path}")
+                except Exception as e:
+                    print(f"Error removing existing M3U file: {e}")
 
         # Regenerate the playlist
-        result = regenerate_single_playlist(
-            playlist_id,
-            master_tracks_dir,
-            playlists_dir,
-            extended=extended,
-            overwrite=overwrite
-        )
+        result = None
+        try:
+            from helpers.m3u_helper import regenerate_single_playlist
+            result = regenerate_single_playlist(
+                playlist_id,
+                master_tracks_dir,
+                playlists_dir,
+                extended=extended,
+                overwrite=overwrite
+            )
+        except Exception as e:
+            print(f"Error in regenerate_single_playlist: {e}")
+            raise
 
-        return jsonify(result)
+        # If we're still here, regeneration was successful
+        return jsonify({
+            "success": True,
+            "message": f"Successfully regenerated playlist: {playlist_name or playlist_id}",
+            "result": result
+        })
     except Exception as e:
         import traceback
         error_str = traceback.format_exc()
         print(f"Error regenerating playlist: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@app.route('/api/remove-track-id', methods=['POST'])
+def api_remove_track_id():
+    try:
+        file_path = request.json.get('file_path')
+
+        if not file_path:
+            return jsonify({
+                "success": False,
+                "message": "file_path is required"
+            }), 400
+
+        if not os.path.exists(file_path):
+            return jsonify({
+                "success": False,
+                "message": f"File not found: {file_path}"
+            }), 404
+
+        # Get existing track ID if any for reporting
+        old_track_id = None
+        try:
+            from mutagen.id3 import ID3, ID3NoHeaderError
+            try:
+                tags = ID3(file_path)
+                if 'TXXX:TRACKID' in tags:
+                    old_track_id = tags['TXXX:TRACKID'].text[0]
+                    # Remove the TrackId
+                    tags.delall('TXXX:TRACKID')
+                    tags.save(file_path)
+                else:
+                    return jsonify({
+                        "success": False,
+                        "message": f"No TrackId found in file: {file_path}"
+                    }), 400
+            except ID3NoHeaderError:
+                return jsonify({
+                    "success": False,
+                    "message": f"No ID3 tags found in file: {file_path}"
+                }), 400
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "message": f"Error removing TrackId: {str(e)}"
+            }), 500
+
+        return jsonify({
+            "success": True,
+            "message": f"Successfully removed TrackId '{old_track_id}' from file",
+            "old_track_id": old_track_id
+        })
+    except Exception as e:
+        import traceback
+        error_str = traceback.format_exc()
+        print(f"Error removing track ID: {e}")
         print(error_str)
         return jsonify({
             "success": False,
