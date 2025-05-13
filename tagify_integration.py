@@ -697,6 +697,11 @@ def api_generate_m3u():
     data = request.json
     master_tracks_dir = data.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
     playlists_dir = data.get('playlistsDir')
+    extended = data.get('extended', True)
+    overwrite = data.get('overwrite', True)
+    confirmed = data.get('confirmed', False)
+    # Add this to receive the list of playlists needing updates
+    playlists_to_update = data.get('playlists_to_update', [])
 
     if not master_tracks_dir:
         return jsonify({
@@ -733,23 +738,76 @@ def api_generate_m3u():
         # Sort playlists by track count (descending)
         playlist_stats.sort(key=lambda x: x['track_count'], reverse=True)
 
-        # Return analysis without making changes
-        return jsonify({
-            "success": True,
-            "message": f"Ready to generate {len(playlist_stats)} M3U playlists.",
-            "needs_confirmation": len(playlist_stats) > 0,
-            "details": {
-                "playlists": playlist_stats,
-                "total_playlists": len(playlist_stats),
-                "playlists_with_tracks": sum(1 for p in playlist_stats if p['track_count'] > 0)
-            }
-        })
+        # If confirmed parameter is true, actually generate the M3U files
+        if confirmed:
+            from helpers.m3u_helper import build_track_id_mapping
+
+            # Build track ID mapping for efficiency
+            track_id_map = build_track_id_mapping(master_tracks_dir)
+
+            # Generate only the playlists that need updating
+            success_count = 0
+            failed_count = 0
+            updated_playlists = []
+
+            for playlist_id in playlists_to_update:
+                try:
+                    from helpers.m3u_helper import regenerate_single_playlist
+                    result = regenerate_single_playlist(
+                        playlist_id=playlist_id,
+                        master_tracks_dir=master_tracks_dir,
+                        playlists_dir=playlists_dir,
+                        extended=extended,
+                        overwrite=overwrite,
+                        track_id_map=track_id_map
+                    )
+
+                    if result['success']:
+                        success_count += 1
+                        updated_playlists.append({
+                            'id': playlist_id,
+                            'name': result['stats']['playlist_name'] if 'stats' in result else "Unknown",
+                            'tracks_added': result['stats'].get('tracks_added', 0) if 'stats' in result else 0
+                        })
+                    else:
+                        failed_count += 1
+                        print(f"Failed to regenerate playlist {playlist_id}: {result.get('message', 'Unknown error')}")
+                except Exception as e:
+                    failed_count += 1
+                    print(f"Error regenerating playlist {playlist_id}: {str(e)}")
+
+            return jsonify({
+                "success": True,
+                "message": f"Successfully regenerated {success_count} M3U playlists. {failed_count} failed.",
+                "stats": {
+                    "playlists_updated": success_count,
+                    "playlists_failed": failed_count,
+                    "updated_playlists": updated_playlists,
+                    "total_playlists_to_update": len(playlists_to_update)
+                }
+            })
+        else:
+            # Just return analysis without making changes
+            return jsonify({
+                "success": True,
+                "message": f"Ready to generate {len(playlist_stats)} M3U playlists.",
+                "needs_confirmation": len(playlist_stats) > 0,
+                "details": {
+                    "playlists": playlist_stats,
+                    "total_playlists": len(playlist_stats),
+                    "playlists_with_tracks": sum(1 for p in playlist_stats if p['track_count'] > 0)
+                }
+            })
     except Exception as e:
         import traceback
         error_str = traceback.format_exc()
-        print(f"Error analyzing M3U generation: {e}")
+        print(f"Error analyzing/generating M3U playlists: {e}")
         print(error_str)
-        return jsonify({"success": False, "message": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
 
 
 @app.route('/api/validate-tracks', methods=['POST'])
