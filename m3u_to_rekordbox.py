@@ -9,6 +9,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path):
     """
     Generate a Rekordbox XML file from all M3U playlists in a folder structure.
     The folder structure within m3u_root_folder will be preserved in Rekordbox.
+    All playlists will be placed under a root folder called "m3u".
 
     Args:
         m3u_root_folder: Root directory containing M3U playlists and subfolders
@@ -72,10 +73,15 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path):
 
     playlists = ET.SubElement(root, "PLAYLISTS")
 
-    # Create root folder
+    # Create ROOT folder
     root_folder = ET.SubElement(playlists, "NODE")
     root_folder.set("Name", "ROOT")
     root_folder.set("Type", "0")
+
+    # Create "m3u" folder inside ROOT
+    m3u_root_node = ET.SubElement(root_folder, "NODE")
+    m3u_root_node.set("Name", "m3u")
+    m3u_root_node.set("Type", "0")
 
     # Process all playlists
     track_id_counter = 1
@@ -199,7 +205,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path):
     collection.set("Entries", str(len(all_tracks)))
 
     # Create a dictionary to store folder nodes
-    folder_nodes = {"": root_folder}  # Empty key represents the root folder
+    folder_nodes = {"": m3u_root_node}  # Empty key now represents the m3u folder
     created_folder_count = 0
 
     # First create all folder nodes based on the directory structure
@@ -212,7 +218,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path):
 
         # Build the folder path step by step, creating nodes as needed
         current_path = ""
-        parent_node = root_folder
+        parent_node = m3u_root_node  # Start from m3u root
 
         for segment in folder_segments:
             if current_path:
@@ -235,7 +241,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path):
     # Now create all playlist nodes within their respective folders
     for (folder_path, playlist_name), m3u_content in m3u_data.items():
         # Get the parent folder node
-        parent_node = folder_nodes.get(folder_path, root_folder)
+        parent_node = folder_nodes.get(folder_path, m3u_root_node)  # Default to m3u root
 
         # Create playlist node
         playlist = ET.SubElement(parent_node, "NODE")
@@ -278,6 +284,13 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path):
         children = node.findall("./NODE")
         node.set("Count", str(len(children)))
 
+    # Update "m3u" root folder count
+    m3u_children = m3u_root_node.findall("./NODE")
+    m3u_root_node.set("Count", str(len(m3u_children)))
+
+    # Update ROOT folder count to include the m3u folder
+    root_folder.set("Count", "1")  # Just the m3u folder
+
     # Write the XML file
     tree = ET.ElementTree(root)
 
@@ -290,6 +303,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path):
     print(f"Total tracks: {len(all_tracks)}")
     print(f"Total playlists: {len(created_playlists)}")
     print(f"Total folders: {created_folder_count}")
+    print(f"All playlists are placed under the 'm3u' root folder")
 
     return len(all_tracks), len(created_playlists)
 
