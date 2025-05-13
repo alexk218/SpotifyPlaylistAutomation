@@ -1318,24 +1318,77 @@ def api_sync_database():
                     "needs_confirmation": needs_confirmation
                 })
 
-            # Handle the execution case for 'all' when confirmed
-            # Add execution code here for when action='all' and is_confirmed=True
-            # For now, let's return a message that this isn't implemented yet
-            return jsonify({
-                "success": False,
-                "message": "Confirmation execution for 'all' action not implemented yet"
-            })
+            # If confirmed, execute all sync steps in sequence
+            else:
+                master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
+                results = {}
 
+                try:
+                    # 1. Sync playlists first
+                    playlists_added, playlists_updated, playlists_unchanged = sync_playlists_incremental(
+                        force_full_refresh=force_refresh,
+                        auto_confirm=True
+                    )
+
+                    results['playlists'] = {
+                        'added': playlists_added,
+                        'updated': playlists_updated,
+                        'unchanged': playlists_unchanged
+                    }
+
+                    # 2. Sync tracks
+                    tracks_added, tracks_updated, tracks_unchanged = sync_master_tracks_incremental(
+                        master_playlist_id,
+                        force_full_refresh=force_refresh,
+                        auto_confirm=True
+                    )
+
+                    results['tracks'] = {
+                        'added': tracks_added,
+                        'updated': tracks_updated,
+                        'unchanged': tracks_unchanged
+                    }
+
+                    # 3. Sync associations
+                    # Use precomputed changes if provided
+                    precomputed_changes = data.get('precomputed_changes')
+                    association_stats = sync_track_playlist_associations(
+                        master_playlist_id,
+                        force_full_refresh=force_refresh,
+                        auto_confirm=True,
+                        precomputed_changes=precomputed_changes
+                    )
+
+                    results['associations'] = association_stats
+
+                    return jsonify({
+                        "success": True,
+                        "message": "Full database sync completed successfully",
+                        "results": results
+                    })
+                except Exception as e:
+                    import traceback
+                    error_str = traceback.format_exc()
+                    print(f"Error in sync_database - all action: {e}")
+                    print(error_str)
+                    return jsonify({
+                        "success": False,
+                        "message": f"Error during sync_database 'all' action: {str(e)}",
+                        "traceback": error_str
+                    }), 500
         else:
             return jsonify({"success": False, "message": "Invalid action"}), 400
+
+
     except Exception as e:
         import traceback
+
         error_str = traceback.format_exc()
-        print(f"Error in sync_database: {e}")
+        print(f"Error in sync_database - all action: {e}")
         print(error_str)
         return jsonify({
             "success": False,
-            "message": f"Error: {str(e)}",
+            "message": f"Error during sync_database 'all' action: {str(e)}",
             "traceback": error_str
         }), 500
 
