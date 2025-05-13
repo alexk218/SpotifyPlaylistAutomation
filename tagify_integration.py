@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import argparse
 import json
 import os
 import subprocess
@@ -9,13 +8,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from flask_cors import CORS
-from flask import Flask, jsonify, request
 from dotenv import load_dotenv
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 from mutagen.id3 import ID3
 
-from drivers.spotify_client import sync_to_master_playlist, authenticate_spotify
-from helpers.m3u_helper import find_local_file_path
 from sql.core.unit_of_work import UnitOfWork
 
 # Load environment variables
@@ -27,10 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # Add project root to Python path for imports
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from helpers.file_helper import embed_track_metadata
-from helpers.organization_helper import organize_songs_into_m3u_playlists
 from helpers.validation_helper import validate_master_tracks
-from sql.helpers.db_helper import clear_db, insert_playlists, insert_tracks_and_associations, MASTER_PLAYLIST_ID
 
 app = Flask(__name__)
 CORS(app, origins=["https://xpui.app.spotify.com", "https://open.spotify.com", "http://localhost:4000", "*"])
@@ -1307,6 +1301,7 @@ def api_validate_track_metadata():
         files_without_track_id = 0
         potential_mismatches = []
         duplicate_track_ids = {}
+        files_missing_trackid = []
 
         # Get all tracks from database for comparison
         with UnitOfWork() as uow:
@@ -1375,8 +1370,28 @@ def api_validate_track_metadata():
                             })
                     else:
                         files_without_track_id += 1
+                        # Add to list of files missing TrackId
+                        files_missing_trackid.append({
+                            'file': file,
+                            'track_id': None,
+                            'embedded_artist_title': "No TrackId",
+                            'filename': filename_no_ext,
+                            'confidence': 0,
+                            'full_path': file_path,
+                            'reason': 'missing_track_id'
+                        })
                 except Exception as e:
                     files_without_track_id += 1
+                    # Add to list of files missing TrackId with error message
+                    files_missing_trackid.append({
+                        'file': file,
+                        'track_id': None,
+                        'embedded_artist_title': f"Error: {str(e)}",
+                        'filename': filename_no_ext,
+                        'confidence': 0,
+                        'full_path': file_path,
+                        'reason': 'error_reading_tags'
+                    })
 
         # Filter duplicate_track_ids to only include actual duplicates
         real_duplicates = {k: v for k, v in duplicate_track_ids.items() if len(v) > 1}
@@ -1394,6 +1409,7 @@ def api_validate_track_metadata():
                 "duplicate_track_ids": len(real_duplicates)
             },
             "potential_mismatches": potential_mismatches,
+            "files_missing_trackid": files_missing_trackid,
             "duplicate_track_ids": real_duplicates
         })
     except Exception as e:
