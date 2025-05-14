@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -8,12 +9,26 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import traceback
+import argparse
+import Levenshtein
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from mutagen.id3 import ID3
+from mutagen.id3 import ID3, ID3NoHeaderError
+from flask import redirect
+from mutagen.mp3 import MP3
 
+from drivers.spotify_client import authenticate_spotify, get_playlist_track_ids, fetch_playlists, \
+    sync_to_master_playlist
+from helpers.file_helper import embed_track_id
+from helpers.sync_helper import analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations, \
+    sync_playlists_incremental, sync_master_tracks_incremental, sync_track_playlist_associations
 from sql.core.unit_of_work import UnitOfWork
+from helpers.m3u_helper import build_track_id_mapping, generate_m3u_playlist, find_local_file_path_with_extensions, \
+    get_m3u_track_ids
+from helpers.m3u_helper import sanitize_filename
+from sql.helpers.db_helper import clear_db
 
 # Load environment variables
 load_dotenv()
@@ -170,7 +185,6 @@ def api_direct_tracks_compare():
 
                     # Check if this file has a TrackId
                     try:
-                        from mutagen.id3 import ID3, ID3NoHeaderError
                         try:
                             tags = ID3(file_path)
                             if 'TXXX:TRACKID' in tags:
@@ -224,7 +238,6 @@ def api_direct_tracks_compare():
             })
 
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error in direct tracks compare: {e}")
         print(error_str)
@@ -270,7 +283,6 @@ def api_embed_metadata():
 
                 if file_path and track_id:
                     # Use the embed_track_id function from file_helper.py
-                    from helpers.file_helper import embed_track_id
                     success = embed_track_id(file_path, track_id)
 
                     if success:
@@ -307,7 +319,6 @@ def api_embed_metadata():
             })
 
         except Exception as e:
-            import traceback
             error_str = traceback.format_exc()
             print(f"Error embedding metadata: {e}")
             print(error_str)
@@ -359,7 +370,6 @@ def api_embed_metadata():
 
                     if exact_match and exact_match['confidence'] >= auto_confirm_threshold:
                         # Auto-match this file - embed the TrackId immediately
-                        from helpers.file_helper import embed_track_id
                         success = embed_track_id(file_path, exact_match['trackId'])
                         if success:
                             auto_matched_files.append(exact_match)
@@ -383,7 +393,6 @@ def api_embed_metadata():
             }
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error analyzing metadata embedding: {e}")
         print(error_str)
@@ -491,12 +500,10 @@ def api_fuzzy_match_track():
             db_title = track.title.lower()
 
             # Normalize both titles
-            import re
             clean_normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()
             db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
 
             # Calculate similarity
-            import Levenshtein
             similarity = Levenshtein.ratio(clean_normalized_title, db_title_clean)
 
             # Add high similarity boost for exact file name match
@@ -547,7 +554,6 @@ def api_fuzzy_match_track():
                 artist_ratio = 0.0
 
             # Clean titles for better matching
-            import re
             clean_normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()
             db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
 
@@ -619,7 +625,6 @@ def api_fuzzy_match_track():
             "matches": top_matches
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error in fuzzy match: {e}")
         print(error_str)
@@ -678,7 +683,6 @@ def api_generate_m3u():
 
         # If confirmed parameter is true, actually generate the M3U files
         if confirmed:
-            from helpers.m3u_helper import build_track_id_mapping, sanitize_filename
 
             # Build track ID mapping for efficiency
             track_id_map = build_track_id_mapping(master_tracks_dir)
@@ -775,7 +779,6 @@ def api_generate_m3u():
                     os.makedirs(os.path.dirname(m3u_path), exist_ok=True)
 
                     # Generate the M3U file
-                    from helpers.m3u_helper import generate_m3u_playlist
                     tracks_found, tracks_added = generate_m3u_playlist(
                         playlist_name=playlist.name,
                         playlist_id=playlist_id,
@@ -803,7 +806,6 @@ def api_generate_m3u():
                 except Exception as e:
                     failed_count += 1
                     print(f"Failed to regenerate playlist {playlist_id}: {str(e)}")
-                    import traceback
                     print(traceback.format_exc())
 
             return jsonify({
@@ -829,7 +831,6 @@ def api_generate_m3u():
                 }
             })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error analyzing/generating M3U playlists: {e}")
         print(error_str)
@@ -854,9 +855,6 @@ def api_validate_tracks():
 @app.route('/api/sync-to-master', methods=['POST'])
 def api_sync_to_master():
     try:
-        # Import the function with the fixed implementation
-        from drivers.spotify_client import sync_to_master_playlist, authenticate_spotify
-
         # Get the master playlist ID
         master_playlist_id = request.json.get('master_playlist_id')
         if not master_playlist_id:
@@ -881,7 +879,6 @@ def api_sync_to_master():
                 # Use the fixed function
                 sync_to_master_playlist(spotify_client, master_playlist_id)
             except Exception as e:
-                import traceback
                 error_str = traceback.format_exc()
                 print(f"Error in background sync: {e}")
                 print(error_str)
@@ -893,7 +890,6 @@ def api_sync_to_master():
         return jsonify(response)
 
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error starting sync: {e}")
         print(error_str)
@@ -906,9 +902,6 @@ def api_sync_to_master():
 @app.route('/api/analyze-master-sync', methods=['POST'])
 def api_analyze_master_sync():
     try:
-        # Import required functions
-        from drivers.spotify_client import authenticate_spotify, get_playlist_track_ids
-
         master_playlist_id = request.json.get('master_playlist_id') or MASTER_PLAYLIST_ID
         if not master_playlist_id:
             return jsonify({
@@ -925,7 +918,6 @@ def api_analyze_master_sync():
         master_track_ids = set(get_playlist_track_ids(spotify_client, master_playlist_id, force_refresh=True))
 
         # Fetch all playlists (excluding forbidden ones)
-        from drivers.spotify_client import fetch_playlists
         user_playlists = fetch_playlists(spotify_client, force_refresh=True)
 
         # Filter playlists safely
@@ -1014,7 +1006,6 @@ def api_analyze_master_sync():
         })
 
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error analyzing master sync: {e}")
         print(error_str)
@@ -1028,8 +1019,6 @@ def api_analyze_master_sync():
 @app.route('/api/analyze-playlists', methods=['POST'])
 def api_analyze_playlists():
     try:
-        from helpers.sync_helper import analyze_playlists_changes
-
         force_refresh = request.json.get('force_refresh', False)
 
         # Get analysis without executing
@@ -1052,7 +1041,6 @@ def api_analyze_playlists():
             "needs_confirmation": added_count > 0 or updated_count > 0
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error analyzing playlists: {e}")
         print(error_str)
@@ -1066,8 +1054,6 @@ def api_analyze_playlists():
 @app.route('/api/analyze-tracks', methods=['POST'])
 def api_analyze_tracks():
     try:
-        from helpers.sync_helper import analyze_tracks_changes
-
         master_playlist_id = request.json.get('master_playlist_id') or MASTER_PLAYLIST_ID
         force_refresh = request.json.get('force_refresh', False)
 
@@ -1120,7 +1106,6 @@ def api_analyze_tracks():
             "needs_confirmation": len(tracks_to_add) > 0 or len(tracks_to_update) > 0
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error analyzing tracks: {e}")
         print(error_str)
@@ -1134,9 +1119,6 @@ def api_analyze_tracks():
 @app.route('/api/analyze-associations', methods=['POST'])
 def api_analyze_associations():
     try:
-        # Import the analysis function
-        from helpers.sync_helper import analyze_track_playlist_associations
-
         master_playlist_id = request.json.get('master_playlist_id') or MASTER_PLAYLIST_ID
         force_refresh = request.json.get('force_refresh', False)
 
@@ -1163,7 +1145,6 @@ def api_analyze_associations():
             "needs_confirmation": changes['associations_to_add'] > 0 or changes['associations_to_remove'] > 0
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error analyzing associations: {e}")
         print(error_str)
@@ -1176,12 +1157,6 @@ def api_analyze_associations():
 
 @app.route('/api/sync-database', methods=['POST'])
 def api_sync_database():
-    from helpers.sync_helper import (
-        sync_playlists_incremental,
-        sync_master_tracks_incremental,
-        sync_track_playlist_associations
-    )
-
     data = request.json
     action = data.get('action', 'all')
     force_refresh = data.get('force_refresh', False)
@@ -1189,7 +1164,6 @@ def api_sync_database():
 
     try:
         if action == 'clear':
-            from sql.helpers.db_helper import clear_db
             clear_db()
             return jsonify({"success": True, "message": "Database cleared successfully"})
 
@@ -1197,7 +1171,6 @@ def api_sync_database():
             # If not confirmed, return the analysis result instead
             if not is_confirmed:
                 # Call analyze endpoint and return that result
-                from flask import redirect
                 return redirect('/api/analyze-playlists', code=307)  # 307 preserves POST method
 
             # Otherwise, proceed with execution
@@ -1219,7 +1192,6 @@ def api_sync_database():
             # If not confirmed, return the analysis result instead
             if not is_confirmed:
                 # Call analyze endpoint and return that result
-                from flask import redirect
                 return redirect('/api/analyze-tracks', code=307)
 
             # Otherwise, proceed with execution
@@ -1243,7 +1215,6 @@ def api_sync_database():
             # If not confirmed, return the analysis result instead
             if not is_confirmed:
                 # Call analyze endpoint and return that result
-                from flask import redirect
                 return redirect('/api/analyze-associations', code=307)
 
             # Otherwise, proceed with execution
@@ -1268,13 +1239,11 @@ def api_sync_database():
                 master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
 
                 # 1. Analyze playlists
-                from helpers.sync_helper import analyze_playlists_changes
                 playlists_added, playlists_updated, playlists_unchanged, playlists_details = analyze_playlists_changes(
                     force_full_refresh=force_refresh
                 )
 
                 # 2. Analyze tracks
-                from helpers.sync_helper import analyze_tracks_changes
                 tracks_to_add, tracks_to_update, tracks_unchanged = analyze_tracks_changes(
                     master_playlist_id,
                     force_full_refresh=force_refresh
@@ -1300,7 +1269,6 @@ def api_sync_database():
                     })
 
                 # 3. Analyze associations
-                from helpers.sync_helper import analyze_track_playlist_associations
                 associations_changes = analyze_track_playlist_associations(
                     master_playlist_id,
                     force_full_refresh=force_refresh
@@ -1397,7 +1365,6 @@ def api_sync_database():
                         "results": results
                     })
                 except Exception as e:
-                    import traceback
                     error_str = traceback.format_exc()
                     print(f"Error in sync_database - all action: {e}")
                     print(error_str)
@@ -1411,8 +1378,6 @@ def api_sync_database():
 
 
     except Exception as e:
-        import traceback
-
         error_str = traceback.format_exc()
         print(f"Error in sync_database - all action: {e}")
         print(error_str)
@@ -1485,13 +1450,11 @@ def api_validate_track_metadata():
                             expected_filename = expected_filenames[track_id]
 
                             # Calculate filename similarity
-                            import Levenshtein
                             similarity = Levenshtein.ratio(filename_no_ext, expected_filename)
 
                             # Flag potential mismatches
                             if similarity < confidence_threshold:
                                 try:
-                                    from mutagen.mp3 import MP3
                                     audio = MP3(file_path)
                                     duration = audio.info.length  # Duration in seconds
                                     duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
@@ -1511,7 +1474,6 @@ def api_validate_track_metadata():
                                 })
                         else:
                             try:
-                                from mutagen.mp3 import MP3
                                 audio = MP3(file_path)
                                 duration = audio.info.length
                                 duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
@@ -1533,7 +1495,6 @@ def api_validate_track_metadata():
                             })
                     else:
                         try:
-                            from mutagen.mp3 import MP3
                             audio = MP3(file_path)
                             duration = audio.info.length
                             duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
@@ -1557,7 +1518,6 @@ def api_validate_track_metadata():
                         })
                 except Exception as e:
                     try:
-                        from mutagen.mp3 import MP3
                         audio = MP3(file_path)
                         duration = audio.info.length
                         duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
@@ -1596,7 +1556,6 @@ def api_validate_track_metadata():
                     if os.path.exists(file_path):
                         # Get file duration
                         try:
-                            from mutagen.mp3 import MP3
                             audio = MP3(file_path)
                             duration = audio.info.length
                             duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
@@ -1634,7 +1593,6 @@ def api_validate_track_metadata():
             "duplicate_track_ids": real_duplicates
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error validating track metadata: {e}")
         print(error_str)
@@ -1665,17 +1623,31 @@ def api_validate_playlists():
             }), 400
 
         # Build track ID mapping first for efficiency
-        from helpers.m3u_helper import build_track_id_mapping
         track_id_map = build_track_id_mapping(master_tracks_dir)
+
+        filename_to_db_track_id = {}
+        with UnitOfWork() as uow:
+            local_tracks = [t for t in uow.track_repository.get_all() if t.is_local]
+            for track in local_tracks:
+                title = track.title or ''
+                # If title exists, use it for matching
+                if title:
+                    # Add normalized versions of the title for better matching
+                    normalized_title = title.lower().replace(' ', '_')
+                    filename_to_db_track_id[normalized_title] = track.track_id
+                    # Also try without extension
+                    basename = os.path.splitext(normalized_title)[0]
+                    filename_to_db_track_id[basename] = track.track_id
+
+        print(f"Built filename to database track ID mapping with {len(filename_to_db_track_id)} entries")
 
         # Get all playlists from database
         with UnitOfWork() as uow:
             db_playlists = uow.playlist_repository.get_all()
             # Filter out the MASTER playlist
-            db_playlists = [p for p in db_playlists if p.name.upper() != "MASTER"]
+            db_playlists = [p for p in db_playlists if p.name.upper() != "MASTER"]  # TODO: create env variable?
 
         # Find all M3U files in all subdirectories
-        from helpers.m3u_helper import sanitize_filename
         m3u_files = {}  # Dict of {sanitized_name: m3u_path}
 
         for root, dirs, files in os.walk(playlists_dir):
@@ -1692,23 +1664,24 @@ def api_validate_playlists():
             playlist_id = playlist.playlist_id
 
             # Check if this playlist has an M3U file (in any subdirectory)
-            safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
+            safe_name = sanitize_filename(playlist_name)
             m3u_path = m3u_files.get(safe_name)
             has_m3u = m3u_path is not None
 
             # Get all track-playlist associations from the database
             with UnitOfWork() as uow:
-                all_track_ids_in_playlist = set(uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
+                all_track_ids_in_playlist_db = set(
+                    uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
                 expected_tracks = []
 
                 # Get details for all tracks in the playlist - not just local ones
-                for track_id in all_track_ids_in_playlist:
+                for track_id in all_track_ids_in_playlist_db:
                     track = uow.track_repository.get_by_id(track_id)
                     if track:
                         expected_tracks.append({
                             'id': track_id,
-                            'title': track.title,
-                            'artists': track.artists,
+                            'title': track.title or '',
+                            'artists': track.artists or '',
                             'album': track.album or '',
                             'is_local': track.is_local,
                             'has_local_file': track_id in track_id_map
@@ -1718,7 +1691,7 @@ def api_validate_playlists():
             local_track_files = set()
 
             # For Spotify tracks (non-local), check the track_id_map
-            for track_id in all_track_ids_in_playlist:
+            for track_id in all_track_ids_in_playlist_db:
                 if not track_id.startswith('local_'):
                     if track_id in track_id_map:
                         local_track_files.add(track_id)
@@ -1727,27 +1700,83 @@ def api_validate_playlists():
                     with UnitOfWork() as uow:
                         track = uow.track_repository.get_by_id(track_id)
                         if track:
-                            # Search for the file by artist/title
-                            from helpers.m3u_helper import find_local_file_path_with_extensions
-                            local_path = find_local_file_path_with_extensions(
-                                track.title, track.artists, master_tracks_dir,
-                                extensions=['.mp3', '.wav', '.aiff']
-                            )
+                            # Get the title and artists, handling NULL values
+                            title = track.title or ''
+                            artists = track.artists or ''
+
+                            # First, try using both title and artists
+                            local_path = None
+                            if title and artists:
+                                local_path = find_local_file_path_with_extensions(
+                                    title, artists, master_tracks_dir,
+                                    extensions=['.mp3', '.wav', '.aiff']
+                                )
+
+                            # If not found, try with just the title
+                            if not local_path and title:
+                                local_path = find_local_file_path_with_extensions(
+                                    title, '', master_tracks_dir,
+                                    extensions=['.mp3', '.wav', '.aiff']
+                                )
+
                             if local_path:
                                 local_track_files.add(track_id)
 
             # Process M3U file if it exists
             m3u_track_ids = set()
             if has_m3u:
-                # Get tracks in the M3U file
-                from helpers.m3u_helper import get_m3u_track_ids
-                m3u_track_ids = get_m3u_track_ids(m3u_path, track_id_map)
+                # Get tracks in the M3U file - this will include virtual IDs for WAV/AIFF files
+                # We will store virtual IDs separately to avoid double counting
+                virtual_track_ids = set()
+                actual_track_ids = set()
+
+                # First get all track IDs including virtual ones
+                all_ids = get_m3u_track_ids(m3u_path, track_id_map)
+
+                # Separate virtual IDs from actual IDs
+                for track_id in all_ids:
+                    if track_id.startswith('local_wav_aiff_'):
+                        virtual_track_ids.add(track_id)
+                    else:
+                        actual_track_ids.add(track_id)
+
+                # Start with actual track IDs
+                m3u_track_ids = actual_track_ids
+
+                # Look for database matches for WAV/AIFF files
+                # But ONLY if they weren't already matched
+                wav_aiff_matches_found = set()
+                with open(m3u_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        # Skip comment lines and empty lines
+                        if line.startswith('#') or not line.strip():
+                            continue
+
+                        file_path = os.path.normpath(line.strip())
+                        if os.path.exists(file_path):
+                            file_ext = os.path.splitext(file_path.lower())[1]
+                            if file_ext in ['.wav', '.aiff']:
+                                # For WAV/AIFF files, try to match by filename
+                                filename = os.path.basename(file_path)
+                                basename = os.path.splitext(filename)[0].lower().replace(' ', '_')
+
+                                # Generate the virtual ID to check if it's already counted
+                                virtual_id = f"local_wav_aiff_{basename}"
+
+                                # Try to find in our mapping
+                                if basename in filename_to_db_track_id:
+                                    db_track_id = filename_to_db_track_id[basename]
+
+                                    # If this is the first time we've seen this file, add the database ID
+                                    if virtual_id in virtual_track_ids and virtual_id not in wav_aiff_matches_found:
+                                        m3u_track_ids.add(db_track_id)
+                                        wav_aiff_matches_found.add(virtual_id)
 
             # These are tracks that should be in the M3U but aren't
             missing_track_ids = local_track_files - m3u_track_ids
 
             # These are tracks in the M3U that shouldn't be there
-            unexpected_track_ids = m3u_track_ids - all_track_ids_in_playlist
+            unexpected_track_ids = m3u_track_ids - all_track_ids_in_playlist_db
 
             # Get details for missing tracks (only those with local files)
             missing_tracks = []
@@ -1786,12 +1815,12 @@ def api_validate_playlists():
                     not_downloaded_tracks.append(track)
 
             # Calculate the total discrepancy
-            total_discrepancy = len(all_track_ids_in_playlist) - len(m3u_track_ids)
+            total_discrepancy = len(all_track_ids_in_playlist_db) - len(m3u_track_ids)
             identified_discrepancy = len(missing_tracks) + len(unexpected_tracks) + len(not_downloaded_tracks)
             unidentified_discrepancy = abs(total_discrepancy) - identified_discrepancy
 
             # The playlist needs an update if there's any discrepancy whatsoever
-            needs_update = (len(m3u_track_ids) != len(all_track_ids_in_playlist) or  # Total count mismatch
+            needs_update = (len(m3u_track_ids) != len(all_track_ids_in_playlist_db) or  # Total count mismatch
                             len(missing_tracks) > 0 or  # Missing tracks that should be included
                             len(unexpected_tracks) > 0 or  # Unexpected tracks that shouldn't be there
                             not has_m3u)  # Missing M3U file
@@ -1809,7 +1838,7 @@ def api_validate_playlists():
                 'id': playlist_id,
                 'has_m3u': has_m3u,
                 'needs_update': needs_update,
-                'total_associations': len(all_track_ids_in_playlist),
+                'total_associations': len(all_track_ids_in_playlist_db),
                 'tracks_with_local_files': len(local_track_files),
                 'm3u_track_count': len(m3u_track_ids),
                 'tracks_missing_from_m3u': missing_tracks,
@@ -1844,7 +1873,6 @@ def api_validate_playlists():
             "playlist_analysis": playlist_analysis
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error validating playlists: {e}")
         print(error_str)
@@ -1885,8 +1913,6 @@ def api_correct_track_id():
         except Exception:
             pass
 
-        # Use the embed_track_id function
-        from helpers.file_helper import embed_track_id
         success = embed_track_id(file_path, new_track_id)
 
         if success:
@@ -1902,7 +1928,6 @@ def api_correct_track_id():
                 "message": f"Failed to update TrackId in file: {file_path}"
             }), 500
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error correcting track ID: {e}")
         print(error_str)
@@ -1959,9 +1984,6 @@ def api_regenerate_playlist():
                 }), 404
 
             playlist_name = playlist.name
-
-        # Import helpers
-        from helpers.m3u_helper import sanitize_filename, build_track_id_mapping
 
         # Sanitize the playlist name for file matching
         safe_name = sanitize_filename(playlist_name, preserve_spaces=True)
@@ -2034,8 +2056,6 @@ def api_regenerate_playlist():
         os.makedirs(os.path.dirname(existing_m3u_path), exist_ok=True)
 
         # Regenerate the playlist
-        from helpers.m3u_helper import generate_m3u_playlist
-
         try:
             tracks_found, tracks_added = generate_m3u_playlist(
                 playlist_name=playlist_name,
@@ -2082,7 +2102,6 @@ def api_regenerate_playlist():
             "result": result
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error regenerating playlist: {e}")
         print(error_str)
@@ -2113,7 +2132,6 @@ def api_remove_track_id():
         # Get existing track ID if any for reporting
         old_track_id = None
         try:
-            from mutagen.id3 import ID3, ID3NoHeaderError
             try:
                 tags = ID3(file_path)
                 if 'TXXX:TRACKID' in tags:
@@ -2143,7 +2161,6 @@ def api_remove_track_id():
             "old_track_id": old_track_id
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error removing track ID: {e}")
         print(error_str)
@@ -2179,7 +2196,6 @@ def api_delete_file():
             "message": f"File deleted: {os.path.basename(file_path)}"
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error deleting file: {e}")
         print(error_str)
@@ -2263,7 +2279,6 @@ def api_search_tracks():
             "results": results
         })
     except Exception as e:
-        import traceback
         error_str = traceback.format_exc()
         print(f"Error searching tracks: {e}")
         print(error_str)
@@ -2384,8 +2399,6 @@ def main():
 
 
 if __name__ == '__main__':
-    import argparse
-
     parser = argparse.ArgumentParser(description="Local Tracks Server")
     parser.add_argument("--port", type=int, default=8765, help="Port to run server on")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to run server on")
