@@ -72,18 +72,17 @@ def is_forbidden_playlist(name: str, description: str) -> bool:
     return False
 
 
-def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> List[Tuple[str, str]]:
+def fetch_playlists(spotify_client, force_refresh=False) -> List[Tuple[str, str, str]]:
     """
     Fetch all user's private playlists (self-created), excluding forbidden playlists.
     Uses cache if available and not forcing refresh.
 
     Args:
         spotify_client: Authenticated Spotify client
-        total_limit: Maximum number of playlists to fetch
         force_refresh: Whether to force a refresh from the API
 
     Returns:
-        List of tuples containing (PlaylistName, PlaylistId)
+        List of tuples (playlist_name, playlist_id, snapshot_id)
     """
     # Try to get playlists from cache first
     if not force_refresh:
@@ -101,7 +100,7 @@ def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> Lis
     offset = 0
     limit = 50  # Spotify API limit per request
 
-    while len(all_playlists) < total_limit:
+    while True:
         spotify_logger.info(f"Fetching playlists (offset: {offset}, limit: {limit})")
         playlists = spotify_client.current_user_playlists(limit=limit, offset=offset)
         spotify_logger.info(f"Fetched {len(playlists['items'])} playlists in this batch")
@@ -110,13 +109,16 @@ def fetch_playlists(spotify_client, total_limit=500, force_refresh=False) -> Lis
 
         all_playlists.extend(playlists['items'])
         offset += limit
+        if offset >= playlists['total']:
+            break
 
     spotify_logger.info(f"Total playlists fetched from API: {len(all_playlists)}")
 
     my_playlists = [
         (
             playlist['name'],
-            playlist['id']
+            playlist['id'],
+            playlist['snapshot_id']
         )
         for playlist in all_playlists
         if (
