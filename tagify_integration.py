@@ -1728,8 +1728,11 @@ def api_validate_playlists():
                         track = uow.track_repository.get_by_id(track_id)
                         if track:
                             # Search for the file by artist/title
-                            from helpers.m3u_helper import find_local_file_path
-                            local_path = find_local_file_path(track.title, track.artists, master_tracks_dir)
+                            from helpers.m3u_helper import find_local_file_path_with_extensions
+                            local_path = find_local_file_path_with_extensions(
+                                track.title, track.artists, master_tracks_dir,
+                                extensions=['.mp3', '.wav', '.aiff']
+                            )
                             if local_path:
                                 local_track_files.add(track_id)
 
@@ -1824,7 +1827,7 @@ def api_validate_playlists():
 
         # Sort by issue severity
         playlist_analysis.sort(key=lambda x: (
-            not x['has_m3u'],  # Missing M3U files first
+            not x['has_m3u'],  # Missing M3U playlist file completely
             abs(x['total_discrepancy']),  # Then by total discrepancy
             len(x['tracks_missing_from_m3u']) + len(x['unexpected_tracks_in_m3u']),
             # Then by number of identified issues

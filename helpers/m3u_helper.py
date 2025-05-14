@@ -98,14 +98,14 @@ def get_all_playlist_track_associations(uow) -> Dict[str, Set[str]]:
 
 def get_m3u_track_ids(m3u_path: str, track_id_map: Optional[Dict[str, str]] = None) -> Set[str]:
     """
-    Extract track IDs from an M3U file by examining the referenced MP3 files.
+    Extract track IDs from an M3U file by examining the referenced files.
 
     Args:
         m3u_path: Path to the M3U file
         track_id_map: Optional mapping of track_ids to file paths for optimization
 
     Returns:
-        Set of track IDs found in the referenced MP3 files
+        Set of track IDs found in the referenced files
     """
     track_ids = set()
     reversed_map = None
@@ -125,22 +125,40 @@ def get_m3u_track_ids(m3u_path: str, track_id_map: Optional[Dict[str, str]] = No
                 if line.startswith('#') or not line.strip():
                     continue
 
-                # Get the MP3 file path and normalize it
+                # Get the file path and normalize it
                 file_path = os.path.normpath(line.strip())
 
                 # Use reversed map for quick lookup if available
                 if reversed_map is not None:
                     if file_path in reversed_map:
                         track_ids.add(reversed_map[file_path])
-                elif os.path.exists(file_path) and file_path.lower().endswith('.mp3'):
-                    # Fall back to reading ID3 tags if needed
-                    try:
-                        tags = ID3(file_path)
-                        if 'TXXX:TRACKID' in tags:
-                            track_id = tags['TXXX:TRACKID'].text[0]
-                            track_ids.add(track_id)
-                    except Exception:
-                        pass
+                elif os.path.exists(file_path):
+                    file_ext = os.path.splitext(file_path.lower())[1]
+                    if file_ext == '.mp3':
+                        # For MP3 files, read ID3 tags
+                        try:
+                            tags = ID3(file_path)
+                            if 'TXXX:TRACKID' in tags:
+                                track_id = tags['TXXX:TRACKID'].text[0]
+                                track_ids.add(track_id)
+                        except Exception:
+                            pass
+                    elif file_ext in ['.wav', '.aiff']:
+                        # For WAV/AIFF files, try to find a matching database track
+                        with UnitOfWork() as uow:
+                            local_tracks = [t for t in uow.track_repository.get_all() if
+                                            t.track_id.startswith('local_')]
+
+                            # Try to find a match
+                            filename = os.path.basename(file_path)
+                            filename_no_ext = os.path.splitext(filename)[0]
+
+                            for track in local_tracks:
+                                # Check if the filename matches the track's title or artist-title
+                                if (filename_no_ext.lower() == track.title.lower() or
+                                        filename_no_ext.lower() == f"{track.artists} - {track.title}".lower()):
+                                    track_ids.add(track.track_id)
+                                    break
     except Exception as e:
         m3u_logger.error(f"Error reading M3U file {m3u_path}: {e}")
 
