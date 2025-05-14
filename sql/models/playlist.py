@@ -7,7 +7,7 @@ class Playlist:
     Contains business logic and relationships related to playlists.
     """
 
-    def __init__(self, playlist_id: str, name: str):
+    def __init__(self, playlist_id: str, name: str, snapshot_id: str = None):
         """
         Initialize a new Playlist instance.
 
@@ -17,7 +17,8 @@ class Playlist:
         """
         self.playlist_id = playlist_id
         self.name = name
-        self.tracks = []  # List of Track objects in this playlist
+        self.snapshot_id = snapshot_id
+        self.tracks = []
 
     def add_track(self, track) -> None:
         """
@@ -28,7 +29,7 @@ class Playlist:
         """
         if track not in self.tracks:
             self.tracks.append(track)
-            # Ensure bi-directional relationship
+            # Ensure bidirectional relationship
             track.add_to_playlist(self)
 
     def remove_track(self, track) -> bool:
