@@ -24,6 +24,7 @@ from drivers.spotify_client import authenticate_spotify, get_playlist_track_ids,
 from helpers.file_helper import embed_track_id
 from helpers.sync_helper import analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations, \
     sync_playlists_incremental, sync_master_tracks_incremental, sync_track_playlist_associations
+from m3u_to_rekordbox import generate_rekordbox_xml_from_m3us
 from sql.core.unit_of_work import UnitOfWork
 from helpers.m3u_helper import build_track_id_mapping, generate_m3u_playlist, find_local_file_path_with_extensions, \
     get_m3u_track_ids
@@ -833,6 +834,42 @@ def api_generate_m3u():
     except Exception as e:
         error_str = traceback.format_exc()
         print(f"Error analyzing/generating M3U playlists: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@app.route('/api/generate-rekordbox-xml', methods=['POST'])
+def api_generate_rekordbox_xml():
+    playlists_dir = request.json.get('playlistsDir')
+    output_xml_path = request.json.get('rekordboxXmlPath')
+
+    if not playlists_dir:
+        return jsonify({
+            "success": False,
+            "message": "Playlists directory not specified"
+        }), 400
+
+    if not output_xml_path:
+        return jsonify({
+            "success": False,
+            "message": "Output XML path not specified"
+        }), 400
+
+    try:
+        total_tracks, total_playlists = generate_rekordbox_xml_from_m3us(playlists_dir, output_xml_path)
+
+        return jsonify({
+            "success": True,
+            "message": f"Successfully generated rekordbox XML with {total_tracks} tracks and {total_playlists} playlists"
+        })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error generating rekordbox XML: {e}")
         print(error_str)
         return jsonify({
             "success": False,
