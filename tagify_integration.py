@@ -846,6 +846,8 @@ def api_generate_m3u():
 def api_generate_rekordbox_xml():
     playlists_dir = request.json.get('playlistsDir')
     output_xml_path = request.json.get('rekordboxXmlPath')
+    rating_data = request.json.get('ratingData', {})
+    master_tracks_dir = request.json.get('masterTracksDir')
 
     if not playlists_dir:
         return jsonify({
@@ -860,7 +862,8 @@ def api_generate_rekordbox_xml():
         }), 400
 
     try:
-        total_tracks, total_playlists = generate_rekordbox_xml_from_m3us(playlists_dir, output_xml_path)
+        total_tracks, total_playlists = generate_rekordbox_xml_from_m3us(playlists_dir, output_xml_path,
+                                                                         master_tracks_dir, rating_data)
 
         return jsonify({
             "success": True,
