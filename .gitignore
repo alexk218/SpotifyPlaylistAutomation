@@ -5,3 +5,4 @@ exclusion_config.json
 playlists_markdown/
 txtfiles/
 logs/
+cache/
