@@ -285,9 +285,6 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                                 print(f"DEBUG: Partial matches found: {partial_matches[:2]}")
                         processed_tracks += 1
 
-                    # Clean up file path - ensure consistent forward slashes
-                    file_path = file_path.replace('\\', '/')
-
                     # Ensure each track has a unique ID based on its path
                     if file_path not in all_tracks:
                         artist = "Unknown"
@@ -360,31 +357,101 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
         track_elem.set("PlayCount", "0")
         track_elem.set("Rating", "0")
 
-
-
         # Apply ratings and energy if available
         if rating_data and track_data.get('embedded_track_id'):
             embedded_id = track_data['embedded_track_id']
 
-            # Create the Spotify URI format that matches your rating data
+            # Create the primary Spotify URI format
             spotify_uri = f"spotify:track:{embedded_id}"
 
-            # Debug output
+            # Debug output for troubleshooting
             debug_track_id_match(embedded_id, rating_data.keys(), file_path, track_data['title'])
 
             found_rating = False
             rating_entry = None
 
-            # Check if the spotify URI format is in rating_data
+            # First attempt: Direct match with spotify URI format
             if spotify_uri in rating_data:
                 rating_entry = rating_data[spotify_uri]
                 found_rating = True
                 print(f"Direct URI match found: {spotify_uri}")
 
-            # If a rating was found, apply it
+            # Second attempt: Match with just the ID
+            elif embedded_id in rating_data:
+                rating_entry = rating_data[embedded_id]
+                found_rating = True
+                print(f"Direct ID match found: {embedded_id}")
+
+            # Third attempt: Look for partial matches in keys
+            if not found_rating:
+                # Try multiple possible formats of the track ID
+                possible_formats = [
+                    spotify_uri,  # Standard format
+                    embedded_id,  # Just the ID
+                    embedded_id.lower(),  # Lowercase ID
+                    embedded_id.upper(),  # Uppercase ID
+                ]
+
+                # Check each format against all keys in rating_data
+                for format_id in possible_formats:
+                    for key in rating_data.keys():
+                        # Check both ways - format in key or key in format
+                        if format_id in key or key in format_id:
+                            rating_entry = rating_data[key]
+                            found_rating = True
+                            print(f"Partial match found: {embedded_id} matched with {key}")
+                            break
+
+                    if found_rating:
+                        break
+
+            # Fourth attempt: For local tracks, try fuzzy title matching
+            if not found_rating and embedded_id and embedded_id.startswith("local_"):
+                for spotify_uri, rating_info in rating_data.items():
+                    if spotify_uri.startswith("spotify:local:"):
+                        parts = spotify_uri.split(":")
+                        if len(parts) >= 5:
+                            import urllib.parse
+                            try:
+                                encoded_title = parts[4] if len(parts) > 4 else ""
+                                decoded_title = urllib.parse.unquote_plus(encoded_title)
+
+                                # Remove file extension from track_data title if present
+                                track_title = track_data['title']
+                                if track_title.lower().endswith('.mp3') or track_title.lower().endswith(
+                                        '.wav') or track_title.lower().endswith('.aiff'):
+                                    track_title = os.path.splitext(track_title)[0]
+
+                                # Normalize both strings for comparison (remove non-alphanumeric chars)
+                                decoded_normalized = ''.join(
+                                    c.lower() for c in decoded_title if c.isalnum() or c.isspace())
+                                track_normalized = ''.join(c.lower() for c in track_title if c.isalnum() or c.isspace())
+
+                                # Print debugging info
+                                print(f"Comparing local title: '{decoded_normalized}' with track: '{track_normalized}'")
+
+                                # Check for similarity allowing for some fuzziness
+                                similarity = 0
+                                if decoded_normalized and track_normalized:
+                                    # Use longest common substring as a simple similarity measure
+                                    similarity = len(
+                                        os.path.commonprefix([decoded_normalized, track_normalized])) / max(
+                                        len(decoded_normalized), len(track_normalized))
+
+                                # Simple fuzzy matching - use multiple strategies
+                                if similarity > 0.7 or decoded_normalized in track_normalized or track_normalized in decoded_normalized:
+                                    rating_entry = rating_info
+                                    found_rating = True
+                                    print(f"Local file match found for {track_title} (similarity: {similarity:.2f})")
+                                    break
+                            except Exception as e:
+                                print(f"Error in local file matching: {e}")
+                                continue
+
+            # Apply the rating and energy if we found a match
             if found_rating and rating_entry:
-                # Apply the rating, with error handling for each step
                 try:
+                    # Apply star rating if present
                     if 'rating' in rating_entry and rating_entry['rating']:
                         try:
                             raw_rating = float(rating_entry['rating'])
@@ -400,10 +467,11 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                         except Exception as e:
                             print(f"Error applying rating: {e}")
 
-                    # Add energy as a comment if present
+                    # Apply energy as a comment if present
                     if 'energy' in rating_entry and rating_entry['energy']:
                         try:
                             energy = rating_entry['energy']
+                            # Use consistent format "E:X" for energy comments
                             track_elem.set("Comments", f"E:{energy}")
 
                             print(f"Applied energy {energy} for track {track_data['title']}")
@@ -411,47 +479,6 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                             print(f"Error applying energy: {e}")
                 except Exception as e:
                     print(f"Unexpected error applying ratings: {e}")
-
-            if not found_rating:
-                # Try a fuzzy match approach for non-matched tracks
-                for spotify_uri, rating_info in rating_data.items():
-                    # For local files with encoded names in URI
-                    if spotify_uri.startswith("spotify:local:"):
-                        parts = spotify_uri.split(":")
-                        if len(parts) >= 5:
-                            # Try to decode the file name part
-                            import urllib.parse
-                            try:
-                                encoded_title = parts[4] if len(parts) > 4 else ""
-                                decoded_title = urllib.parse.unquote(encoded_title)
-
-                                # Simple fuzzy matching - check if the title is similar
-                                if (decoded_title.lower() in track_data['title'].lower() or
-                                        track_data['title'].lower() in decoded_title.lower()):
-
-                                    # Apply ratings
-                                    if 'rating' in rating_info and rating_info['rating']:
-                                        raw_rating = float(rating_info['rating'])
-                                        floored_rating = math.floor(raw_rating)
-                                        rating_value = min(floored_rating * 51, 255)
-                                        track_elem.set("Rating", str(int(rating_value)))
-                                        tracks_with_ratings += 1
-
-                                        print(
-                                            f"Applied fuzzy-matched rating {raw_rating} -> {rating_value} for local track {track_data['title']}")
-
-                                    # Apply energy
-                                    if 'energy' in rating_info and rating_info['energy']:
-                                        energy = rating_info['energy']
-                                        track_elem.set("Comments", f"Energy: {energy}/10")
-
-                                        print(
-                                            f"Applied fuzzy-matched energy {energy} for local track {track_data['title']}")
-
-                                    found_rating = True
-                                    break
-                            except:
-                                continue
 
         # Set file kind
         file_ext = os.path.splitext(file_path)[1].lower()
