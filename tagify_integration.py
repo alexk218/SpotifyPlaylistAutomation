@@ -869,11 +869,11 @@ def api_generate_rekordbox_xml():
 
     try:
         generator = RekordboxXmlGenerator(playlists_dir, master_tracks_dir, rating_data)
-        total_tracks, total_playlists = generator.generate(output_xml_path)
+        total_tracks, total_playlists, total_rated = generator.generate(output_xml_path)
 
         return jsonify({
             "success": True,
-            "message": f"Successfully generated rekordbox XML with {total_tracks} tracks and {total_playlists} playlists"
+            "message": f"Successfully generated rekordbox XML with {total_tracks} tracks and {total_playlists} playlists. Applied ratings to {total_rated} tracks."
         })
 
     except Exception as e:
@@ -1063,7 +1063,7 @@ def api_analyze_master_sync():
 
 
 @app.route('/api/analyze-playlists', methods=['POST'])
-def api_analyze_playlists():
+def api_analyze_playlists_changes():
     try:
         force_refresh = request.json.get('force_refresh', False)
 
@@ -1654,7 +1654,7 @@ def api_validate_track_metadata():
 
 
 @app.route('/api/validate-playlists', methods=['POST'])
-def api_validate_playlists():
+def api_validate_playlists_m3u():
     try:
         # Get parameters from request
         master_tracks_dir = request.json.get('masterTracksDir') or MASTER_TRACKS_DIRECTORY_SSD
@@ -1716,7 +1716,7 @@ def api_validate_playlists():
             # Check if this playlist has an M3U file (in any subdirectory)
             safe_name = sanitize_filename(playlist_name)
             m3u_path = m3u_files.get(safe_name)
-            has_m3u = m3u_path is not None
+            playlist_has_m3u_file = m3u_path is not None
 
             # Get all track-playlist associations from the database
             with UnitOfWork() as uow:
@@ -1774,7 +1774,7 @@ def api_validate_playlists():
 
             # Process M3U file if it exists
             m3u_track_ids = set()
-            if has_m3u:
+            if playlist_has_m3u_file:
                 # Get tracks in the M3U file - this will include virtual IDs for WAV/AIFF files
                 # We will store virtual IDs separately to avoid double counting
                 virtual_track_ids = set()
@@ -1873,10 +1873,10 @@ def api_validate_playlists():
             needs_update = (len(m3u_track_ids) != len(all_track_ids_in_playlist_db) or  # Total count mismatch
                             len(missing_tracks) > 0 or  # Missing tracks that should be included
                             len(unexpected_tracks) > 0 or  # Unexpected tracks that shouldn't be there
-                            not has_m3u)  # Missing M3U file
+                            not playlist_has_m3u_file)  # Missing M3U file
 
             m3u_location = ""
-            if has_m3u and m3u_path:
+            if playlist_has_m3u_file and m3u_path:
                 rel_path = os.path.relpath(os.path.dirname(m3u_path), playlists_dir)
                 if rel_path == ".":
                     m3u_location = "root"
@@ -1886,7 +1886,7 @@ def api_validate_playlists():
             playlist_analysis.append({
                 'name': playlist_name,
                 'id': playlist_id,
-                'has_m3u': has_m3u,
+                'has_m3u': playlist_has_m3u_file,
                 'needs_update': needs_update,
                 'total_associations': len(all_track_ids_in_playlist_db),
                 'tracks_with_local_files': len(local_track_files),

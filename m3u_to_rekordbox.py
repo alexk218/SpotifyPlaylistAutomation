@@ -62,7 +62,7 @@ class RekordboxXmlGenerator:
             output_xml_path: Path to write the output XML file
 
         Returns:
-            Tuple of (total_tracks, total_playlists)
+            Tuple of (total_tracks, total_playlists, total_rated)
         """
         # Validate rating data if provided
         if self.rating_data:
@@ -118,7 +118,7 @@ class RekordboxXmlGenerator:
         print(f"Tracks with ratings applied: {self.tracks_with_ratings}")
         print(f"All playlists are placed under the 'm3u' root folder")
 
-        return len(self.all_tracks), len(self.created_playlists)
+        return len(self.all_tracks), len(self.created_playlists), self.tracks_with_ratings
 
     def _validate_rating_data(self):
         """
