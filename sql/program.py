@@ -23,7 +23,7 @@ UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
 M3U_PLAYLISTS_DIRECTORY_SSD = os.getenv("M3U_PLAYLISTS_DIRECTORY_SSD")
 M3U_PLAYLISTS_DIRECTORY = os.getenv("M3U_PLAYLISTS_DIRECTORY")
 
-program_logger = setup_logger('program', 'sql/program.log')
+program_logger = setup_logger('program', 'sql', 'program.log')
 
 
 def main():

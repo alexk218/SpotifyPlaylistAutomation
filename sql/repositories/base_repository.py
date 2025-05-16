@@ -24,7 +24,7 @@ class BaseRepository(Generic[T]):
         self.model_class = model_class
         self.table_name = ""  # Override in subclasses
         self.id_column = ""  # Override in subclasses
-        self.db_logger = setup_logger('repository', 'sql/repository.log')
+        self.db_logger = setup_logger('repository', 'sql', 'repository.log')
 
     def execute_query(self, query: str, params: Optional[Tuple] = None) -> pyodbc.Cursor:
         """

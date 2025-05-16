@@ -7,7 +7,7 @@ from mutagen.id3 import ID3, ID3NoHeaderError
 
 from utils.logger import setup_logger
 
-db_logger = setup_logger('db_logger', 'sql/db.log')
+db_logger = setup_logger('db_logger', 'sql', 'track_helper.log')
 
 
 # Compare with stored data and find new tracks

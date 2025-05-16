@@ -16,7 +16,7 @@ from sql.helpers.db_helper import fetch_all_tracks_db
 from sql.helpers.db_helper import get_track_added_date
 from utils.logger import setup_logger
 
-db_logger = setup_logger('db_logger', 'sql/db.log')
+db_logger = setup_logger('db_logger', 'sql', 'file_helper.log')
 
 current_file = Path(__file__).resolve()
 project_root = current_file.parent.parent

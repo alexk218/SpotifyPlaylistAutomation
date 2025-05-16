@@ -14,7 +14,7 @@ from sql.models.playlist import Playlist
 from sql.models.track import Track
 from utils.logger import setup_logger
 
-sync_logger = setup_logger('sync_helper', 'logs/sync.log')
+sync_logger = setup_logger('sync_helper', 'sql', 'sync.log')
 
 
 def get_db_playlists() -> Dict[str, Playlist]:
@@ -1254,9 +1254,6 @@ def sync_track_playlist_associations_for_single_track(uow, track_id, playlist_na
     Returns:
         Dictionary with counts of added, removed, and unchanged associations
     """
-    # For logging and troubleshooting
-    sync_logger = setup_logger('sync_helper', 'logs/sync.log')
-
     # Normalize playlist names by stripping whitespace
     normalized_playlist_names = [name.strip() if name else name for name in playlist_names]
 

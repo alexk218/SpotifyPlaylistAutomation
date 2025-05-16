@@ -10,7 +10,7 @@ load_dotenv()
 SERVER_CONNECTION_STRING = os.getenv('SERVER_CONNECTION_STRING')
 DATABASE_NAME = os.getenv('DATABASE_NAME')
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
-spotify_logger = setup_logger('spotify_logger', 'sql/spotify.log')
+spotify_logger = setup_logger('spotify_logger', 'sql', 'test_connection.log')
 
 
 def get_db_connection():
@@ -98,6 +98,7 @@ def fetch_playlists(spotify_client, total_limit=500, debug_limit=None):
         print(f"Unexpected error: {e}")
         spotify_logger.error(f"Unexpected error: {e}")
         return []
+
 
 def main():
     print(os.getenv("SPOTIPY_DEBUG"))

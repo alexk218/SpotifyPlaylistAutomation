@@ -16,7 +16,7 @@ load_dotenv()
 
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 
-db_logger = setup_logger('db_helper', 'sql/db.log')
+db_logger = setup_logger('db_helper', 'sql', 'db_helper.log')
 
 
 # Used by the application to clear all database tables

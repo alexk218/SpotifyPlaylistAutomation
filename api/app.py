@@ -34,7 +34,7 @@ UNSORTED_PLAYLIST_ID = os.getenv("UNSORTED_PLAYLIST_ID")
 M3U_PLAYLISTS_DIRECTORY = os.getenv("M3U_PLAYLISTS_DIRECTORY_SSD")
 
 # Setup logging
-api_logger = setup_logger('api', 'logs/api.log')
+api_logger = setup_logger('api', 'api', 'api.log')
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes

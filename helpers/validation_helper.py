@@ -11,8 +11,8 @@ from drivers.spotify_client import (
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
-validation_logger = setup_logger('validation_helper', 'logs/validation.log')
-db_logger = setup_logger('db_logger', 'sql/db.log')
+validation_logger = setup_logger('validation_helper', 'sql', 'validation_helper.log')
+db_logger = setup_logger('db_logger', 'sql', 'db_validation_helper.log')
 
 # Get the path to the current file
 current_file = Path(__file__).resolve()

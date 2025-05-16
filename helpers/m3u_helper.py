@@ -11,7 +11,7 @@ from mutagen.aiff import AIFF
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
-m3u_logger = setup_logger('m3u_helper', 'logs/m3u_validation/m3u.log')
+m3u_logger = setup_logger('m3u_helper', 'm3u_validation' ,'m3u.log')
 
 # Get the path to the current file
 current_file = Path(__file__).resolve()

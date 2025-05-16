@@ -36,7 +36,7 @@ class DatabaseConnection:
             # Configuration
             self.server = os.getenv('SERVER_CONNECTION_STRING')
             self.database = os.getenv('DATABASE_NAME')
-            self.db_logger = setup_logger('db_connection', 'sql/db_connection.log')
+            self.db_logger = setup_logger('db_connection', 'sql', 'db_connection.log')
 
             # Connection pool settings
             self._max_pool_size = 10

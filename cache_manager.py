@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple
 
 from utils.logger import setup_logger
 
-cache_logger = setup_logger('cache_manager', 'cache/spotify_cache.log')
+cache_logger = setup_logger('cache_manager', 'cache', 'spotify_cache.log')
 
 
 class SpotifyCache:

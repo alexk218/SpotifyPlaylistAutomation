@@ -23,7 +23,7 @@ class UnitOfWork:
         self.track_repository = None
         self.playlist_repository = None
         self.track_playlist_repository = None
-        self.db_logger = setup_logger('unit_of_work', 'sql/unit_of_work.log')
+        self.db_logger = setup_logger('unit_of_work', 'sql', 'unit_of_work.log')
         self._repositories_initialized = False
 
     def __enter__(self):

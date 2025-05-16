@@ -5,7 +5,7 @@ from utils.logger import setup_logger
 
 MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 
-db_logger = setup_logger('db_logger', 'sql/db.log')
+db_logger = setup_logger('db_logger', 'sql', 'playlist_helper.log')
 
 current_file = Path(__file__).resolve()
 project_root = current_file.parent.parent

@@ -10,7 +10,7 @@ from helpers.m3u_helper import (
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
-organization_logger = setup_logger('organization_helper', 'logs/organization.log')
+organization_logger = setup_logger('organization_helper', 'organization.log')
 
 # Get the path to the current file
 current_file = Path(__file__).resolve()

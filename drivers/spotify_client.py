@@ -15,7 +15,7 @@ from cache_manager import spotify_cache
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
-spotify_logger = setup_logger('spotify_client', 'drivers/spotify.log')
+spotify_logger = setup_logger('spotify_client', 'drivers', 'spotify.log')
 
 # Default since date - September 12, 2021. Will not fetch Liked Songs before this date.
 DEFAULT_SINCE_DATE = datetime(2021, 9, 12)

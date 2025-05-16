@@ -27,7 +27,7 @@ from helpers.deduplication_helper import (
 from utils.logger import setup_logger
 
 # Set up logging
-dedup_logger = setup_logger('unchartify_deduplicator', 'logs/unchartify_dedup.log')
+dedup_logger = setup_logger('unchartify_deduplicator', 'unchartify_dedup.log')
 
 # Load environment variables
 load_dotenv()
