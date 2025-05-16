@@ -24,7 +24,7 @@ from drivers.spotify_client import authenticate_spotify, get_playlist_track_ids,
 from helpers.file_helper import embed_track_id
 from helpers.sync_helper import analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations, \
     sync_playlists_incremental, sync_master_tracks_incremental, sync_track_playlist_associations
-from m3u_to_rekordbox import generate_rekordbox_xml_from_m3us
+from m3u_to_rekordbox import RekordboxXmlGenerator
 from sql.core.unit_of_work import UnitOfWork
 from helpers.m3u_helper import build_track_id_mapping, generate_m3u_playlist, find_local_file_path_with_extensions, \
     get_m3u_track_ids
@@ -868,8 +868,8 @@ def api_generate_rekordbox_xml():
         }), 400
 
     try:
-        total_tracks, total_playlists = generate_rekordbox_xml_from_m3us(playlists_dir, output_xml_path,
-                                                                         master_tracks_dir, rating_data)
+        generator = RekordboxXmlGenerator(playlists_dir, master_tracks_dir, rating_data)
+        total_tracks, total_playlists = generator.generate(output_xml_path)
 
         return jsonify({
             "success": True,
