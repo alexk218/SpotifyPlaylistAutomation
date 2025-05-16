@@ -1,11 +1,14 @@
 import datetime
 import hashlib
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
 import math
 from pathlib import Path
 from mutagen.id3 import ID3, ID3NoHeaderError
+
+from sql.core.unit_of_work import UnitOfWork
 
 
 def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tracks_dir, rating_data=None):
@@ -75,32 +78,12 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
         print(f"Received rating data for {len(rating_data)} tracks")
         validation_results = validate_rating_data(rating_data)
 
+        # Track which rating keys failed to be applied
+        rating_keys_with_success = set()
+        rating_keys_with_failure = {}
+
     else:
         print("No rating data provided")
-
-    def debug_track_id_match(embed_id, rating_keys, file_path, title):
-        """Helper function to debug track ID matching"""
-        print(f"\nDEBUG TRACK MATCHING for file: {title}")
-        print(f"  Embedded ID: {embed_id}")
-        print(f"  File path: {file_path}")
-
-        # Show the first few rating keys for comparison
-        sample_keys = list(rating_keys)[:5]
-        print(f"  Rating keys sample: {sample_keys}")
-
-        # Check if the embedded ID is directly in any rating key
-        direct_matches = [k for k in rating_keys if embed_id in k]
-        print(f"  Direct matches: {direct_matches}")
-
-        # Try different formats of the embedded ID
-        test_formats = [
-            f"spotify:track:{embed_id}",
-            embed_id,
-            f"spotify:local:::{embed_id}"
-        ]
-
-        for fmt in test_formats:
-            print(f"  Testing format: {fmt} -> {'✓ MATCH' if fmt in rating_keys else '✗ NO MATCH'}")
 
     def extract_track_id_from_file(file_path):
         """Extract the TrackId from an MP3 file's metadata."""
@@ -148,10 +131,6 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                 # Normalize the file path to use forward slashes for consistency
                 normalized_file_path = file_path.replace('\\', '/')
 
-                # Print a few examples to debug
-                if total_files <= 5:
-                    print(f"DEBUG: Processing file: {normalized_file_path}")
-
                 # Extract track ID if present
                 track_id = extract_track_id_from_file(file_path)
                 if track_id:
@@ -159,17 +138,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                     file_to_track_id_map[normalized_file_path] = track_id
                     track_id_to_file_map[track_id] = normalized_file_path
 
-                    # Print a few examples of successful mappings
-                    if files_with_id <= 5:
-                        print(f"DEBUG: Added to map: {normalized_file_path} -> {track_id}")
-
     print(f"Found {files_with_id} files with embedded TrackIds out of {total_files} total MP3 files")
-
-    print("\nSample of embedded track IDs:")
-    count = 0
-    for track_id in list(track_id_to_file_map.keys())[:5]:
-        print(f"  {track_id}")
-        count += 1
 
     # Dictionary to store all M3U files with their relative folder paths
     m3u_files_with_paths = {}
@@ -248,7 +217,6 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
         lines = m3u_content.strip().split('\n')
         i = 0
 
-        print(f"\nDEBUG: Processing playlist: {playlist_name}")
         processed_tracks = 0
 
         while i < len(lines):
@@ -273,18 +241,6 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                     # Clean up file path - ensure consistent forward slashes
                     file_path = file_path.replace('\\', '/')
 
-                    # Debug first few tracks in each playlist
-                    if processed_tracks < 3:
-                        print(f"DEBUG: M3U file path: {file_path}")
-                        print(f"DEBUG: In map? {file_path in file_to_track_id_map}")
-                        if file_path not in file_to_track_id_map:
-                            # Try to find partial matches
-                            partial_matches = [k for k in file_to_track_id_map.keys() if
-                                               file_path in k or k in file_path]
-                            if partial_matches:
-                                print(f"DEBUG: Partial matches found: {partial_matches[:2]}")
-                        processed_tracks += 1
-
                     # Ensure each track has a unique ID based on its path
                     if file_path not in all_tracks:
                         artist = "Unknown"
@@ -302,22 +258,6 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
 
                         # Try to get the embedded track ID if available
                         embedded_track_id = file_to_track_id_map.get(file_path)
-
-                        # Debug track ID lookup
-                        if processed_tracks < 3:
-                            print(f"DEBUG: Looking up Track ID for: {file_path}")
-                            print(f"DEBUG: Embedded Track ID found: {embedded_track_id}")
-
-                            # If not found, try to find using the basename as a fallback
-                            if not embedded_track_id:
-                                base_name = os.path.basename(file_path)
-                                possible_matches = []
-                                for map_path, map_id in file_to_track_id_map.items():
-                                    if os.path.basename(map_path) == base_name:
-                                        possible_matches.append((map_path, map_id))
-
-                                if possible_matches:
-                                    print(f"DEBUG: Found by basename: {possible_matches[0]}")
 
                         all_tracks[file_path] = {
                             'id': track_id_counter,
@@ -374,12 +314,14 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
             if spotify_uri in rating_data:
                 rating_entry = rating_data[spotify_uri]
                 found_rating = True
+                matched_rating_key = spotify_uri
                 print(f"Direct URI match found: {spotify_uri}")
 
             # Second attempt: Match with just the ID
             elif embedded_id in rating_data:
                 rating_entry = rating_data[embedded_id]
                 found_rating = True
+                matched_rating_key = spotify_uri
                 print(f"Direct ID match found: {embedded_id}")
 
             # Third attempt: Look for partial matches in keys
@@ -399,6 +341,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                         if format_id in key or key in format_id:
                             rating_entry = rating_data[key]
                             found_rating = True
+                            matched_rating_key = spotify_uri
                             print(f"Partial match found: {embedded_id} matched with {key}")
                             break
 
@@ -442,6 +385,7 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                                 if similarity > 0.7 or decoded_normalized in track_normalized or track_normalized in decoded_normalized:
                                     rating_entry = rating_info
                                     found_rating = True
+                                    matched_rating_key = spotify_uri
                                     print(f"Local file match found for {track_title} (similarity: {similarity:.2f})")
                                     break
                             except Exception as e:
@@ -464,8 +408,16 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
 
                             print(
                                 f"Applied rating {raw_rating} -> {floored_rating} -> {rating_value} for track {track_data['title']}")
+
+                            # Mark this rating key as successfully applied
+                            rating_keys_with_success.add(matched_rating_key)
                         except Exception as e:
                             print(f"Error applying rating: {e}")
+                            # Track the failure
+                            rating_keys_with_failure[matched_rating_key] = {
+                                'title': track_data['title'],
+                                'reason': f"Error applying rating: {str(e)}"
+                            }
 
                     # Apply energy as a comment if present
                     if 'energy' in rating_entry and rating_entry['energy']:
@@ -473,12 +425,29 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
                             energy = rating_entry['energy']
                             # Use consistent format "E:X" for energy comments
                             track_elem.set("Comments", f"E:{energy}")
-
                             print(f"Applied energy {energy} for track {track_data['title']}")
                         except Exception as e:
                             print(f"Error applying energy: {e}")
+                            # Only track as failure if we didn't already apply a rating
+                            if matched_rating_key not in rating_keys_with_success:
+                                rating_keys_with_failure[matched_rating_key] = {
+                                    'title': track_data['title'],
+                                    'reason': f"Error applying energy: {str(e)}"
+                                }
                 except Exception as e:
                     print(f"Unexpected error applying ratings: {e}")
+                    rating_keys_with_failure[matched_rating_key] = {
+                        'title': track_data['title'],
+                        'reason': f"Unexpected error: {str(e)}"
+                    }
+
+            else:
+                # Track failed match
+                failed_matches.append({
+                    'id': embedded_id,
+                    'title': track_data['title'],
+                    'error': "No match found in rating data"
+                })
 
         # Set file kind
         file_ext = os.path.splitext(file_path)[1].lower()
@@ -613,6 +582,98 @@ def generate_rekordbox_xml_from_m3us(m3u_root_folder, output_xml_path, master_tr
         tree.write(f, encoding='UTF-8')
 
     if 'validation_results' in locals():
+        # Find which rating keys never got applied
+        unmatched_rating_keys = set(rating_data.keys()) - rating_keys_with_success
+
+        # Create list of tracks from rating_data that never got matched to a file
+        tracks_with_ratings_not_applied = []
+        for key in unmatched_rating_keys:
+            track_info = {}
+            track_id = None
+
+            # Extract the track ID from the key
+            if key.startswith("spotify:track:"):
+                track_id = key.split("spotify:track:")[1]
+                track_info = {'id': track_id, 'key': key}
+            elif key.startswith("spotify:local:"):
+                # Local track format - keep original ID
+                track_id = key
+                track_info = {'id': key, 'key': key}
+            else:
+                # Assume this is already a track ID
+                track_id = key
+                track_info = {'id': key, 'key': key}
+
+            # Try to get track title from database
+            try:
+                with UnitOfWork() as uow:
+                    track = uow.track_repository.get_by_id(track_id)
+                    if track:
+                        track_info['title'] = track.title
+                        track_info['artists'] = track.artists
+                        track_info['db_match'] = True
+                    else:
+                        track_info['db_match'] = False
+                        track_info['title'] = "Unknown (Not found in database)"
+            except Exception as e:
+                print(f"Error fetching track {track_id} from database: {e}")
+                track_info['db_match'] = False
+                track_info['title'] = f"Unknown (DB error: {str(e)})"
+
+            # Get rating and energy from the rating data
+            entry = rating_data.get(key, {})
+            if 'rating' in entry:
+                track_info['rating'] = entry['rating']
+            if 'energy' in entry:
+                track_info['energy'] = entry['energy']
+
+            # Set reason for failure
+            if key not in rating_keys_with_failure:
+                track_info['reason'] = "No matching file found"
+            else:
+                # This key had a specific error during application
+                failure_info = rating_keys_with_failure[key]
+                track_info['file_title'] = failure_info.get('title', 'Unknown')
+                track_info['reason'] = failure_info.get('reason', 'Unknown error')
+
+            tracks_with_ratings_not_applied.append(track_info)
+
+        print("\n===== TRACKS WITH RATINGS NOT APPLIED =====")
+        print(f"Total tracks with ratings: {len(rating_data)}")
+        print(f"Successfully applied ratings to: {len(rating_keys_with_success)} tracks")
+        print(f"Failed to apply ratings to: {len(tracks_with_ratings_not_applied)} tracks")
+
+        if tracks_with_ratings_not_applied:
+            print("\nDETAILS OF TRACKS WITH UNAPPLIED RATINGS:")
+            print("========================================")
+            for i, track in enumerate(tracks_with_ratings_not_applied, 1):
+                rating_str = f"Rating: {track.get('rating', 'N/A')}" if 'rating' in track else ""
+                artist_str = f"{track.get('artists', '')}" if 'artists' in track else ""
+                title_str = f"{track.get('title', 'Unknown')}"
+                db_status = "In DB" if track.get('db_match', False) else "Not in DB"
+
+                print(
+                    f"{i}. {track.get('id', 'Unknown ID')} - {artist_str} - {title_str} - {rating_str} - {db_status} - Reason: {track.get('reason', 'Unknown')}")
+
+            tracks_with_ratings_not_applied.sort(key=lambda x: not x.get('db_match', False))
+
+            # Save detailed report to a file
+            unapplied_ratings_file = os.path.join(os.path.dirname(output_xml_path), "unapplied_ratings.json")
+            try:
+                with open(unapplied_ratings_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'total_rating_data': len(rating_data),
+                        'successful_matches': len(rating_keys_with_success),
+                        'failed_matches': len(tracks_with_ratings_not_applied),
+                        'tracks_with_ratings_not_applied': tracks_with_ratings_not_applied
+                    }, f, indent=2)
+                print(f"\nSaved detailed report of unapplied ratings to: {unapplied_ratings_file}")
+            except Exception as e:
+                print(f"Error saving unapplied ratings report: {e}")
+
+        print("=============================================\n")
+
         print("\n===== RATING APPLICATION RESULTS =====")
         print(f"Spotify tracks with possible ratings: {validation_results['spotify_with_ratings']}")
         print(f"Local tracks with possible ratings: {validation_results['local_with_ratings']}")
