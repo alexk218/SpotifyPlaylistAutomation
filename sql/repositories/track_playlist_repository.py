@@ -152,3 +152,22 @@ class TrackPlaylistRepository(BaseRepository):
         """
         return [(row.TrackId, row.TrackTitle, row.PlaylistCount)
                 for row in self.fetch_all(query)]
+
+    def delete_by_playlist_id(self, playlist_id: str) -> int:
+        """
+        Delete all track-playlist associations for a specific playlist.
+
+        Args:
+            playlist_id: The playlist ID
+
+        Returns:
+            Number of rows deleted
+        """
+        query = """
+            DELETE FROM TrackPlaylists
+            WHERE PlaylistId = ?
+        """
+        rows_affected = self.execute_non_query(query, (playlist_id,))
+
+        self.db_logger.info(f"Deleted {rows_affected} track associations for playlist {playlist_id}")
+        return rows_affected

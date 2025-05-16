@@ -43,6 +43,17 @@ class PlaylistRepository(BaseRepository[Playlist]):
             self.db_logger.warning(f"Playlist not found for update: {playlist.playlist_id}")
             return False
 
+    def delete(self, playlist_id: str) -> bool:
+        # Note: Associations should be deleted separately using track_playlist_repository.delete_by_playlist_id
+        # before calling this method to ensure proper order of operations
+
+        result = self.delete_by_id(playlist_id)
+        if result:
+            self.db_logger.info(f"Deleted playlist with ID: {playlist_id}")
+        else:
+            self.db_logger.warning(f"Playlist not found for deletion: {playlist_id}")
+        return result
+
     def get_by_id(self, playlist_id: str) -> Optional[Playlist]:
         return super().get_by_id(playlist_id)
 

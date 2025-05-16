@@ -861,6 +861,12 @@ def api_generate_rekordbox_xml():
             "message": "Output XML path not specified"
         }), 400
 
+    if not master_tracks_dir:
+        return jsonify({
+            "success": False,
+            "message": "Master tracks directory not specified"
+        }), 400
+
     try:
         total_tracks, total_playlists = generate_rekordbox_xml_from_m3us(playlists_dir, output_xml_path,
                                                                          master_tracks_dir, rating_data)
@@ -1062,23 +1068,25 @@ def api_analyze_playlists():
         force_refresh = request.json.get('force_refresh', False)
 
         # Get analysis without executing
-        added_count, updated_count, unchanged_count, changes_details = analyze_playlists_changes(
+        added_count, updated_count, unchanged_count, deleted_count, changes_details = analyze_playlists_changes(
             force_full_refresh=force_refresh
         )
 
         return jsonify({
             "success": True,
-            "message": f"Analysis complete: {added_count} to add, {updated_count} to update, {unchanged_count} unchanged",
+            "message": f"Analysis complete: {added_count} to add, {updated_count} to update, {deleted_count} to delete, {unchanged_count} unchanged",
             "stats": {
                 "added": added_count,
                 "updated": updated_count,
-                "unchanged": unchanged_count
+                "unchanged": unchanged_count,
+                "deleted": deleted_count
             },
             "details": {
                 "to_add": changes_details['to_add'],
-                "to_update": changes_details['to_update']
+                "to_update": changes_details['to_update'],
+                "to_delete": changes_details['to_delete']
             },
-            "needs_confirmation": added_count > 0 or updated_count > 0
+            "needs_confirmation": added_count > 0 or updated_count > 0 or deleted_count > 0
         })
     except Exception as e:
         error_str = traceback.format_exc()
@@ -1214,17 +1222,18 @@ def api_sync_database():
                 return redirect('/api/analyze-playlists', code=307)  # 307 preserves POST method
 
             # Otherwise, proceed with execution
-            added, updated, unchanged = sync_playlists_incremental(
+            added, updated, unchanged, deleted = sync_playlists_incremental(
                 force_full_refresh=force_refresh,
                 auto_confirm=True  # Skip confirmation prompt in the function
             )
             return jsonify({
                 "success": True,
-                "message": f"Playlists synced: {added} added, {updated} updated, {unchanged} unchanged",
+                "message": f"Playlists synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
                 "stats": {
                     "added": added,
                     "updated": updated,
-                    "unchanged": unchanged
+                    "unchanged": unchanged,
+                    "deleted": deleted
                 }
             })
 
@@ -1363,7 +1372,7 @@ def api_sync_database():
 
                 try:
                     # 1. Sync playlists first
-                    playlists_added, playlists_updated, playlists_unchanged = sync_playlists_incremental(
+                    playlists_added, playlists_updated, playlists_unchanged, playlists_deleted = sync_playlists_incremental(
                         force_full_refresh=force_refresh,
                         auto_confirm=True
                     )
@@ -1381,10 +1390,11 @@ def api_sync_database():
                         auto_confirm=True
                     )
 
-                    results['tracks'] = {
-                        'added': tracks_added,
-                        'updated': tracks_updated,
-                        'unchanged': tracks_unchanged
+                    results['playlists'] = {
+                        'added': playlists_added,
+                        'updated': playlists_updated,
+                        'unchanged': playlists_unchanged,
+                        'deleted': playlists_deleted
                     }
 
                     # 3. Sync associations
@@ -2450,4 +2460,4 @@ if __name__ == '__main__':
     if args.cache_path:
         print(f"Using cache path: {args.cache_path}")
 
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=True, use_reloader=not os.environ.get('FLASK_DEBUG') == '0')

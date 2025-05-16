@@ -51,7 +51,7 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
         auto_confirm: Whether to skip the confirmation prompt
 
     Returns:
-        Tuple of (added, updated, unchanged) counts
+        Tuple of (added, updated, unchanged, deleted) counts
     """
     sync_logger.info("Starting incremental playlist sync")
     print("Starting incremental playlist sync...")
@@ -68,7 +68,11 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
     # Track changes for analysis
     playlists_to_add = []
     playlists_to_update = []
+    playlists_to_delete = []
     unchanged_count = 0
+
+    # Create a set of playlist IDs returned from Spotify
+    spotify_playlist_ids = set(playlist_id for _, playlist_id, _ in spotify_playlists)
 
     # Analyze changes (without applying them yet)
     for playlist_data in spotify_playlists:
@@ -101,11 +105,20 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
                 'snapshot_id': snapshot_id
             })
 
+    # Find playlists to delete (in database but not in Spotify results)
+    for playlist_id, playlist in existing_playlists.items():
+        if playlist_id not in spotify_playlist_ids:
+            playlists_to_delete.append({
+                'id': playlist_id,
+                'name': playlist.name
+            })
+
     # Display summary of changes
     print("\nPLAYLIST SYNC ANALYSIS COMPLETE")
     print("==============================")
     print(f"\nPlaylists to add: {len(playlists_to_add)}")
     print(f"Playlists to update: {len(playlists_to_update)}")
+    print(f"Playlists to delete: {len(playlists_to_delete)}")
     print(f"Unchanged playlists: {unchanged_count}")
 
     # Display detailed changes
@@ -124,20 +137,28 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
         for playlist in sorted_updates:
             print(f"• {playlist['old_name']} → {playlist['name']}")
 
+    if playlists_to_delete:
+        print("\nPLAYLISTS TO DELETE:")
+        print("===================")
+        sorted_deletes = sorted(playlists_to_delete, key=lambda x: x['name'])
+        for playlist in sorted_deletes:
+            print(f"• {playlist['name']}")
+
     # Ask for confirmation if there are changes (unless auto_confirm is True)
-    if (playlists_to_add or playlists_to_update) and not auto_confirm:
+    if (playlists_to_add or playlists_to_update or playlists_to_delete) and not auto_confirm:
         confirmation = input("\nWould you like to proceed with these changes to the database? (y/n): ")
         if confirmation.lower() != 'y':
             sync_logger.info("Playlist sync cancelled by user")
             print("Sync cancelled.")
-            return 0, 0, unchanged_count
-    elif not playlists_to_add and not playlists_to_update:
+            return 0, 0, unchanged_count, 0
+    elif not playlists_to_add and not playlists_to_update and not playlists_to_delete:
         print("\nNo changes needed. Database is up to date.")
-        return 0, 0, unchanged_count
+        return 0, 0, unchanged_count, 0
 
     # If confirmed, apply the changes
     added_count = 0
     updated_count = 0
+    deleted_count = 0
 
     print("\nApplying changes to database...")
     with UnitOfWork() as uow:
@@ -165,11 +186,23 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
             updated_count += 1
             sync_logger.info(f"Updated playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
 
-    print(f"\nPlaylist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged")
-    sync_logger.info(
-        f"Playlist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged")
+        # Delete playlists that are no longer present in Spotify or match exclusion criteria
+        for playlist_data in playlists_to_delete:
+            # First delete all track associations for this playlist
+            uow.track_playlist_repository.delete_by_playlist_id(playlist_data['id'])
 
-    return added_count, updated_count, unchanged_count
+            # Then delete the playlist itself
+            uow.playlist_repository.delete(playlist_data['id'])
+            deleted_count += 1
+            sync_logger.info(f"Deleted playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
+
+    print(
+        f"\nPlaylist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged, {deleted_count} deleted")
+    sync_logger.info(
+        f"Playlist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged, {deleted_count} deleted"
+    )
+
+    return added_count, updated_count, unchanged_count, deleted_count
 
 
 def analyze_playlists_changes(force_full_refresh=False):
@@ -1338,7 +1371,7 @@ def analyze_playlists_changes(force_full_refresh=False):
         force_full_refresh: Whether to force a full refresh, ignoring existing data
 
     Returns:
-        Tuple of (added_count, updated_count, unchanged_count, changes_details)
+        Tuple of (added_count, updated_count, unchanged_count, deleted_count, changes_details)
     """
     # Get existing playlists from database
     existing_playlists = get_db_playlists() if not force_full_refresh else {}
@@ -1347,9 +1380,13 @@ def analyze_playlists_changes(force_full_refresh=False):
     spotify_client = authenticate_spotify()
     spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
 
+    # Create a set of playlist IDs returned from Spotify
+    spotify_playlist_ids = set(playlist_id for _, playlist_id, _ in spotify_playlists)
+
     # Track changes for analysis
     playlists_to_add = []
     playlists_to_update = []
+    playlists_to_delete = []
     unchanged_count = 0
 
     # Analyze changes
@@ -1360,7 +1397,6 @@ def analyze_playlists_changes(force_full_refresh=False):
 
             # Check if playlist details have changed
             if (existing_playlist.name != playlist_name.strip()):
-
                 # Mark for update
                 playlists_to_update.append({
                     'id': playlist_id,
@@ -1376,9 +1412,18 @@ def analyze_playlists_changes(force_full_refresh=False):
                 'name': playlist_name.strip()
             })
 
-    return len(playlists_to_add), len(playlists_to_update), unchanged_count, {
+    # Find playlists to delete (in database but not in Spotify results)
+    for playlist_id, playlist in existing_playlists.items():
+        if playlist_id not in spotify_playlist_ids:
+            playlists_to_delete.append({
+                'id': playlist_id,
+                'name': playlist.name
+            })
+
+    return len(playlists_to_add), len(playlists_to_update), unchanged_count, len(playlists_to_delete), {
         'to_add': playlists_to_add,
-        'to_update': playlists_to_update
+        'to_update': playlists_to_update,
+        'to_delete': playlists_to_delete
     }
 
 
