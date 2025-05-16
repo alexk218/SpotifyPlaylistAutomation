@@ -1,4 +1,3 @@
-import os
 import hashlib
 import json
 import os
@@ -25,21 +24,11 @@ current_file = Path(__file__).resolve()
 project_root = current_file.parent.parent
 config_path = project_root / 'exclusion_config.json'
 
-with config_path.open('r', encoding='utf-8') as config_file:
-    config = json.load(config_file)
-
-forbidden_playlists = config.get('forbidden_playlists', [])
-forbidden_words = config.get('forbidden_words', [])
-description_keywords = config.get('description_keywords', [])
-forbidden_patterns = [
-    r'\b' + re.escape(word.lower()) + r'\b' for word in forbidden_words
-]
+SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 
 
 def authenticate_spotify():
-    SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
-    SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
-
     spotify_logger.info("Authenticating with Spotify")
     sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
         client_id=SPOTIFY_CLIENT_ID,
@@ -50,7 +39,14 @@ def authenticate_spotify():
     return sp
 
 
-def is_forbidden_playlist(name: str, description: str) -> bool:
+def is_forbidden_playlist(name: str, description: str, forbidden_playlists=None,
+                          forbidden_words=None, description_keywords=None, forbidden_playlist_ids=None) -> bool:
+    # Use default lists if not provided
+    forbidden_playlists = forbidden_playlists or []
+    forbidden_words = forbidden_words or []
+    description_keywords = description_keywords or []
+    forbidden_playlist_ids = forbidden_playlist_ids or []
+
     name_lower = name.lower()
     description_lower = description.lower()
 
@@ -72,7 +68,7 @@ def is_forbidden_playlist(name: str, description: str) -> bool:
     return False
 
 
-def fetch_playlists(spotify_client, force_refresh=False) -> List[Tuple[str, str, str]]:
+def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) -> List[Tuple[str, str, str]]:
     """
     Fetch all user's private playlists (self-created), excluding forbidden playlists.
     Uses cache if available and not forcing refresh.
@@ -80,16 +76,30 @@ def fetch_playlists(spotify_client, force_refresh=False) -> List[Tuple[str, str,
     Args:
         spotify_client: Authenticated Spotify client
         force_refresh: Whether to force a refresh from the API
+        exclusion_config: Optional dictionary with exclusion configuration
 
     Returns:
         List of tuples (playlist_name, playlist_id, snapshot_id)
     """
     # Try to get playlists from cache first
-    if not force_refresh:
-        cached_playlists = spotify_cache.get_playlists()
-        if cached_playlists:
-            spotify_logger.info(f"Using cached playlists data ({len(cached_playlists)} playlists)")
-            return cached_playlists
+    # if not force_refresh:
+    #     cached_playlists = spotify_cache.get_playlists()
+    #     if cached_playlists:
+    #         spotify_logger.info(f"Using cached playlists data ({len(cached_playlists)} playlists)")
+    #         return cached_playlists
+
+    # Get exclusion configuration - either from parameter or default file
+    if exclusion_config is None:
+        with config_path.open('r', encoding='utf-8') as config_file:
+            config = json.load(config_file)
+    else:
+        config = exclusion_config
+
+    # Get the exclusion settings
+    forbidden_playlists = config.get('forbidden_playlists', [])
+    forbidden_words = config.get('forbidden_words', [])
+    description_keywords = config.get('description_keywords', [])
+    forbidden_playlist_ids = config.get('forbidden_playlist_ids', [])
 
     # If we get here, we need to fetch from Spotify API
     spotify_logger.info("Fetching all my playlists from Spotify API")
@@ -123,7 +133,15 @@ def fetch_playlists(spotify_client, force_refresh=False) -> List[Tuple[str, str,
         for playlist in all_playlists
         if (
                 playlist['owner']['id'] == user_id and
-                not is_forbidden_playlist(playlist['name'], playlist['description'] or "")
+                not is_forbidden_playlist(
+                    playlist['name'],
+                    playlist['description'] or "",
+                    forbidden_playlists,
+                    forbidden_words,
+                    description_keywords,
+                    forbidden_playlist_ids
+                ) and
+                playlist['id'] not in forbidden_playlist_ids
         )
     ]
 
@@ -193,8 +211,6 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=F
                         artist_names = ", ".join([artist['name'] for artist in track.get('artists', [])])
                         album_name = track.get('album', {}).get('name', 'Local File')
 
-                        # Debug output
-                        print(f"Found local file in MASTER: '{track_name}' by '{artist_names}'")
                         spotify_logger.info(f"Found local file: '{track_name}' by '{artist_names}'")
                     else:
                         # Regular Spotify track
@@ -345,7 +361,6 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str, fo
                         # Print debug info
                         spotify_logger.debug(
                             f"Generated local file ID: {local_id} for '{track_name}' by '{artist_name}'")
-                        print(f"Generated local file ID: {local_id}")  # Add print for debugging
 
                 # Check if we've processed all tracks
                 if len(response['items']) < limit:
@@ -546,15 +561,8 @@ def get_liked_songs_with_dates(spotify_client, since_date=DEFAULT_SINCE_DATE):
     return sorted(liked_songs, key=lambda x: x['added_at'], reverse=True)  # Most recent first
 
 
-def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id: str) -> None:
-    """
-    Syncs all tracks from all playlists to the MASTER playlist (except for forbidden playlists).
-    Makes necessary API calls to ensure accuracy, but doesn't use optimizations.
-
-    Args:
-        spotify_client: Authenticated Spotify client
-        master_playlist_id: ID of the MASTER playlist
-    """
+def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id: str,
+                            exclusion_config: dict = None) -> None:
     spotify_logger.info("Starting sync to MASTER playlist")
     print("\nStarting sync analysis...")
 
@@ -563,7 +571,7 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
     spotify_logger.info(f"Found {len(master_track_ids)} tracks in MASTER playlist")
 
     # Fetch all playlists (excluding forbidden ones)
-    user_playlists = fetch_playlists(spotify_client, force_refresh=True)
+    user_playlists = fetch_playlists(spotify_client, force_refresh=True, exclusion_config=exclusion_config)
 
     # FIXED: Check structure of user_playlists to determine how to filter
     # Print a sample to debug

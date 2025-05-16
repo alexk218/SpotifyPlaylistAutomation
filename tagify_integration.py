@@ -20,7 +20,7 @@ from flask import redirect
 from mutagen.mp3 import MP3
 
 from drivers.spotify_client import authenticate_spotify, get_playlist_track_ids, fetch_playlists, \
-    sync_to_master_playlist
+    sync_to_master_playlist, config_path
 from helpers.file_helper import embed_track_id
 from helpers.sync_helper import analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations, \
     sync_playlists_incremental, sync_master_tracks_incremental, sync_track_playlist_associations
@@ -912,9 +912,10 @@ def api_sync_to_master():
                 "message": "Master playlist ID not provided or found in environment"
             }), 400
 
+        exclusion_config = get_exclusion_config(request.json)
+
         spotify_client = authenticate_spotify()
 
-        # This is a long-running operation, so respond immediately
         response = {
             "success": True,
             "message": "Sync to master playlist started. This operation runs in the background and may take several minutes."
@@ -922,8 +923,7 @@ def api_sync_to_master():
 
         def background_sync():
             try:
-                # Use the fixed function
-                sync_to_master_playlist(spotify_client, master_playlist_id)
+                sync_to_master_playlist(spotify_client, master_playlist_id, exclusion_config)
             except Exception as e:
                 error_str = traceback.format_exc()
                 print(f"Error in background sync: {e}")
@@ -945,131 +945,17 @@ def api_sync_to_master():
         }), 500
 
 
-@app.route('/api/analyze-master-sync', methods=['POST'])
-def api_analyze_master_sync():
-    try:
-        master_playlist_id = request.json.get('master_playlist_id') or MASTER_PLAYLIST_ID
-        if not master_playlist_id:
-            return jsonify({
-                "success": False,
-                "message": "Master playlist ID not provided or found in environment"
-            }), 400
-
-        # Authenticate and start analysis
-        spotify_client = authenticate_spotify()
-
-        # This is a simplified version of sync_to_master_playlist that just analyzes
-
-        # Get current tracks in MASTER playlist
-        master_track_ids = set(get_playlist_track_ids(spotify_client, master_playlist_id, force_refresh=True))
-
-        # Fetch all playlists (excluding forbidden ones)
-        user_playlists = fetch_playlists(spotify_client, force_refresh=True)
-
-        # Filter playlists safely
-        other_playlists = []
-        for pl in user_playlists:
-            if isinstance(pl, tuple):
-                playlist_name = pl[0] if len(pl) > 0 else "Unknown"
-
-                if len(pl) == 2:
-                    playlist_id = pl[1]
-                elif len(pl) >= 3:
-                    playlist_id = pl[2]
-                else:
-                    continue
-
-                if playlist_id != master_playlist_id:
-                    other_playlists.append((playlist_name, playlist_id))
-
-        # Track which songs come from which playlists
-        new_tracks_by_playlist = {}
-
-        # Process each playlist
-        for playlist_name, playlist_id in other_playlists:
-            # Get tracks for this playlist
-            playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
-
-            # Filter out local files and find tracks not in master
-            new_track_ids = []
-            for track_id in playlist_track_ids:
-                if track_id.startswith('spotify:local:') or track_id.startswith('local_'):
-                    continue
-
-                if track_id not in master_track_ids:
-                    new_track_ids.append(track_id)
-
-            if not new_track_ids:
-                continue
-
-            # Get track details
-            playlist_tracks = []
-            for j in range(0, len(new_track_ids), 50):
-                batch = new_track_ids[j:j + 50]
-                try:
-                    tracks_info = spotify_client.tracks(batch)
-                    for track in tracks_info['tracks']:
-                        if track:
-                            track_info = {
-                                'id': track['id'],
-                                'name': track['name'],
-                                'artists': ', '.join(artist['name'] for artist in track['artists'])
-                            }
-                            playlist_tracks.append(track_info)
-                except Exception as e:
-                    print(f"Error fetching details for track batch: {e}")
-                    continue
-
-            if playlist_tracks:
-                new_tracks_by_playlist[playlist_name] = playlist_tracks
-
-        # Calculate statistics
-        total_tracks = sum(len(tracks) for tracks in new_tracks_by_playlist.values())
-
-        # Include ALL playlists with ALL tracks
-        full_playlists = []
-        for playlist_name, tracks in sorted(new_tracks_by_playlist.items()):
-            sorted_tracks = sorted(tracks, key=lambda x: (x['artists'], x['name']))
-            full_playlists.append({
-                'name': playlist_name,
-                'track_count': len(tracks),
-                'tracks': sorted_tracks  # Include ALL tracks
-            })
-
-        # Create analysis result
-        analysis = {
-            'total_tracks_to_add': total_tracks,
-            'playlists_with_new_tracks': len(new_tracks_by_playlist),
-            'playlists': full_playlists,  # Full list with all tracks
-            'needs_confirmation': total_tracks > 0
-        }
-
-        return jsonify({
-            "success": True,
-            "message": f"Analysis complete: {total_tracks} tracks to add from {len(new_tracks_by_playlist)} playlists",
-            "master_sync": analysis,
-            "needs_confirmation": total_tracks > 0
-        })
-
-    except Exception as e:
-        error_str = traceback.format_exc()
-        print(f"Error analyzing master sync: {e}")
-        print(error_str)
-        return jsonify({
-            "success": False,
-            "message": f"Error: {str(e)}",
-            "traceback": error_str
-        }), 500
-
-
 @app.route('/api/analyze-playlists', methods=['POST'])
 def api_analyze_playlists_changes():
     try:
         force_refresh = request.json.get('force_refresh', False)
 
+        exclusion_config = get_exclusion_config(request.json)
+        print(f"Using exclusion config in analyze-playlists: {exclusion_config}")
+
         # Get analysis without executing
         added_count, updated_count, unchanged_count, deleted_count, changes_details = analyze_playlists_changes(
-            force_full_refresh=force_refresh
+            force_full_refresh=force_refresh, exclusion_config=exclusion_config
         )
 
         return jsonify({
@@ -1105,10 +991,14 @@ def api_analyze_tracks():
         master_playlist_id = request.json.get('master_playlist_id') or MASTER_PLAYLIST_ID
         force_refresh = request.json.get('force_refresh', False)
 
+        exclusion_config = get_exclusion_config(request.json)
+        print(f"Using exclusion config in analyze-tracks: {exclusion_config}")
+
         # Get analysis without executing
         tracks_to_add, tracks_to_update, unchanged_tracks = analyze_tracks_changes(
             master_playlist_id,
-            force_full_refresh=force_refresh
+            force_full_refresh=force_refresh,
+            exclusion_config=exclusion_config
         )
 
         # Include ALL tracks for display
@@ -1170,10 +1060,14 @@ def api_analyze_associations():
         master_playlist_id = request.json.get('master_playlist_id') or MASTER_PLAYLIST_ID
         force_refresh = request.json.get('force_refresh', False)
 
+        exclusion_config = get_exclusion_config(request.json)
+        print(f"Using exclusion config in analyze-associations: {exclusion_config}")
+
         # Get the analysis results
         changes = analyze_track_playlist_associations(
             master_playlist_id,
-            force_full_refresh=force_refresh
+            force_full_refresh=force_refresh,
+            exclusion_config=exclusion_config
         )
 
         # Make sure we include all the data needed for the UI
@@ -1210,6 +1104,9 @@ def api_sync_database():
     force_refresh = data.get('force_refresh', False)
     is_confirmed = data.get('confirmed', False)
 
+    exclusion_config = get_exclusion_config(request.json)
+    print(f"Using exclusion config in sync-database: {exclusion_config}")
+
     try:
         if action == 'clear':
             clear_db()
@@ -1224,7 +1121,8 @@ def api_sync_database():
             # Otherwise, proceed with execution
             added, updated, unchanged, deleted = sync_playlists_incremental(
                 force_full_refresh=force_refresh,
-                auto_confirm=True  # Skip confirmation prompt in the function
+                auto_confirm=True,
+                exclusion_config=exclusion_config
             )
             return jsonify({
                 "success": True,
@@ -1248,7 +1146,8 @@ def api_sync_database():
             added, updated, unchanged = sync_master_tracks_incremental(
                 master_playlist_id,
                 force_full_refresh=force_refresh,
-                auto_confirm=True
+                auto_confirm=True,
+                exclusion_config=exclusion_config
             )
             return jsonify({
                 "success": True,
@@ -1273,7 +1172,8 @@ def api_sync_database():
                 master_playlist_id,
                 force_full_refresh=force_refresh,
                 auto_confirm=True,
-                precomputed_changes=precomputed_changes
+                precomputed_changes=precomputed_changes,
+                exclusion_config=exclusion_config
             )
             return jsonify({
                 "success": True,
@@ -1288,14 +1188,13 @@ def api_sync_database():
                 master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
 
                 # 1. Analyze playlists
-                playlists_added, playlists_updated, playlists_unchanged, playlists_details = analyze_playlists_changes(
-                    force_full_refresh=force_refresh
+                playlists_added, playlists_updated, playlists_unchanged, playlists_deleted, playlists_details = analyze_playlists_changes(
+                    force_full_refresh=force_refresh, exclusion_config=exclusion_config
                 )
 
                 # 2. Analyze tracks
                 tracks_to_add, tracks_to_update, tracks_unchanged = analyze_tracks_changes(
-                    master_playlist_id,
-                    force_full_refresh=force_refresh
+                    master_playlist_id, force_full_refresh=force_refresh, exclusion_config=exclusion_config
                 )
 
                 # Format tracks for display - ALL tracks, not just samples
@@ -1320,7 +1219,8 @@ def api_sync_database():
                 # 3. Analyze associations
                 associations_changes = analyze_track_playlist_associations(
                     master_playlist_id,
-                    force_full_refresh=force_refresh
+                    force_full_refresh=force_refresh,
+                    exclusion_config=exclusion_config
                 )
 
                 # Prepare the complete analysis result with FULL data
@@ -1329,7 +1229,8 @@ def api_sync_database():
                         "added": playlists_added,
                         "updated": playlists_updated,
                         "unchanged": playlists_unchanged,
-                        "details": playlists_details  # Already has full lists
+                        "deleted": playlists_deleted,
+                        "details": playlists_details,
                     },
                     "tracks": {
                         "added": len(tracks_to_add),
@@ -1374,7 +1275,8 @@ def api_sync_database():
                     # 1. Sync playlists first
                     playlists_added, playlists_updated, playlists_unchanged, playlists_deleted = sync_playlists_incremental(
                         force_full_refresh=force_refresh,
-                        auto_confirm=True
+                        auto_confirm=True,
+                        exclusion_config=exclusion_config
                     )
 
                     results['playlists'] = {
@@ -1387,7 +1289,8 @@ def api_sync_database():
                     tracks_added, tracks_updated, tracks_unchanged = sync_master_tracks_incremental(
                         master_playlist_id,
                         force_full_refresh=force_refresh,
-                        auto_confirm=True
+                        auto_confirm=True,
+                        exclusion_config=exclusion_config
                     )
 
                     results['playlists'] = {
@@ -1404,7 +1307,8 @@ def api_sync_database():
                         master_playlist_id,
                         force_full_refresh=force_refresh,
                         auto_confirm=True,
-                        precomputed_changes=precomputed_changes
+                        precomputed_changes=precomputed_changes,
+                        exclusion_config=exclusion_config
                     )
 
                     results['associations'] = association_stats
@@ -2337,6 +2241,48 @@ def api_search_tracks():
             "message": str(e),
             "traceback": error_str
         }), 500
+
+
+def get_exclusion_config(request_json=None):
+    # Default config from file
+    default_config = {}
+    try:
+        with config_path.open('r', encoding='utf-8') as config_file:
+            default_config = json.load(config_file)
+    except Exception as e:
+        print(f"Error loading default config: {e}")
+        default_config = {
+            "forbidden_playlists": [],
+            "forbidden_words": [],
+            "description_keywords": []
+        }
+
+    # If request contains playlist settings, use those instead
+    if request_json and 'playlistSettings' in request_json:
+        client_settings = request_json['playlistSettings']
+
+        # Create a new config based on client settings
+        config = {
+            "forbidden_playlists": [],
+            "forbidden_words": [],
+            "description_keywords": [],
+            "forbidden_playlist_ids": []
+        }
+
+        # Map client-side settings to server-side format
+        if 'excludedKeywords' in client_settings:
+            config['forbidden_words'] = client_settings['excludedKeywords']
+
+        if 'excludedPlaylistIds' in client_settings:
+            config['forbidden_playlist_ids'] = client_settings['excludedPlaylistIds']
+
+        if 'excludeByDescription' in client_settings:
+            config['description_keywords'] = client_settings['excludeByDescription']
+
+        return config
+
+    # If no client settings, return default
+    return default_config
 
 
 def run_command(command, wait=True):

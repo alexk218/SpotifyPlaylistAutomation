@@ -41,7 +41,7 @@ def get_db_tracks() -> Dict[str, Track]:
         return {track.track_id: track for track in tracks}
 
 
-def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
+def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False, exclusion_config=None):
     """
     Incrementally sync playlists from Spotify to the database.
     Only fetches and updates playlists that have changed based on snapshot_id.
@@ -62,7 +62,8 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
 
     # Fetch all playlists from Spotify
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                        exclusion_config=exclusion_config)
     sync_logger.info(f"Fetched {len(spotify_playlists)} playlists from Spotify")
 
     # Track changes for analysis
@@ -205,7 +206,7 @@ def sync_playlists_incremental(force_full_refresh=False, auto_confirm=False):
     return added_count, updated_count, unchanged_count, deleted_count
 
 
-def analyze_playlists_changes(force_full_refresh=False):
+def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
     """
     Analyze what changes would be made to playlists without executing them.
 
@@ -220,7 +221,8 @@ def analyze_playlists_changes(force_full_refresh=False):
 
     # Fetch all playlists from Spotify
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                        exclusion_config=exclusion_config)
 
     # Track changes for analysis
     playlists_to_add = []
@@ -256,7 +258,7 @@ def analyze_playlists_changes(force_full_refresh=False):
     }
 
 
-def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = False):
+def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = False, exclusion_config=None):
     """
     Analyze what changes would be made to tracks without executing them.
 
@@ -330,7 +332,8 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
     return tracks_to_add, tracks_to_update, unchanged_tracks
 
 
-def analyze_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False) -> dict:
+def analyze_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False,
+                                        exclusion_config=None) -> dict:
     """
     Analyze what changes would be made to track-playlist associations without actually making them.
     Only analyzes playlists that have changed since the last sync based on snapshot_id.
@@ -360,7 +363,8 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
 
     # Fetch all playlists directly from Spotify to ensure associations are fresh
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                        exclusion_config=exclusion_config)
 
     # Filter out the master playlist for association lookups
     other_playlists = [pl for pl in spotify_playlists if pl[1] != master_playlist_id]
@@ -541,106 +545,8 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
     }
 
 
-def analyze_master_sync(spotify_client, master_playlist_id: str):
-    """
-    Analyze what changes would be made by sync_to_master_playlist without executing them.
-
-    Args:
-        spotify_client: Authenticated Spotify client
-        master_playlist_id: ID of the MASTER playlist
-
-    Returns:
-        Dictionary with analysis results
-    """
-    # Get current tracks in MASTER playlist
-    master_track_ids = set(get_playlist_track_ids(spotify_client, master_playlist_id, force_refresh=True))
-
-    # Fetch all playlists
-    user_playlists = fetch_playlists(spotify_client, force_refresh=True)
-
-    # Filter playlists safely
-    other_playlists = []
-    for pl in user_playlists:
-        if isinstance(pl, tuple):
-            playlist_name = pl[0] if len(pl) > 0 else "Unknown"
-
-            if len(pl) == 2:
-                playlist_id = pl[1]
-            elif len(pl) >= 3:
-                playlist_id = pl[2]
-            else:
-                continue
-
-            if playlist_id != master_playlist_id:
-                other_playlists.append((playlist_name, playlist_id))
-
-    # Track which songs come from which playlists
-    new_tracks_by_playlist = {}
-
-    # Process each playlist
-    for playlist_name, playlist_id, snapshot_id in other_playlists:
-        # Get tracks for this playlist
-        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
-
-        # Filter out local files and find tracks not in master
-        new_track_ids = []
-        for track_id in playlist_track_ids:
-            if track_id.startswith('spotify:local:') or track_id.startswith('local_'):
-                continue
-
-            if track_id not in master_track_ids:
-                new_track_ids.append(track_id)
-
-        if not new_track_ids:
-            continue
-
-        # Get track details
-        playlist_tracks = []
-        for j in range(0, len(new_track_ids), 50):
-            batch = new_track_ids[j:j + 50]
-            try:
-                tracks_info = spotify_client.tracks(batch)
-                for track in tracks_info['tracks']:
-                    if track:
-                        track_info = {
-                            'id': track['id'],
-                            'name': track['name'],
-                            'artists': ', '.join(artist['name'] for artist in track['artists'])
-                        }
-                        playlist_tracks.append(track_info)
-            except Exception as e:
-                print(f"Error fetching details for track batch: {e}")
-                continue
-
-        if playlist_tracks:
-            new_tracks_by_playlist[playlist_name] = playlist_tracks
-
-    # Calculate statistics
-    total_tracks = sum(len(tracks) for tracks in new_tracks_by_playlist.values())
-
-    # Prepare sample data for display
-    sample_playlists = []
-    for playlist_name, tracks in sorted(new_tracks_by_playlist.items())[:5]:  # Limit to 5 playlists
-        sample_tracks = sorted(tracks, key=lambda x: (x['artists'], x['name']))[:5]  # Limit to 5 tracks per playlist
-        sample_playlists.append({
-            'name': playlist_name,
-            'track_count': len(tracks),
-            'sample_tracks': sample_tracks
-        })
-
-    # Create analysis result
-    analysis = {
-        'total_tracks_to_add': total_tracks,
-        'playlists_with_new_tracks': len(new_tracks_by_playlist),
-        'sample_playlists': sample_playlists,
-        'needs_confirmation': total_tracks > 0
-    }
-
-    return analysis
-
-
 def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: bool = False,
-                                   auto_confirm: bool = False) -> Tuple[int, int, int]:
+                                   auto_confirm: bool = False, exclusion_config=None) -> Tuple[int, int, int]:
     """
     Incrementally sync tracks from the MASTER playlist to the database.
     Only fetches and updates tracks that have changed. Does NOT update playlist associations.
@@ -648,6 +554,8 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
     Args:
         master_playlist_id: ID of the master playlist
         force_full_refresh: Whether to force a full refresh, ignoring existing data
+        auto_confirm: Whether to skip confirmation prompts
+        exclusion_config: Optional dictionary with exclusion configuration
 
     Returns:
         Tuple of (added, updated, unchanged) counts
@@ -831,7 +739,8 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
 
 
 def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False,
-                                     auto_confirm: bool = False, precomputed_changes: dict = None) -> Dict[str, int]:
+                                     auto_confirm: bool = False, precomputed_changes: dict = None,
+                                     exclusion_config=None) -> Dict[str, int]:
     """
     Sync track-playlist associations for all tracks in the database.
     Only processes playlists that have changed since the last sync (based on snapshot_id).
@@ -927,7 +836,8 @@ def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh
 
     # Fetch all playlists directly from Spotify to ensure associations are fresh
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                        exclusion_config=exclusion_config)
 
     # Filter out the master playlist for association lookups
     other_playlists = [pl for pl in spotify_playlists if pl[1] != master_playlist_id]
@@ -1360,7 +1270,7 @@ def find_playlists_for_tracks_from_db(spotify_client, track_batch, master_playli
     )
 
 
-def analyze_playlists_changes(force_full_refresh=False):
+def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
     """
     Analyze what changes would be made to playlists without executing them.
 
@@ -1375,7 +1285,8 @@ def analyze_playlists_changes(force_full_refresh=False):
 
     # Fetch all playlists from Spotify
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh)
+    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                        exclusion_config=exclusion_config)
 
     # Create a set of playlist IDs returned from Spotify
     spotify_playlist_ids = set(playlist_id for _, playlist_id, _ in spotify_playlists)
