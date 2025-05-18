@@ -23,7 +23,7 @@ from drivers.spotify_client import authenticate_spotify, get_playlist_track_ids,
     sync_to_master_playlist, config_path
 from helpers.file_helper import embed_track_id
 from helpers.sync_helper import analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations, \
-    sync_playlists_incremental, sync_master_tracks_incremental, sync_track_playlist_associations
+    sync_playlists_to_db, sync_tracks_to_db, sync_track_playlist_associations_to_db
 from m3u_to_rekordbox import RekordboxXmlGenerator
 from sql.core.unit_of_work import UnitOfWork
 from helpers.m3u_helper import build_track_id_mapping, generate_m3u_playlist, find_local_file_path_with_extensions, \
@@ -1118,9 +1118,11 @@ def api_sync_database():
                 return redirect('/api/analyze-playlists', code=307)  # 307 preserves POST method
 
             # Otherwise, proceed with execution
-            added, updated, unchanged, deleted = sync_playlists_incremental(
+            playlist_changes_from_analysis = data.get('precomputed_changes_from_analysis')
+            added, updated, unchanged, deleted = sync_playlists_to_db(
                 force_full_refresh=force_refresh,
                 auto_confirm=True,
+                precomputed_changes=playlist_changes_from_analysis,
                 exclusion_config=exclusion_config
             )
             return jsonify({
@@ -1142,10 +1144,12 @@ def api_sync_database():
 
             # Otherwise, proceed with execution
             master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
-            added, updated, unchanged, deleted = sync_master_tracks_incremental(
+            track_changes_from_analysis = data.get('precomputed_changes_from_analysis')
+            added, updated, unchanged, deleted = sync_tracks_to_db(
                 master_playlist_id,
                 force_full_refresh=force_refresh,
-                auto_confirm=True
+                auto_confirm=True,
+                precomputed_changes=track_changes_from_analysis
             )
             return jsonify({
                 "success": True,
@@ -1166,12 +1170,12 @@ def api_sync_database():
 
             # Otherwise, proceed with execution
             master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
-            precomputed_changes = data.get('precomputed_changes')
-            stats = sync_track_playlist_associations(
+            associations_changes_from_analysis = data.get('precomputed_changes_from_analysis')
+            stats = sync_track_playlist_associations_to_db(
                 master_playlist_id,
                 force_full_refresh=force_refresh,
                 auto_confirm=True,
-                precomputed_changes=precomputed_changes,
+                precomputed_changes=associations_changes_from_analysis,
                 exclusion_config=exclusion_config
             )
             return jsonify({
@@ -1181,130 +1185,197 @@ def api_sync_database():
             })
 
         elif action == 'all':
-            # For 'all', we'll use a different approach - analyze in sequence and return all results
-            if not is_confirmed:
-                # Analyze all operations
-                master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
+            # For 'all', process sequentially, handling one stage at a time
+            stage = data.get('stage', 'start')  # 'start', 'playlists', 'tracks', 'associations', 'complete'
 
-                # 1. Analyze playlists
-                playlists_added, playlists_updated, playlists_unchanged, playlists_deleted, playlists_details = analyze_playlists_changes(
-                    force_full_refresh=force_refresh, exclusion_config=exclusion_config
-                )
-
-                # 2. Analyze tracks
-                tracks_to_add, tracks_to_update, tracks_unchanged = analyze_tracks_changes(
-                    master_playlist_id, force_full_refresh=force_refresh
-                )
-
-                # Format tracks for display - ALL tracks, not just samples
-                all_tracks_to_add = []
-                for track in tracks_to_add:
-                    all_tracks_to_add.append({
-                        "artists": track['artists'],
-                        "title": track['title'],
-                        "is_local": track.get('is_local', False)
-                    })
-
-                all_tracks_to_update = []
-                for track in tracks_to_update:
-                    all_tracks_to_update.append({
-                        "old_artists": track['old_artists'],
-                        "old_title": track['old_title'],
-                        "artists": track['artists'],
-                        "title": track['title'],
-                        "is_local": track.get('is_local', False)
-                    })
-
-                # 3. Analyze associations
-                associations_changes = analyze_track_playlist_associations(
-                    master_playlist_id,
-                    force_full_refresh=force_refresh,
-                    exclusion_config=exclusion_config
-                )
-
-                # Prepare the complete analysis result with FULL data
-                all_analyses = {
-                    "playlists": {
-                        "added": playlists_added,
-                        "updated": playlists_updated,
-                        "unchanged": playlists_unchanged,
-                        "deleted": playlists_deleted,
-                        "details": playlists_details,
-                    },
-                    "tracks": {
-                        "added": len(tracks_to_add),
-                        "updated": len(tracks_to_update),
-                        "unchanged": len(tracks_unchanged),
-                        "to_add_sample": all_tracks_to_add[:20],  # First 20 for immediate display
-                        "all_tracks_to_add": all_tracks_to_add,  # Full list for pagination
-                        "to_add_total": len(tracks_to_add),
-                        "to_update_sample": all_tracks_to_update[:20],  # First 20 for immediate display
-                        "all_tracks_to_update": all_tracks_to_update,  # Full list for pagination
-                        "to_update_total": len(tracks_to_update)
-                    },
-                    "associations": {
-                        **associations_changes,
-                        "all_changes": associations_changes.get("tracks_with_changes", [])  # Full list of changes
-                    }
-                }
-
-                # Determine if we need confirmation
-                needs_confirmation = (
-                        playlists_added > 0 or
-                        playlists_updated > 0 or
-                        playlists_deleted > 0 or
-                        len(tracks_to_add) > 0 or
-                        len(tracks_to_update) > 0 or
-                        associations_changes['associations_to_add'] > 0 or
-                        associations_changes['associations_to_remove'] > 0
-                )
-
+            if stage == 'start':
+                # Just return initial instructions to begin with playlists
                 return jsonify({
                     "success": True,
-                    "message": "Analysis complete",
-                    "analyses": all_analyses,
-                    "needs_confirmation": needs_confirmation
+                    "action": "all",
+                    "stage": "start",
+                    "next_stage": "playlists",
+                    "message": "Starting sequential sync process..."
                 })
 
-            # If confirmed, execute all sync steps in sequence
-            else:
-                master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
-                results = {}
+            elif stage == 'playlists':
+                # Handle playlist stage
+                if not is_confirmed:
+                    # Analyze playlists
+                    playlists_added, playlists_updated, playlists_unchanged, playlists_deleted, playlists_details = analyze_playlists_changes(
+                        force_full_refresh=force_refresh, exclusion_config=exclusion_config
+                    )
 
-                try:
-                    # 1. Sync playlists first
-                    playlists_added, playlists_updated, playlists_unchanged, playlists_deleted = sync_playlists_incremental(
+                    return jsonify({
+                        "success": True,
+                        "action": "all",
+                        "stage": "playlists",
+                        "message": f"Analysis complete: {playlists_added} to add, {playlists_updated} to update, "
+                                   f"{playlists_deleted} to delete, {playlists_unchanged} unchanged",
+                        "stats": {
+                            "added": playlists_added,
+                            "updated": playlists_updated,
+                            "unchanged": playlists_unchanged,
+                            "deleted": playlists_deleted
+                        },
+                        "details": playlists_details,
+                        "next_stage": "tracks",
+                        "needs_confirmation": playlists_added > 0 or playlists_updated > 0 or playlists_deleted > 0
+                    })
+                else:
+                    # Sync playlists
+                    precomputed_changes_raw = data.get('precomputed_changes_from_analysis')
+                    precomputed_changes = precomputed_changes_raw
+
+                    # Add snapshot_id to to_add items if missing
+                    if precomputed_changes and 'to_add' in precomputed_changes:
+                        for playlist in precomputed_changes['to_add']:
+                            if 'snapshot_id' not in playlist:
+                                # Set a default value or fetch it if available
+                                playlist['snapshot_id'] = playlist.get('snapshot_id', '')
+
+                    # Add snapshot_id to to_update items if missing
+                    if precomputed_changes and 'to_update' in precomputed_changes:
+                        for playlist in precomputed_changes['to_update']:
+                            if 'snapshot_id' not in playlist:
+                                # Set a default value or fetch it if available
+                                playlist['snapshot_id'] = playlist.get('old_snapshot_id', '')
+
+                    added, updated, unchanged, deleted = sync_playlists_to_db(
                         force_full_refresh=force_refresh,
                         auto_confirm=True,
+                        precomputed_changes=precomputed_changes,
                         exclusion_config=exclusion_config
                     )
 
-                    results['playlists'] = {
-                        'added': playlists_added,
-                        'updated': playlists_updated,
-                        'unchanged': playlists_unchanged,
-                        'deleted': playlists_deleted
-                    }
+                    return jsonify({
+                        "success": True,
+                        "action": "all",
+                        "stage": "playlists",
+                        "step": "sync_complete",
+                        "message": f"Playlists synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
+                        "stats": {
+                            "added": added,
+                            "updated": updated,
+                            "unchanged": unchanged,
+                            "deleted": deleted
+                        },
+                        "next_stage": "tracks"
+                    })
 
-                    # 2. Sync tracks
-                    tracks_added, tracks_updated, tracks_unchanged, tracks_deleted = sync_master_tracks_incremental(
-                        # Updated to unpack 4 values
-                        master_playlist_id,
-                        force_full_refresh=force_refresh,
-                        auto_confirm=True
+            elif stage == 'tracks':
+                # Handle tracks stage
+                master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
+
+                if not is_confirmed:
+                    # Analyze tracks
+                    tracks_to_add, tracks_to_update, tracks_unchanged = analyze_tracks_changes(
+                        master_playlist_id, force_full_refresh=force_refresh
                     )
 
-                    results['tracks'] = {
-                        'added': tracks_added,
-                        'updated': tracks_updated,
-                        'unchanged': tracks_unchanged,
-                        'deleted': tracks_deleted
-                    }
+                    # Format tracks for display - ALL tracks, not just samples
+                    all_tracks_to_add = []
+                    for track in tracks_to_add:
+                        all_tracks_to_add.append({
+                            "id": track.get('id'),
+                            "artists": track['artists'],
+                            "title": track['title'],
+                            "is_local": track.get('is_local', False)
+                        })
 
-                    # 3. Sync associations
-                    # Use precomputed changes if provided
-                    precomputed_changes = data.get('precomputed_changes')
-                    association_stats = sync_track_playlist_associations(
+                    all_tracks_to_update = []
+                    for track in tracks_to_update:
+                        all_tracks_to_update.append({
+                            "id": track.get('id'),
+                            "old_artists": track['old_artists'],
+                            "old_title": track['old_title'],
+                            "artists": track['artists'],
+                            "title": track['title'],
+                            "is_local": track.get('is_local', False)
+                        })
+
+                    return jsonify({
+                        "success": True,
+                        "action": "all",
+                        "stage": "tracks",
+                        "message": f"Analysis complete: {len(tracks_to_add)} to add, {len(tracks_to_update)} to update, "
+                                   f"{len(tracks_unchanged)} unchanged",
+                        "stats": {
+                            "added": len(tracks_to_add),
+                            "updated": len(tracks_to_update),
+                            "unchanged": len(tracks_unchanged)
+                        },
+                        "details": {
+                            "all_items_to_add": all_tracks_to_add,
+                            "to_add": all_tracks_to_add[:20],  # First 20 for immediate display
+                            "to_add_total": len(tracks_to_add),
+                            "all_items_to_update": all_tracks_to_update,
+                            "to_update": all_tracks_to_update[:20],
+                            "to_update_total": len(tracks_to_update)
+                        },
+                        "next_stage": "associations",
+                        "needs_confirmation": len(tracks_to_add) > 0 or len(tracks_to_update) > 0
+                    })
+                else:
+                    # Sync tracks
+                    precomputed_changes = data.get('precomputed_changes_from_analysis')
+                    added, updated, unchanged, deleted = sync_tracks_to_db(
+                        master_playlist_id,
+                        force_full_refresh=force_refresh,
+                        auto_confirm=True,
+                        precomputed_changes=precomputed_changes
+                    )
+
+                    return jsonify({
+                        "success": True,
+                        "action": "all",
+                        "stage": "tracks",
+                        "step": "sync_complete",
+                        "message": f"Tracks synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
+                        "stats": {
+                            "added": added,
+                            "updated": updated,
+                            "unchanged": unchanged,
+                            "deleted": deleted
+                        },
+                        "next_stage": "associations"
+                    })
+
+            elif stage == 'associations':
+                # Handle associations stage
+                master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
+
+                if not is_confirmed:
+                    # Analyze associations
+                    associations_changes = analyze_track_playlist_associations(
+                        master_playlist_id,
+                        force_full_refresh=force_refresh,
+                        exclusion_config=exclusion_config
+                    )
+
+                    return jsonify({
+                        "success": True,
+                        "action": "all",
+                        "stage": "associations",
+                        "message": f"Analysis complete: {associations_changes['associations_to_add']} to add, "
+                                   f"{associations_changes['associations_to_remove']} to remove, "
+                                   f"affecting {len(associations_changes['tracks_with_changes'])} tracks",
+                        "stats": associations_changes['stats'],
+                        "details": {
+                            "tracks_with_changes": associations_changes['tracks_with_changes'],
+                            "associations_to_add": associations_changes['associations_to_add'],
+                            "associations_to_remove": associations_changes['associations_to_remove'],
+                            "samples": associations_changes['samples'],
+                            "all_changes": associations_changes.get("tracks_with_changes", [])  # Full list of changes
+                        },
+                        "next_stage": "complete",
+                        "needs_confirmation": associations_changes['associations_to_add'] > 0 or
+                                              associations_changes['associations_to_remove'] > 0
+                    })
+                else:
+                    # Sync associations
+                    precomputed_changes = data.get('precomputed_changes_from_analysis')
+                    stats = sync_track_playlist_associations_to_db(
                         master_playlist_id,
                         force_full_refresh=force_refresh,
                         auto_confirm=True,
@@ -1312,22 +1383,32 @@ def api_sync_database():
                         exclusion_config=exclusion_config
                     )
 
-                    results['associations'] = association_stats
-
                     return jsonify({
                         "success": True,
-                        "message": "Full database sync completed successfully",
-                        "results": results
+                        "action": "all",
+                        "stage": "associations",
+                        "step": "sync_complete",
+                        "message": f"Associations synced: {stats['associations_added']} added, {stats['associations_removed']} removed",
+                        "stats": stats,
+                        "next_stage": "complete"
                     })
-                except Exception as e:
-                    error_str = traceback.format_exc()
-                    print(f"Error in sync_database - all action: {e}")
-                    print(error_str)
-                    return jsonify({
-                        "success": False,
-                        "message": f"Error during sync_database 'all' action: {str(e)}",
-                        "traceback": error_str
-                    }), 500
+
+            elif stage == 'complete':
+                # Final completion stage
+                return jsonify({
+                    "success": True,
+                    "action": "all",
+                    "stage": "complete",
+                    "message": "Sequential database sync completed successfully",
+                })
+
+            else:
+                # Handle unknown stage
+                return jsonify({
+                    "success": False,
+                    "message": f"Unknown stage: {stage}",
+                }), 400
+
         else:
             return jsonify({"success": False, "message": "Invalid action"}), 400
 

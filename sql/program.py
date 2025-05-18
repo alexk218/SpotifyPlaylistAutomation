@@ -7,8 +7,8 @@ from drivers.spotify_client import sync_to_master_playlist, sync_unplaylisted_to
 from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
     validate_song_lengths
 from helpers.organization_helper import organize_songs_into_m3u_playlists
-from helpers.sync_helper import sync_playlists_incremental, sync_master_tracks_incremental, \
-    sync_track_playlist_associations
+from helpers.sync_helper import sync_playlists_to_db, sync_tracks_to_db, \
+    sync_track_playlist_associations_to_db
 from helpers.validation_helper import validate_master_tracks
 from utils.logger import setup_logger
 from cache_manager import spotify_cache
@@ -93,13 +93,13 @@ def main():
         print("All database tables cleared successfully.")
 
     if args.sync_all or args.sync_playlists:
-        sync_playlists_incremental(force_full_refresh=args.force_refresh)
+        sync_playlists_to_db(force_full_refresh=args.force_refresh)
 
     if args.sync_all or args.sync_tracks:
-        sync_master_tracks_incremental(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
+        sync_tracks_to_db(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
 
     if args.sync_all or args.sync_associations:
-        sync_track_playlist_associations(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
+        sync_track_playlist_associations_to_db(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
 
     # * File operations
     if args.generate_m3u:

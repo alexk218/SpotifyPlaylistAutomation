@@ -16,7 +16,7 @@ from drivers.spotify_client import authenticate_spotify, sync_to_master_playlist
 from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
     validate_song_lengths
 from helpers.organization_helper import organize_songs_into_m3u_playlists
-from helpers.sync_helper import sync_playlists_incremental, sync_master_tracks_incremental
+from helpers.sync_helper import sync_playlists_to_db, sync_tracks_to_db
 from helpers.validation_helper import validate_master_tracks
 from utils.logger import setup_logger
 from cache_manager import spotify_cache
@@ -146,7 +146,7 @@ def sync_playlists():
 
     # If confirm=True, proceed with the actual sync
     try:
-        added, updated, unchanged = sync_playlists_incremental(force_full_refresh=force_refresh, auto_confirm=True)
+        added, updated, unchanged = sync_playlists_to_db(force_full_refresh=force_refresh, auto_confirm=True)
         api_logger.info(f"Playlists sync complete: {added} added, {updated} updated, {unchanged} unchanged")
 
         return jsonify({
@@ -193,7 +193,7 @@ def sync_tracks():
 
     # If confirm=True, proceed with the actual sync
     try:
-        added, updated, unchanged = sync_master_tracks_incremental(
+        added, updated, unchanged = sync_tracks_to_db(
             MASTER_PLAYLIST_ID, force_full_refresh=force_refresh)
         api_logger.info(f"Master tracks sync complete: {added} added, {updated} updated, {unchanged} unchanged")
 
@@ -253,9 +253,9 @@ def sync_all():
 
     # If confirm=True, proceed with the actual sync
     try:
-        playlists_added, playlists_updated, playlists_unchanged = sync_playlists_incremental(
+        playlists_added, playlists_updated, playlists_unchanged = sync_playlists_to_db(
             force_full_refresh=force_refresh, auto_confirm=True)
-        tracks_added, tracks_updated, tracks_unchanged = sync_master_tracks_incremental(
+        tracks_added, tracks_updated, tracks_unchanged = sync_tracks_to_db(
             MASTER_PLAYLIST_ID, force_full_refresh=force_refresh)
 
         api_logger.info(

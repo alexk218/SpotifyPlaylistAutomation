@@ -6,6 +6,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import spotipy
 from spotipy import SpotifyOAuth
