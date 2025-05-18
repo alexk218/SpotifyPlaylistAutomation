@@ -63,6 +63,18 @@ class TrackRepository(BaseRepository[Track]):
             self.db_logger.warning(f"Track not found for update: {track.track_id}")
             return False
 
+    def delete_by_track_id(self, track_id: str) -> None:
+        """Delete all playlist associations for a track"""
+        query = "DELETE FROM Tracks WHERE TrackId = ?"
+        self.connection.execute(query, (track_id,))
+        self.connection.commit()
+
+    def delete(self, track_id: str) -> None:
+        """Delete a track by its ID"""
+        query = "DELETE FROM Tracks WHERE TrackId = ?"
+        self.connection.execute(query, (track_id,))
+        self.connection.commit()
+
     def get_by_id(self, track_id: str) -> Optional[Track]:
         """
         Get a track by its ID.

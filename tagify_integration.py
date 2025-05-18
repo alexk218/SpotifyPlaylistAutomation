@@ -997,8 +997,7 @@ def api_analyze_tracks():
         # Get analysis without executing
         tracks_to_add, tracks_to_update, unchanged_tracks = analyze_tracks_changes(
             master_playlist_id,
-            force_full_refresh=force_refresh,
-            exclusion_config=exclusion_config
+            force_full_refresh=force_refresh
         )
 
         # Include ALL tracks for display
@@ -1143,19 +1142,19 @@ def api_sync_database():
 
             # Otherwise, proceed with execution
             master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
-            added, updated, unchanged = sync_master_tracks_incremental(
+            added, updated, unchanged, deleted = sync_master_tracks_incremental(
                 master_playlist_id,
                 force_full_refresh=force_refresh,
-                auto_confirm=True,
-                exclusion_config=exclusion_config
+                auto_confirm=True
             )
             return jsonify({
                 "success": True,
-                "message": f"Tracks synced: {added} added, {updated} updated, {unchanged} unchanged",
+                "message": f"Tracks synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
                 "stats": {
                     "added": added,
                     "updated": updated,
-                    "unchanged": unchanged
+                    "unchanged": unchanged,
+                    "deleted": deleted
                 }
             })
 
@@ -1194,7 +1193,7 @@ def api_sync_database():
 
                 # 2. Analyze tracks
                 tracks_to_add, tracks_to_update, tracks_unchanged = analyze_tracks_changes(
-                    master_playlist_id, force_full_refresh=force_refresh, exclusion_config=exclusion_config
+                    master_playlist_id, force_full_refresh=force_refresh
                 )
 
                 # Format tracks for display - ALL tracks, not just samples
@@ -1253,6 +1252,7 @@ def api_sync_database():
                 needs_confirmation = (
                         playlists_added > 0 or
                         playlists_updated > 0 or
+                        playlists_deleted > 0 or
                         len(tracks_to_add) > 0 or
                         len(tracks_to_update) > 0 or
                         associations_changes['associations_to_add'] > 0 or
@@ -1282,22 +1282,23 @@ def api_sync_database():
                     results['playlists'] = {
                         'added': playlists_added,
                         'updated': playlists_updated,
-                        'unchanged': playlists_unchanged
+                        'unchanged': playlists_unchanged,
+                        'deleted': playlists_deleted
                     }
 
                     # 2. Sync tracks
-                    tracks_added, tracks_updated, tracks_unchanged = sync_master_tracks_incremental(
+                    tracks_added, tracks_updated, tracks_unchanged, tracks_deleted = sync_master_tracks_incremental(
+                        # Updated to unpack 4 values
                         master_playlist_id,
                         force_full_refresh=force_refresh,
-                        auto_confirm=True,
-                        exclusion_config=exclusion_config
+                        auto_confirm=True
                     )
 
-                    results['playlists'] = {
-                        'added': playlists_added,
-                        'updated': playlists_updated,
-                        'unchanged': playlists_unchanged,
-                        'deleted': playlists_deleted
+                    results['tracks'] = {
+                        'added': tracks_added,
+                        'updated': tracks_updated,
+                        'unchanged': tracks_unchanged,
+                        'deleted': tracks_deleted
                     }
 
                     # 3. Sync associations
@@ -1333,11 +1334,11 @@ def api_sync_database():
 
     except Exception as e:
         error_str = traceback.format_exc()
-        print(f"Error in sync_database - all action: {e}")
+        print(f"Error in sync_database: {e}")
         print(error_str)
         return jsonify({
             "success": False,
-            "message": f"Error during sync_database 'all' action: {str(e)}",
+            "message": f"Error: {str(e)}",
             "traceback": error_str
         }), 500
 

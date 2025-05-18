@@ -258,7 +258,7 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
     }
 
 
-def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = False, exclusion_config=None):
+def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = False):
     """
     Analyze what changes would be made to tracks without executing them.
 
@@ -337,13 +337,6 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
     """
     Analyze what changes would be made to track-playlist associations without actually making them.
     Only analyzes playlists that have changed since the last sync based on snapshot_id.
-
-    Args:
-        master_playlist_id: ID of the master playlist
-        force_full_refresh: Whether to force a full refresh
-
-    Returns:
-        Dictionary with analysis results
     """
     sync_logger.info("Analyzing track-playlist association changes")
 
@@ -546,7 +539,7 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
 
 
 def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: bool = False,
-                                   auto_confirm: bool = False, exclusion_config=None) -> Tuple[int, int, int]:
+                                   auto_confirm: bool = False) -> Tuple[int, int, int, int]:
     """
     Incrementally sync tracks from the MASTER playlist to the database.
     Only fetches and updates tracks that have changed. Does NOT update playlist associations.
@@ -555,10 +548,9 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
         master_playlist_id: ID of the master playlist
         force_full_refresh: Whether to force a full refresh, ignoring existing data
         auto_confirm: Whether to skip confirmation prompts
-        exclusion_config: Optional dictionary with exclusion configuration
 
     Returns:
-        Tuple of (added, updated, unchanged) counts
+        Tuple of (added, updated, unchanged, deleted) counts
     """
     sync_logger.info(f"Starting incremental master tracks sync for playlist {master_playlist_id}")
     print("Starting incremental master tracks sync analysis...")
@@ -631,11 +623,36 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
                 'is_local': is_local
             })
 
+    # Find tracks that are in the database but not in the master playlist
+    master_track_ids = set(track_data[0] for track_data in master_tracks if track_data[0] is not None)
+    # For local files, generate IDs
+    for track_data in master_tracks:
+        track_id, track_title, artist_names, album_name, added_at = track_data
+        if track_id is None:  # Local file
+            normalized_title = ''.join(c for c in track_title if c.isalnum() or c in ' &-_')
+            normalized_artist = ''.join(c for c in artist_names if c.isalnum() or c in ' &-_')
+            metadata = {'title': normalized_title, 'artist': normalized_artist}
+            track_id = generate_local_track_id(metadata)
+            master_track_ids.add(track_id)
+
+    # Identify tracks to delete (in database but not in master playlist)
+    tracks_to_delete = []
+    for track_id, track in existing_tracks.items():
+        if track_id not in master_track_ids:
+            tracks_to_delete.append({
+                'id': track_id,
+                'title': track.title,
+                'artists': track.artists,
+                'album': track.album,
+                'is_local': track.is_local if hasattr(track, 'is_local') else False
+            })
+
     # Display summary of changes
     print("\nMaster Tracks SYNC ANALYSIS COMPLETE")
     print("=================================")
     print(f"\nTracks to add: {len(tracks_to_add)}")
     print(f"Tracks to update: {len(tracks_to_update)}")
+    print(f"Tracks to delete: {len(tracks_to_delete)}")
     print(f"Unchanged tracks: {len(unchanged_tracks)}")
 
     # Display detailed changes
@@ -663,21 +680,34 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
         if len(sorted_updates) > 10:
             print(f"...and {len(sorted_updates) - 10} more tracks")
 
+    if tracks_to_delete:
+        print("\nTRACKS TO DELETE:")
+        print("================")
+        sorted_deletes = sorted(tracks_to_delete, key=lambda x: x['artists'] + x['title'])
+        for i, track in enumerate(sorted_deletes[:10], 1):  # Show first 10
+            local_indicator = " (LOCAL)" if track['is_local'] else ""
+            print(f"{i}. {track['artists']} - {track['title']} ({track['album']}){local_indicator}")
+        if len(sorted_deletes) > 10:
+            print(f"...and {len(sorted_deletes) - 10} more tracks")
+
     # Ask for confirmation
-    if tracks_to_add or tracks_to_update:
+    if tracks_to_add or tracks_to_update or tracks_to_delete:
         if not auto_confirm:  # Add this condition
-            confirmation = input("\nWould you like to proceed with these changes to the database? (y/n): ")
+            confirmation = input(f"\nWould you like to proceed with these changes to the database?\n"
+                                 f"Add: {len(tracks_to_add)}, Update: {len(tracks_to_update)}, "
+                                 f"Delete: {len(tracks_to_delete)} (y/n): ")
             if confirmation.lower() != 'y':
                 sync_logger.info("Sync cancelled by user")
                 print("Sync cancelled.")
-                return 0, 0, len(unchanged_tracks)
+                return 0, 0, len(unchanged_tracks), 0
     else:
         print("\nNo track changes needed. Database is up to date.")
-        return 0, 0, len(unchanged_tracks)
+        return 0, 0, len(unchanged_tracks), 0
 
     # If confirmed, apply the changes
     added_count = 0
     updated_count = 0
+    deleted_count = 0
 
     print("\nApplying track changes to database...")
     with UnitOfWork() as uow:
@@ -730,30 +760,41 @@ def sync_master_tracks_incremental(master_playlist_id: str, force_full_refresh: 
             updated_count += 1
             sync_logger.info(f"Updated track: {track_title} (ID: {track_id})")
 
-    print(f"\nTrack sync complete: {added_count} added, {updated_count} updated, {len(unchanged_tracks)} unchanged")
+        # Delete tracks that are no longer in the master playlist
+        for track_data in tracks_to_delete:
+            track_id = track_data['id']
+
+            # First remove all playlist associations for this track
+            try:
+                uow.track_playlist_repository.delete_by_track_id(track_id)
+                sync_logger.info(f"Removed playlist associations for track: {track_data['title']} (ID: {track_id})")
+            except Exception as e:
+                sync_logger.error(f"Error removing playlist associations for track {track_id}: {e}")
+                print(f"Warning: Error removing playlist associations for track {track_id}")
+
+            # Then delete the track itself
+            try:
+                uow.track_repository.delete(track_id)
+                deleted_count += 1
+                sync_logger.info(f"Deleted track: {track_data['title']} (ID: {track_id})")
+            except Exception as e:
+                sync_logger.error(f"Error deleting track {track_id}: {e}")
+                print(f"Warning: Error deleting track {track_id}")
+
+    # Log final results with deletion counts
+    print(f"\nTrack sync complete: {added_count} added, {updated_count} updated, "
+          f"{len(unchanged_tracks)} unchanged, {deleted_count} deleted")
     sync_logger.info(
-        f"Track sync complete: {added_count} added, {updated_count} updated, {len(unchanged_tracks)} unchanged"
+        f"Track sync complete: {added_count} added, {updated_count} updated, "
+        f"{len(unchanged_tracks)} unchanged, {deleted_count} deleted"
     )
 
-    return added_count, updated_count, len(unchanged_tracks)
+    return added_count, updated_count, len(unchanged_tracks), deleted_count
 
 
 def sync_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False,
                                      auto_confirm: bool = False, precomputed_changes: dict = None,
                                      exclusion_config=None) -> Dict[str, int]:
-    """
-    Sync track-playlist associations for all tracks in the database.
-    Only processes playlists that have changed since the last sync (based on snapshot_id).
-
-    Args:
-        master_playlist_id: ID of the master playlist
-        force_full_refresh: Whether to force a fresh API call for each playlist
-        auto_confirm: Whether to skip the confirmation prompt
-        precomputed_changes: Precomputed changes to apply
-
-    Returns:
-        Dictionary with statistics about associations
-    """
     sync_logger.info("Starting track-playlist association sync")
     print("Starting track-playlist association sync...")
 
@@ -1271,15 +1312,6 @@ def find_playlists_for_tracks_from_db(spotify_client, track_batch, master_playli
 
 
 def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
-    """
-    Analyze what changes would be made to playlists without executing them.
-
-    Args:
-        force_full_refresh: Whether to force a full refresh, ignoring existing data
-
-    Returns:
-        Tuple of (added_count, updated_count, unchanged_count, deleted_count, changes_details)
-    """
     # Get existing playlists from database
     existing_playlists = get_db_playlists() if not force_full_refresh else {}
 
