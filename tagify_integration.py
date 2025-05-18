@@ -1296,7 +1296,9 @@ def api_sync_database():
                             "id": track.get('id'),
                             "artists": track['artists'],
                             "title": track['title'],
-                            "is_local": track.get('is_local', False)
+                            "album": track.get('album', 'Unknown Album'),
+                            "is_local": track.get('is_local', False),
+                            "added_at": track.get('added_at')
                         })
 
                     all_tracks_to_update = []
@@ -1305,8 +1307,10 @@ def api_sync_database():
                             "id": track.get('id'),
                             "old_artists": track['old_artists'],
                             "old_title": track['old_title'],
+                            "old_album": track.get('old_album', 'Unknown Album'),
                             "artists": track['artists'],
                             "title": track['title'],
+                            "album": track.get('album', 'Unknown Album'),
                             "is_local": track.get('is_local', False)
                         })
 

@@ -1,5 +1,6 @@
 import hashlib
 import time
+from datetime import datetime
 from typing import Dict, Tuple
 
 from drivers.spotify_client import (
@@ -685,9 +686,12 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
     print(f"\nTracks to add: {len(tracks_to_add)}")
     print(f"Tracks to update: {len(tracks_to_update)}")
     print(f"Tracks to delete: {len(tracks_to_delete)}")
-    print(f"Unchanged tracks: {len(unchanged_tracks)}")
+    if isinstance(unchanged_tracks, (list, set, tuple)):
+        print(f"Unchanged tracks: {len(unchanged_tracks)}")
+    else:
+        print(f"Unchanged tracks: {unchanged_tracks}")
 
-    # Display detailed changes
+        # Display detailed changes
     if tracks_to_add:
         print("\nNEW TRACKS TO ADD:")
         print("=================")
@@ -739,10 +743,14 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             if confirmation.lower() != 'y':
                 sync_logger.info("Sync cancelled by user")
                 print("Sync cancelled.")
-                return 0, 0, len(unchanged_tracks), 0
+                # Handle both list and integer types
+                unchanged_count = unchanged_tracks if isinstance(unchanged_tracks, int) else len(unchanged_tracks)
+                return 0, 0, unchanged_count, 0
     else:
         print("\nNo track changes needed. Database is up to date.")
-        return 0, 0, len(unchanged_tracks), 0
+        # Handle both list and integer types
+        unchanged_count = unchanged_tracks if isinstance(unchanged_tracks, int) else len(unchanged_tracks)
+        return 0, 0, unchanged_count, 0
 
     # If confirmed, apply the changes
     added_count = 0
@@ -757,8 +765,51 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             track_title = track_data['title']
             artist_names = track_data['artists']
             album_name = track_data['album']
-            added_at = track_data['added_at']
             is_local = track_data['is_local']
+            added_at = None
+            if 'added_at' in track_data and track_data['added_at']:
+                # If it's already a datetime object, use it directly
+                if isinstance(track_data['added_at'], datetime):
+                    added_at = track_data['added_at']
+                # If it's a string, try to parse it
+                elif isinstance(track_data['added_at'], str):
+                    try:
+                        # Try ISO format first
+                        added_at = datetime.fromisoformat(track_data['added_at'].replace('Z', '+00:00'))
+                    except ValueError:
+                        try:
+                            # Try RFC 822 format (e.g., 'Sun, 18 May 2025 04:14:05 GMT')
+                            from email.utils import parsedate_to_datetime
+                            added_at = parsedate_to_datetime(track_data['added_at'])
+                        except Exception:
+                            try:
+                                # Try RFC 822 format with strptime as fallback
+                                added_at = datetime.strptime(track_data['added_at'], '%a, %d %b %Y %H:%M:%S GMT')
+                            except ValueError:
+                                try:
+                                    # Try other common formats
+                                    added_at = datetime.strptime(track_data['added_at'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                                except ValueError:
+                                    try:
+                                        added_at = datetime.strptime(track_data['added_at'], '%Y-%m-%d %H:%M:%S')
+                                    except ValueError:
+                                        # If all parsing fails, log and use None
+                                        sync_logger.warning(
+                                            f"Could not parse date: {track_data['added_at']} for track {track_id}")
+                                        added_at = None
+
+                # If we successfully parsed a date, ensure it's in the correct format for SQL Server
+                if added_at is not None:
+                    # Format the datetime to match your database format
+                    # This doesn't change the datetime object itself, but ensures compatibility with SQL Server
+                    formatted_date_str = added_at.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                    # For debugging
+                    sync_logger.debug(f"Formatted AddedToMaster date: {formatted_date_str} for track {track_id}")
+
+            # For newly added tracks with no added_at, you might want to use current time
+            if added_at is None:
+                added_at = datetime.now()
+                sync_logger.debug(f"Using current time for AddedToMaster: {added_at} for track {track_id}")
 
             # Determine local path if it's a local file (can be enhanced later)
             if is_local:
@@ -823,13 +874,12 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
     # Log final results with deletion counts
     print(f"\nTrack sync complete: {added_count} added, {updated_count} updated, "
-          f"{len(unchanged_tracks)} unchanged, {deleted_count} deleted")
-    sync_logger.info(
-        f"Track sync complete: {added_count} added, {updated_count} updated, "
-        f"{len(unchanged_tracks)} unchanged, {deleted_count} deleted"
-    )
+          f"{unchanged_tracks if isinstance(unchanged_tracks, int) else len(unchanged_tracks)} unchanged, {deleted_count} deleted")
+    sync_logger.info(f"\nTrack sync complete: {added_count} added, {updated_count} updated, "
+                     f"{unchanged_tracks if isinstance(unchanged_tracks, int) else len(unchanged_tracks)} unchanged, {deleted_count} deleted")
 
-    return added_count, updated_count, len(unchanged_tracks), deleted_count
+    unchanged_count = unchanged_tracks if isinstance(unchanged_tracks, int) else len(unchanged_tracks)
+    return added_count, updated_count, unchanged_count, deleted_count
 
 
 def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_refresh: bool = False,
