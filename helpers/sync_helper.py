@@ -694,8 +694,11 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         # Sort by artist for better readability
         sorted_tracks = sorted(tracks_to_add, key=lambda x: x['artists'] + x['title'])
         for i, track in enumerate(sorted_tracks[:10], 1):  # Show first 10
-            local_indicator = " (LOCAL)" if track['is_local'] else ""
-            print(f"{i}. {track['artists']} - {track['title']} ({track['album']}){local_indicator}")
+            local_indicator = " (LOCAL)" if track.get('is_local', False) else ""
+            # Use .get() with defaults for fields that might be missing
+            album = track.get('album', 'Unknown Album')
+            print(
+                f"{i}. {track.get('artists', 'Unknown Artist')} - {track.get('title', 'Untitled')} ({album}){local_indicator}")
         if len(sorted_tracks) > 10:
             print(f"...and {len(sorted_tracks) - 10} more tracks")
 
@@ -704,11 +707,14 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         print("================")
         sorted_updates = sorted(tracks_to_update, key=lambda x: x['artists'] + x['title'])
         for i, track in enumerate(sorted_updates[:10], 1):  # Show first 10
-            local_indicator = " (LOCAL)" if track['is_local'] else ""
-            print(f"{i}. {track['id']}: {track['old_artists']} - {track['old_title']}")
-            print(f"   → {track['artists']} - {track['title']}{local_indicator}")
-            if track['old_album'] != track['album']:
-                print(f"     Album: {track['old_album']} → {track['album']}")
+            local_indicator = " (LOCAL)" if track.get('is_local', False) else ""
+            print(
+                f"{i}. {track.get('id', 'Unknown ID')}: {track.get('old_artists', 'Unknown Artist')} - {track.get('old_title', 'Untitled')}")
+            print(f"   → {track.get('artists', 'Unknown Artist')} - {track.get('title', 'Untitled')}{local_indicator}")
+            if track.get('old_album') != track.get('album'):
+                old_album = track.get('old_album', 'Unknown Album')
+                new_album = track.get('album', 'Unknown Album')
+                print(f"     Album: {old_album} → {new_album}")
         if len(sorted_updates) > 10:
             print(f"...and {len(sorted_updates) - 10} more tracks")
 
@@ -717,8 +723,10 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         print("================")
         sorted_deletes = sorted(tracks_to_delete, key=lambda x: x['artists'] + x['title'])
         for i, track in enumerate(sorted_deletes[:10], 1):  # Show first 10
-            local_indicator = " (LOCAL)" if track['is_local'] else ""
-            print(f"{i}. {track['artists']} - {track['title']} ({track['album']}){local_indicator}")
+            local_indicator = " (LOCAL)" if track.get('is_local', False) else ""
+            album = track.get('album', 'Unknown Album')
+            print(
+                f"{i}. {track.get('artists', 'Unknown Artist')} - {track.get('title', 'Untitled')} ({album}){local_indicator}")
         if len(sorted_deletes) > 10:
             print(f"...and {len(sorted_deletes) - 10} more tracks")
 

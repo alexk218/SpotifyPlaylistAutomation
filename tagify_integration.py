@@ -1004,23 +1004,24 @@ def api_analyze_tracks():
         all_tracks_to_add = []
         for track in tracks_to_add:
             all_tracks_to_add.append({
-                "id": track['id'],
-                "title": track['title'],
+                "id": track.get('id'),
                 "artists": track['artists'],
-                "album": track['album'],
-                "is_local": track.get('is_local', False)
+                "title": track['title'],
+                "album": track.get('album', 'Unknown Album'),
+                "is_local": track.get('is_local', False),
+                "added_at": track.get('added_at')
             })
 
         all_tracks_to_update = []
         for track in tracks_to_update:
             all_tracks_to_update.append({
-                "id": track['id'],
-                "old_title": track['old_title'],
-                "new_title": track['title'],
+                "id": track.get('id'),
                 "old_artists": track['old_artists'],
-                "new_artists": track['artists'],
-                "old_album": track['old_album'],
-                "new_album": track['album'],
+                "old_title": track['old_title'],
+                "old_album": track.get('old_album', 'Unknown Album'),
+                "artists": track['artists'],
+                "title": track['title'],
+                "album": track.get('album', 'Unknown Album'),
                 "is_local": track.get('is_local', False)
             })
 
@@ -1145,6 +1146,21 @@ def api_sync_database():
             # Otherwise, proceed with execution
             master_playlist_id = data.get('master_playlist_id') or MASTER_PLAYLIST_ID
             track_changes_from_analysis = data.get('precomputed_changes_from_analysis')
+            if track_changes_from_analysis:
+                if 'all_items_to_add' in track_changes_from_analysis:
+                    for track in track_changes_from_analysis['all_items_to_add']:
+                        # Ensure all required fields exist
+                        if 'album' not in track:
+                            track['album'] = 'Unknown Album'
+                        if 'added_at' not in track:
+                            track['added_at'] = None
+
+                if 'all_items_to_update' in track_changes_from_analysis:
+                    for track in track_changes_from_analysis['all_items_to_update']:
+                        if 'album' not in track:
+                            track['album'] = 'Unknown Album'
+                        if 'old_album' not in track:
+                            track['old_album'] = 'Unknown Album'
             added, updated, unchanged, deleted = sync_tracks_to_db(
                 master_playlist_id,
                 force_full_refresh=force_refresh,
