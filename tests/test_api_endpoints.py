@@ -1,4 +1,6 @@
 import json
+from datetime import datetime
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -144,3 +146,99 @@ def test_embed_metadata_execution(client):
         assert data['success'] == True
         assert data['successful_embeds'] == 1
         assert mock_embed.called
+
+
+def test_direct_tracks_compare(client, mock_unit_of_work):
+    """Test the direct-tracks-compare endpoint"""
+    # Import datetime at the top of the file
+    from datetime import datetime
+
+    # Create a real-looking Track object instead of MagicMock
+    class MockTrack:
+        def __init__(self, track_id, title, artists, album, added_to_master=None, is_local=False):
+            self.track_id = track_id
+            self.title = title
+            self.artists = artists
+            self.album = album
+            self.added_to_master = added_to_master
+            self.is_local = is_local
+
+        def isoformat(self):
+            if self.added_to_master:
+                return self.added_to_master.isoformat()
+            return None
+
+        def __dict__(self):
+            return {
+                'track_id': self.track_id,
+                'title': self.title,
+                'artists': self.artists,
+                'album': self.album,
+                'added_to_master': self.added_to_master,
+                'is_local': self.is_local
+            }
+
+    # Create mock track with proper datetime
+    mock_track = MockTrack(
+        track_id='spotify:track:123',
+        title='Test Track',
+        artists='Test Artist',
+        album='Test Album',
+        added_to_master=datetime.now(),
+        is_local=False
+    )
+
+    # Setup mock track repository's get_all method
+    mock_unit_of_work.track_repository.get_all.return_value = [mock_track]
+
+    # Mock ID3 functions for the local files scan
+    with patch('tagify_integration.ID3') as mock_id3, \
+            patch('tagify_integration.os.walk') as mock_walk, \
+            patch('tagify_integration.os.path.getsize') as mock_getsize, \
+            patch('tagify_integration.os.path.exists') as mock_exists:
+        # Configure mocks for the walk
+        mock_walk.return_value = [('/test/dir', [], ['track1.mp3'])]
+        mock_getsize.return_value = 1000
+        mock_exists.return_value = True
+
+        # Mock ID3 tags
+        mock_tags = MagicMock()
+        mock_tags.__contains__.side_effect = lambda x: x == 'TXXX:TRACKID'
+        mock_tags.__getitem__.return_value.text = ['spotify:track:123']
+        mock_id3.return_value = mock_tags
+
+        # Make request with needed parameters
+        response = client.get('/api/direct-tracks-compare?master_tracks_dir=/test/dir')
+
+        # Verify response
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert len(data['master_tracks']) == 1  # We should have our one track
+        assert data['master_tracks'][0]['id'] == 'spotify:track:123'
+
+
+def test_error_handling(client):
+    """Test error handling in API endpoints"""
+    # Test 400 Bad Request
+    response = client.post('/api/validate-playlists',
+                           json={},  # Missing required parameters
+                           content_type='application/json')
+    assert response.status_code == 400
+
+    # Test exception handling - need to use a function that's actually used
+    # and will trigger an exception in the app
+    with patch('tagify_integration.os.makedirs') as mock_makedirs:
+        # Set up the mock to raise an exception
+        mock_makedirs.side_effect = Exception("Test exception")
+
+        # Use an endpoint that calls makedirs
+        response = client.post('/api/generate-m3u',
+                               json={'masterTracksDir': '/test', 'playlistsDir': '/test'},
+                               content_type='application/json')
+
+        # This should now properly trigger a 500 error
+        assert response.status_code == 500
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'exception' in data['message'].lower()

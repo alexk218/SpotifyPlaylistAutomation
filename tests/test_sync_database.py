@@ -1,6 +1,6 @@
 import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, mock_open
 
 
 def test_sync_database_playlists(client):
@@ -122,3 +122,57 @@ def test_sync_database_associations(client):
         assert data['success'] == True
         assert data['stats']['associations_added'] == 1
         assert mock_sync.called
+
+
+def test_analyze_playlists(client):
+    """Test the analyze-playlists endpoint"""
+    # Create test request data
+    request_data = {}
+
+    # Mock analyze_playlists_changes function
+    with patch('tagify_integration.analyze_playlists_changes') as mock_analyze:
+        mock_analyze.return_value = (2, 1, 5, 0, {
+            'to_add': [{'id': 'pl1', 'name': 'New Playlist'}],
+            'to_update': [{'id': 'pl2', 'name': 'Updated Playlist', 'old_name': 'Old Name'}],
+            'to_delete': []
+        })
+
+        # Make request
+        response = client.post('/api/analyze-playlists',
+                               json=request_data,
+                               content_type='application/json')
+
+        # Verify response
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['stats']['added'] == 2
+        assert data['stats']['updated'] == 1
+        assert data['needs_confirmation'] == True
+
+
+def test_get_exclusion_config():
+    """Test the exclusion config handling"""
+    from tagify_integration import get_exclusion_config
+    import json
+
+    # Test with client-provided settings
+    request_json = {
+        'playlistSettings': {
+            'excludedKeywords': ['Daily Mix', 'Discover Weekly'],
+            'excludedPlaylistIds': ['playlist123'],
+            'excludeByDescription': ['Made for you']
+        }
+    }
+
+    config = get_exclusion_config(request_json)
+    assert 'Daily Mix' in config['forbidden_words']
+    assert 'playlist123' in config['forbidden_playlist_ids']
+    assert 'Made for you' in config['description_keywords']
+
+    # Test with no settings by patching json.load instead
+    mock_config = {"forbidden_playlists": ["SKIPPED"]}
+    with patch('json.load', return_value=mock_config):
+        # This will now use our mocked json.load
+        config = get_exclusion_config()
+        assert 'SKIPPED' in config['forbidden_playlists']

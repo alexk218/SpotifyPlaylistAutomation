@@ -1,4 +1,6 @@
 import json
+import os
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -135,3 +137,25 @@ def test_search_tracks(client):
         assert data['success'] == True
         assert len(data['results']) == 1
         assert data['results'][0]['file'] == 'test_track.mp3'
+
+
+def test_file_operations(client, temp_dir):
+    """Test file-related operations"""
+    # Create a test file in the temp directory
+    test_file = os.path.join(temp_dir, "test.txt")
+    with open(test_file, "w") as f:
+        f.write("Test content")
+
+    # Test file deletion
+    request_data = {
+        'file_path': test_file
+    }
+
+    response = client.post('/api/delete-file',
+                           json=request_data,
+                           content_type='application/json')
+
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert data['success'] == True
+    assert not os.path.exists(test_file)
