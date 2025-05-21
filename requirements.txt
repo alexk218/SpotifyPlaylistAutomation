@@ -22,3 +22,7 @@ argparse~=1.4.0
 Levenshtein~=0.25.1
 Flask~=3.1.0
 flask-cors~=5.0.1
+
+pytest==7.3.1
+pytest-cov==4.1.0
+pytest-mock==3.10.0
