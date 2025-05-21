@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 import json
 import os
 import re
@@ -42,9 +41,23 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from helpers.validation_helper import validate_master_tracks
 
-app = Flask(__name__)
-CORS(app, origins=["https://xpui.app.spotify.com", "https://open.spotify.com", "http://localhost:4000", "*"])
-app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
+USE_NEW_API = os.getenv('USE_NEW_API', 'true').lower() in ('true', '1', 'yes')
+
+if USE_NEW_API:
+    try:
+        # Use the new API structure
+        from api.app import create_app
+
+        app = create_app()
+        print("Successfully loaded new API structure")
+    except Exception as e:
+        print(f"Error loading new API structure: {e}")
+        print(traceback.format_exc())
+        sys.exit(1)
+else:
+    app = Flask(__name__)
+    CORS(app, origins=["https://xpui.app.spotify.com", "https://open.spotify.com", "http://localhost:4000", "*"])
+    app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
 
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 HELPERS_DIR = PROJECT_ROOT / "helpers"
@@ -58,16 +71,16 @@ MASTER_PLAYLIST_ID = os.getenv("MASTER_PLAYLIST_ID")
 DEFAULT_PORT = 8765
 
 
-@app.route('/status')
-def get_status():
-    return jsonify({
-        "status": "running",
-        "version": "1.0",
-        "env_vars": {
-            "MASTER_TRACKS_DIRECTORY_SSD": MASTER_TRACKS_DIRECTORY_SSD,
-            "MASTER_PLAYLIST_ID": MASTER_PLAYLIST_ID
-        }
-    })
+# @app.route('/status')
+# def get_status():
+#     return jsonify({
+#         "status": "running",
+#         "version": "1.0",
+#         "env_vars": {
+#             "MASTER_TRACKS_DIRECTORY_SSD": MASTER_TRACKS_DIRECTORY_SSD,
+#             "MASTER_PLAYLIST_ID": MASTER_PLAYLIST_ID
+#         }
+#     })
 
 
 @app.route('/api/direct-tracks-compare', methods=['GET'])
