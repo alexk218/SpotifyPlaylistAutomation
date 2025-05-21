@@ -357,8 +357,9 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 exclusion_config
             )
 
-            # Add next stage info
-            playlists_result["next_stage"] = "tracks"
+            # Add next stage info only if this is a complete sync operation
+            if is_confirmed and 'stage' in playlists_result and playlists_result['stage'] == 'sync_complete':
+                playlists_result["next_stage"] = "tracks"
             return playlists_result
 
         elif stage == 'tracks':
@@ -372,8 +373,9 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 exclusion_config
             )
 
-            # Add next stage info
-            tracks_result["next_stage"] = "associations"
+            # Add next stage info only if this is a complete sync operation
+            if is_confirmed and 'stage' in tracks_result and tracks_result['stage'] == 'sync_complete':
+                tracks_result["next_stage"] = "associations"
             return tracks_result
 
         elif stage == 'associations':
@@ -387,8 +389,9 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 exclusion_config
             )
 
-            # Add next stage info
-            associations_result["next_stage"] = "complete"
+            # Add next stage info only if this is a complete sync operation
+            if is_confirmed and 'stage' in associations_result and associations_result['stage'] == 'sync_complete':
+                associations_result["next_stage"] = "complete"
             return associations_result
 
         elif stage == 'complete':
@@ -397,7 +400,7 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 "success": True,
                 "action": "all",
                 "stage": "complete",
-                "message": "Sequential database sync completed successfully",
+                "message": "Sequential database sync completed successfully"
             }
 
         else:
