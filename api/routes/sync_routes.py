@@ -61,6 +61,7 @@ def sync_database():
     is_confirmed = request.json.get('confirmed', False)
     master_playlist_id = request.json.get('master_playlist_id') or current_app.config['MASTER_PLAYLIST_ID']
     precomputed_changes = request.json.get('precomputed_changes_from_analysis')
+    stage = request.json.get('stage', 'start')
 
     # Get exclusion config from request
     exclusion_config = sync_service.get_exclusion_config(request.json)
@@ -72,7 +73,8 @@ def sync_database():
             force_refresh,
             is_confirmed,
             precomputed_changes,
-            exclusion_config
+            exclusion_config,
+            stage
         )
         return jsonify(result)
     except Exception as e:
