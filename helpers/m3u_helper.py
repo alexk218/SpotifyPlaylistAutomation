@@ -11,7 +11,7 @@ from mutagen.aiff import AIFF
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
-m3u_logger = setup_logger('m3u_helper', 'm3u_validation' ,'m3u.log')
+m3u_logger = setup_logger('m3u_helper', 'm3u_validation', 'm3u.log')
 
 # Get the path to the current file
 current_file = Path(__file__).resolve()
@@ -1009,3 +1009,129 @@ def regenerate_single_playlist(playlist_id: str, master_tracks_dir: str, playlis
             'file_size': file_size
         }
     }
+
+
+def search_tracks_in_m3u_files(m3u_directory: str, track_paths: List[str]) -> Dict[str, List[str]]:
+    """
+    Search for specific tracks across all M3U files in a directory and its subdirectories.
+
+    Args:
+        m3u_directory: Root directory containing M3U files
+        track_paths: List of track file paths to search for
+
+    Returns:
+        Dictionary mapping track paths to lists of M3U files that contain them
+    """
+    import os
+    from pathlib import Path
+
+    # Normalize track paths for comparison
+    normalized_tracks = {}
+    for track_path in track_paths:
+        normalized_path = os.path.normpath(track_path).lower()
+        normalized_tracks[normalized_path] = track_path
+
+    # Results dictionary: track_path -> [list of m3u files containing it]
+    results = {track: [] for track in track_paths}
+
+    # Search all M3U files
+    for root, dirs, files in os.walk(m3u_directory):
+        for filename in files:
+            if not filename.lower().endswith('.m3u'):
+                continue
+
+            m3u_path = os.path.join(root, filename)
+            relative_m3u_path = os.path.relpath(m3u_path, m3u_directory)
+
+            try:
+                with open(m3u_path, 'r', encoding='utf-8') as f:
+                    for line_num, line in enumerate(f, 1):
+                        # Skip comment lines and empty lines
+                        if line.startswith('#') or not line.strip():
+                            continue
+
+                        # Get the file path and normalize it
+                        file_path = line.strip()
+                        normalized_file_path = os.path.normpath(file_path).lower()
+
+                        # Check if this matches any of our target tracks
+                        if normalized_file_path in normalized_tracks:
+                            original_track = normalized_tracks[normalized_file_path]
+                            if relative_m3u_path not in results[original_track]:
+                                results[original_track].append(relative_m3u_path)
+
+            except Exception as e:
+                m3u_logger.error(f"Error reading M3U file {m3u_path}: {e}")
+                continue
+
+    return results
+
+
+def search_tracks_by_title_in_m3u_files(m3u_directory: str, track_titles: List[str]) -> Dict[str, List[Dict[str, str]]]:
+    """
+    Search for tracks by title across all M3U files in a directory and its subdirectories.
+
+    Args:
+        m3u_directory: Root directory containing M3U files
+        track_titles: List of track titles to search for (e.g., ["Sundaland (Extended Mix)", "Plommon (Original Mix)"])
+
+    Returns:
+        Dictionary mapping track titles to lists of matches with M3U file info
+    """
+    import os
+
+    # Normalize track titles for comparison
+    normalized_titles = {}
+    for title in track_titles:
+        normalized_title = title.lower().strip()
+        normalized_titles[normalized_title] = title
+
+    # Results dictionary: track_title -> [list of matches]
+    results = {title: [] for title in track_titles}
+
+    # Search all M3U files
+    for root, dirs, files in os.walk(m3u_directory):
+        for filename in files:
+            if not filename.lower().endswith('.m3u'):
+                continue
+
+            m3u_path = os.path.join(root, filename)
+            relative_m3u_path = os.path.relpath(m3u_path, m3u_directory)
+
+            try:
+                with open(m3u_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+
+                    for i, line in enumerate(lines):
+                        # Look for EXTINF lines which contain track info
+                        if line.startswith('#EXTINF:'):
+                            # Parse EXTINF line: #EXTINF:duration,Artist - Title
+                            try:
+                                info_part = line[8:].split(',', 1)
+                                if len(info_part) > 1:
+                                    track_info = info_part[1].strip()
+
+                                    # Get the file path from the next line
+                                    file_path = ""
+                                    if i + 1 < len(lines) and not lines[i + 1].startswith('#'):
+                                        file_path = lines[i + 1].strip()
+
+                                    # Check if any of our target titles are in this track info
+                                    track_info_lower = track_info.lower()
+                                    for normalized_title, original_title in normalized_titles.items():
+                                        if normalized_title in track_info_lower:
+                                            results[original_title].append({
+                                                'playlist': relative_m3u_path,
+                                                'track_info': track_info,
+                                                'file_path': file_path,
+                                                'playlist_full_path': m3u_path
+                                            })
+                            except Exception as e:
+                                m3u_logger.error(f"Error parsing EXTINF line in {m3u_path}: {e}")
+                                continue
+
+            except Exception as e:
+                m3u_logger.error(f"Error reading M3U file {m3u_path}: {e}")
+                continue
+
+    return results
