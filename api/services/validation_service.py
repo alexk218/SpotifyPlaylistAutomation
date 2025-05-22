@@ -14,13 +14,12 @@ from helpers.m3u_helper import (
 from helpers.validation_helper import validate_master_tracks
 
 
-def validate_track_metadata(master_tracks_dir, confidence_threshold=0.75):
+def validate_track_metadata(master_tracks_dir):
     """
     Validate track metadata in the master tracks directory.
 
     Args:
         master_tracks_dir: Directory containing master tracks
-        confidence_threshold: Threshold for confidence in filename matching
 
     Returns:
         Dictionary with validation results
@@ -77,25 +76,16 @@ def validate_track_metadata(master_tracks_dir, confidence_threshold=0.75):
                         # Calculate filename similarity
                         similarity = Levenshtein.ratio(filename_no_ext, expected_filename)
 
-                        # Flag potential mismatches
-                        if similarity < confidence_threshold:
-                            try:
-                                audio = MP3(file_path)
-                                duration = audio.info.length  # Duration in seconds
-                                duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
-                            except Exception as e:
-                                duration = 0
-                                duration_formatted = "Unknown"
-                            potential_mismatches.append({
-                                'file': file,
-                                'track_id': track_id,
-                                'embedded_artist_title': f"{db_track.artists} - {db_track.title}",
-                                'filename': filename_no_ext,
-                                'confidence': similarity,
-                                'full_path': file_path,
-                                'duration': duration,
-                                'duration_formatted': duration_formatted
-                            })
+                        potential_mismatches.append({
+                            'file': file,
+                            'track_id': track_id,
+                            'embedded_artist_title': f"{db_track.artists} - {db_track.title}",
+                            'filename': filename_no_ext,
+                            'confidence': similarity,
+                            'full_path': file_path,
+                            'duration': duration,
+                            'duration_formatted': duration_formatted
+                        })
                     else:
                         try:
                             audio = MP3(file_path)

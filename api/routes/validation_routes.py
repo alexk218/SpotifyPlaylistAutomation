@@ -59,10 +59,9 @@ def validate_playlists_m3u():
 def validate_track_metadata():
     """Validate track metadata in the master tracks directory."""
     master_tracks_dir = request.args.get('masterTracksDir') or current_app.config['MASTER_TRACKS_DIRECTORY_SSD']
-    confidence_threshold = float(request.args.get('confidence_threshold', 0.75))
 
     try:
-        result = validation_service.validate_track_metadata(master_tracks_dir, confidence_threshold)
+        result = validation_service.validate_track_metadata(master_tracks_dir)
         return jsonify({
             "success": True,
             **result
