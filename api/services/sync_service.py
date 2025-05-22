@@ -154,6 +154,7 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
     Handle database sync operations.
 
     Args:
+        stage:
         action: Type of sync operation ('playlists', 'tracks', 'associations', 'all', 'clear')
         master_playlist_id: ID of the master playlist
         force_refresh: Whether to force a full refresh

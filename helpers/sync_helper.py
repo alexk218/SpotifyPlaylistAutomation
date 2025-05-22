@@ -238,7 +238,7 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
         Tuple of (added_count, updated_count, unchanged_count, changes_details)
     """
     # Get existing playlists from database
-    existing_playlists = get_db_playlists() if not force_full_refresh else {}
+    existing_playlists = get_db_playlists()
 
     # Fetch all playlists from Spotify
     spotify_client = authenticate_spotify()
@@ -291,7 +291,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
         Tuple of (tracks_to_add, tracks_to_update, unchanged_tracks)
     """
     # Get existing tracks from database
-    existing_tracks = get_db_tracks() if not force_full_refresh else {}
+    existing_tracks = get_db_tracks()
 
     # Fetch all tracks from the MASTER playlist
     spotify_client = authenticate_spotify()
@@ -1389,7 +1389,7 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
         Tuple of (added_count, updated_count, unchanged_count, deleted_count, changes_details)
     """
     # Get existing playlists from database
-    existing_playlists = get_db_playlists() if not force_full_refresh else {}
+    existing_playlists = get_db_playlists()
 
     # Fetch all playlists from Spotify
     spotify_client = authenticate_spotify()
@@ -1481,7 +1481,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
         Tuple of (tracks_to_add, tracks_to_update, unchanged_tracks)
     """
     # Get existing tracks from database
-    existing_tracks = get_db_tracks() if not force_full_refresh else {}
+    existing_tracks = get_db_tracks()
 
     # Create a lookup dictionary for local tracks in the database
     # This will help us match local files more effectively
