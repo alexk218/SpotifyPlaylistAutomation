@@ -1,10 +1,10 @@
 # api/services/validation_service.py
 import os
+
 import Levenshtein
-import re
-from mutagen.id3 import ID3, ID3NoHeaderError
+from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
-from sql.core.unit_of_work import UnitOfWork
+
 from helpers.m3u_helper import (
     build_track_id_mapping,
     sanitize_filename,
@@ -12,6 +12,7 @@ from helpers.m3u_helper import (
     find_local_file_path_with_extensions
 )
 from helpers.validation_helper import validate_master_tracks
+from sql.core.unit_of_work import UnitOfWork
 
 
 def validate_track_metadata(master_tracks_dir):
@@ -478,3 +479,171 @@ def validate_tracks(master_tracks_dir):
     result = validate_master_tracks(master_tracks_dir)
 
     return result
+
+
+def validate_short_tracks(master_tracks_dir, min_length_minutes=5):
+    """
+    Validate tracks that are shorter than the minimum length.
+    Note: This only scans local files - no external API calls are made.
+    """
+    import time
+    start_time = time.time()
+
+    # Track statistics
+    total_files = 0
+    short_tracks = []
+    min_length_seconds = min_length_minutes * 60
+    processed_files = 0
+
+    print(f"\nScanning directory for tracks shorter than {min_length_minutes} minutes...")
+    print(f"Directory: {master_tracks_dir}")
+
+    # Count total MP3 files first for progress tracking
+    total_mp3_files = 0
+    for root, _, files in os.walk(master_tracks_dir):
+        total_mp3_files += sum(1 for file in files if file.lower().endswith('.mp3'))
+
+    print(f"Found {total_mp3_files} MP3 files to process...")
+
+    # Scan all MP3 files
+    for root, _, files in os.walk(master_tracks_dir):
+        for file in files:
+            if not file.lower().endswith('.mp3'):
+                continue
+
+            total_files += 1
+            processed_files += 1
+            file_path = os.path.join(root, file)
+
+            # Progress logging every 1000 files
+            if processed_files % 1000 == 0:
+                print(f"Processed {processed_files}/{total_mp3_files} files...")
+
+            try:
+                audio = MP3(file_path)
+                if audio is None:
+                    continue
+
+                length = audio.info.length
+
+                if length < min_length_seconds:
+                    # Extract artist and title from filename
+                    filename_no_ext = os.path.splitext(file)[0]
+
+                    # Try to parse "Artist - Title" format
+                    if " - " in filename_no_ext:
+                        artist, title = filename_no_ext.split(" - ", 1)
+                    else:
+                        artist = "Unknown Artist"
+                        title = filename_no_ext
+
+                    # Get TrackId if present (simplified - don't import inside loop)
+                    track_id = None
+                    try:
+                        from mutagen.id3 import ID3
+                        tags = ID3(file_path)
+                        if 'TXXX:TRACKID' in tags:
+                            track_id = tags['TXXX:TRACKID'].text[0]
+                    except Exception:
+                        pass
+
+                    short_track_info = {
+                        'file': file,
+                        'full_path': file_path,
+                        'artist': artist.strip(),
+                        'title': title.strip(),
+                        'duration_seconds': length,
+                        'duration_formatted': f"{int(length // 60)}:{int(length % 60):02d}",
+                        'track_id': track_id,
+                        # Note: Extended version search will be done on-demand per track
+                        'extended_versions_found': [],
+                        'has_longer_versions': False,
+                        'discogs_search_completed': False,
+                        'search_error': None
+                    }
+
+                    short_tracks.append(short_track_info)
+
+            except Exception as e:
+                # Don't print every error to avoid spam
+                if processed_files % 100 == 0:  # Only log errors occasionally
+                    print(f"Error processing {file}: {e}")
+
+    # Sort by duration (shortest first)
+    short_tracks.sort(key=lambda x: x['duration_seconds'])
+
+    elapsed_time = time.time() - start_time
+    print(f"Scan complete! Found {len(short_tracks)} short tracks out of {total_files} total files")
+    print(f"Processing took {elapsed_time:.2f} seconds")
+
+    return {
+        "summary": {
+            "total_files": total_files,
+            "short_tracks": len(short_tracks),
+            "min_length_minutes": min_length_minutes,
+            "processing_time_seconds": elapsed_time
+        },
+        "short_tracks": short_tracks[:100]  # Limit initial response to first 100 for performance
+    }
+
+
+def search_extended_versions_for_track(artist, title, current_duration):
+    """
+    Search for extended versions of a specific track using Discogs.
+    """
+    try:
+        import os
+        api_token = os.getenv('DISCOGS_API_TOKEN')
+
+        from helpers.discogs_helper import DiscogsClient
+
+        client = DiscogsClient(api_token=api_token)
+        all_versions = client.search_releases(artist, title)
+
+        # Determine search status
+        track_found_on_discogs = len(all_versions) > 0
+
+        # Filter for versions longer than current
+        extended_versions = []
+        for version in all_versions:
+            if version['duration_seconds'] > current_duration + 30:  # At least 30 seconds longer
+                extended_versions.append(version)
+
+        # Sort by duration (longest first)
+        extended_versions.sort(key=lambda x: x['duration_seconds'], reverse=True)
+
+        has_longer_versions = len(extended_versions) > 0
+
+        # Determine status message
+        if not track_found_on_discogs:
+            status_message = "Track not found on Discogs"
+            status_type = "not_found"
+        elif has_longer_versions:
+            status_message = f"Found {len(extended_versions)} extended version(s)"
+            status_type = "extended_found"
+        else:
+            status_message = f"Track found on Discogs but no extended versions available (found {len(all_versions)} version(s))"
+            status_type = "no_extended"
+
+        return {
+            "success": True,
+            "extended_versions": extended_versions,
+            "has_longer_versions": has_longer_versions,
+            "track_found_on_discogs": track_found_on_discogs,
+            "total_versions_found": len(all_versions),
+            "search_completed": True,
+            "status_message": status_message,
+            "status_type": status_type
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "extended_versions": [],
+            "has_longer_versions": False,
+            "track_found_on_discogs": False,
+            "total_versions_found": 0,
+            "search_completed": True,
+            "status_message": f"Search failed: {str(e)}",
+            "status_type": "error",
+            "error": str(e)
+        }
