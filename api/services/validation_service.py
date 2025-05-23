@@ -647,3 +647,132 @@ def search_extended_versions_for_track(artist, title, current_duration):
             "status_type": "error",
             "error": str(e)
         }
+
+
+def create_playlist_from_track_ids(track_ids, playlist_name, playlist_description):
+    """
+    Create a Spotify playlist from a list of track IDs.
+
+    Args:
+        track_ids: List of Spotify track IDs
+        playlist_name: Name for the new playlist
+        playlist_description: Description for the new playlist
+
+    Returns:
+        Dictionary with creation results
+    """
+    from drivers.spotify_client import authenticate_spotify
+    from sql.core.unit_of_work import UnitOfWork
+
+    try:
+        # Get Spotify client
+        spotify_client = authenticate_spotify()
+
+        # Get current user ID
+        user = spotify_client.current_user()
+        user_id = user['id']
+
+        # Create the playlist
+        playlist = spotify_client.user_playlist_create(
+            user=user_id,
+            name=playlist_name,
+            description=playlist_description,
+            public=False  # Create as private playlist
+        )
+
+        playlist_id = playlist['id']
+
+        # Filter out any None or empty track IDs
+        valid_track_ids = [tid for tid in track_ids if tid and tid.strip()]
+
+        if not valid_track_ids:
+            return {
+                "success": False,
+                "message": "No valid track IDs found"
+            }
+
+        # Get track details for better error reporting
+        track_details = {}
+        with UnitOfWork() as uow:
+            for track_id in valid_track_ids:
+                track = uow.track_repository.get_by_id(track_id)
+                if track:
+                    track_details[track_id] = {
+                        'artist': track.artists,
+                        'title': track.title,
+                        'album': track.album or 'Unknown Album'
+                    }
+                else:
+                    track_details[track_id] = {
+                        'artist': 'Unknown Artist',
+                        'title': 'Unknown Title',
+                        'album': 'Unknown Album'
+                    }
+
+        # Convert track IDs to Spotify URIs
+        track_uris = [f"spotify:track:{track_id}" for track_id in valid_track_ids]
+
+        # Add tracks to playlist in batches (Spotify allows max 100 tracks per request)
+        batch_size = 100
+        tracks_added = 0
+        failed_tracks = []
+        successful_tracks = []
+
+        for i in range(0, len(track_uris), batch_size):
+            batch = track_uris[i:i + batch_size]
+            batch_track_ids = valid_track_ids[i:i + batch_size]
+
+            try:
+                spotify_client.playlist_add_items(playlist_id, batch)
+                tracks_added += len(batch)
+                # Add all tracks in this batch to successful list
+                for track_id in batch_track_ids:
+                    successful_tracks.append({
+                        'track_id': track_id,
+                        **track_details[track_id]
+                    })
+            except Exception as batch_error:
+                print(f"Batch failed, trying individual tracks: {batch_error}")
+                # If batch fails, try individual tracks
+                for j, uri in enumerate(batch):
+                    track_id = batch_track_ids[j]
+                    try:
+                        spotify_client.playlist_add_items(playlist_id, [uri])
+                        tracks_added += 1
+                        successful_tracks.append({
+                            'track_id': track_id,
+                            **track_details[track_id]
+                        })
+                    except Exception as track_error:
+                        failed_tracks.append({
+                            'track_id': track_id,
+                            'uri': uri,
+                            'error': str(track_error),
+                            **track_details[track_id]
+                        })
+                        print(
+                            f"Failed to add track {uri} ({track_details[track_id]['artist']} - {track_details[track_id]['title']}): {track_error}")
+
+        result = {
+            "success": True,
+            "message": f"Successfully created playlist with {tracks_added} tracks",
+            "playlist_id": playlist_id,
+            "playlist_name": playlist_name,
+            "playlist_url": f"https://open.spotify.com/playlist/{playlist_id}",
+            "tracks_added": tracks_added,
+            "tracks_requested": len(valid_track_ids),
+            "failed_tracks_count": len(failed_tracks),
+            "failed_tracks": failed_tracks,
+            "successful_tracks": successful_tracks
+        }
+
+        if failed_tracks:
+            result["message"] += f" ({len(failed_tracks)} tracks failed to add)"
+
+        return result
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to create playlist: {str(e)}"
+        }

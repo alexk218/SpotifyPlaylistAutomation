@@ -123,3 +123,80 @@ def search_extended_versions():
             "message": str(e),
             "traceback": error_str
         }), 500
+
+
+@bp.route('/extract-track-ids', methods=['POST'])
+def extract_track_ids():
+    """Extract TrackIds from a list of file paths."""
+    data = request.get_json()
+    file_paths = data.get('filePaths', [])
+
+    if not file_paths:
+        return jsonify({
+            "success": False,
+            "message": "No file paths provided"
+        }), 400
+
+    try:
+        from mutagen.id3 import ID3, ID3NoHeaderError
+
+        track_ids = []
+        for file_path in file_paths:
+            track_id = None
+            try:
+                if file_path.lower().endswith('.mp3'):
+                    tags = ID3(file_path)
+                    if 'TXXX:TRACKID' in tags:
+                        track_id = tags['TXXX:TRACKID'].text[0]
+            except (ID3NoHeaderError, Exception) as e:
+                print(f"Error reading TrackId from {file_path}: {e}")
+
+            track_ids.append({
+                'file_path': file_path,
+                'track_id': track_id
+            })
+
+        return jsonify({
+            "success": True,
+            "track_ids": track_ids
+        })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error extracting track IDs: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/create-extended-versions-playlist', methods=['POST'])
+def create_extended_versions_playlist():
+    """Create a Spotify playlist from tracks with extended versions."""
+    data = request.get_json()
+    track_ids = data.get('trackIds', [])
+    playlist_name = data.get('playlistName', 'Extended Versions Playlist')
+    playlist_description = data.get('playlistDescription', 'Tracks with extended versions available')
+
+    if not track_ids:
+        return jsonify({
+            "success": False,
+            "message": "No track IDs provided"
+        }), 400
+
+    try:
+        result = validation_service.create_playlist_from_track_ids(
+            track_ids, playlist_name, playlist_description
+        )
+        return jsonify(result)
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error creating extended versions playlist: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
