@@ -630,42 +630,80 @@ class RekordboxXmlGenerator:
         playlist_order = {}
         folder_order = {}
 
+        print(f"Looking for structure file at: {structure_file}")
+        print(f"Structure file exists: {os.path.exists(structure_file)}")
+
         if os.path.exists(structure_file):
             try:
                 with open(structure_file, 'r', encoding='utf-8') as f:
                     structure = json.load(f)
 
-                    # Extract playlist order within each folder
-                    playlist_order['root'] = structure.get('root_playlists', [])
+                # Extract playlist order within each folder
+                root_playlists = structure.get('root_playlists', [])
+                playlist_order[''] = root_playlists
+                playlist_order['root'] = root_playlists
 
-                    for folder_path, folder_data in structure.get('folders', {}).items():
-                        playlist_order[folder_path] = folder_data.get('playlists', [])
+                for folder_path, folder_data in structure.get('folders', {}).items():
+                    if isinstance(folder_data, dict):
+                        folder_playlists = folder_data.get('playlists', [])
+                        playlist_order[folder_path] = folder_playlists
 
-                    # Extract folder order (sorted by path depth, then alphabetically)
-                    folder_paths = list(structure.get('folders', {}).keys())
-                    folder_order = {path: idx for idx, path in
-                                    enumerate(sorted(folder_paths, key=lambda x: (x.count('/'), x)))}
+                # Create folder order mapping
+                folder_paths = list(structure.get('folders', {}).keys())
+                folder_order = {path: idx for idx, path in enumerate(folder_paths)}
+                print(f"Folder order mapping: {folder_order}")
 
             except Exception as e:
-                print(f"Warning: Could not load playlist structure: {e}")
+                print(f"ERROR loading playlist structure: {e}")
+                import traceback
+                traceback.print_exc()
 
         # Create a mapping of playlist names to their M3U content and folder
         playlist_data = {}
         for (folder_path, playlist_name), m3u_content in self.m3u_data.items():
+            # NORMALIZE THE PATH SEPARATORS
+            normalized_folder_path = folder_path.replace('\\', '/')
+
+            folder_playlists = playlist_order.get(normalized_folder_path, [])
+            try:
+                if playlist_name in folder_playlists:
+                    order_index = folder_playlists.index(playlist_name)
+                    has_structure_order = True
+                else:
+                    order_index = 999
+                    has_structure_order = False
+            except (ValueError, AttributeError):
+                order_index = 999
+                has_structure_order = False
+
             playlist_data[playlist_name] = {
                 'content': m3u_content,
-                'folder_path': folder_path,
-                'order_index': playlist_order.get(folder_path, []).index(
-                    playlist_name) if playlist_name in playlist_order.get(folder_path, []) else 999
+                'folder_path': folder_path,  # keep original for folder node lookup
+                'normalized_folder_path': normalized_folder_path,
+                'order_index': order_index,
+                'has_structure_order': has_structure_order
             }
 
-        # Sort playlists first by folder order, then by playlist order within folder
+        # Group by folder for analysis
+        by_folder = {}
+        for name, data in playlist_data.items():
+            folder = data['folder_path']
+            if folder not in by_folder:
+                by_folder[folder] = []
+            by_folder[folder].append((name, data['order_index'], data['has_structure_order']))
+
+        # Sort playlists to respect the structure order
         def get_sort_key(playlist_name):
             data = playlist_data[playlist_name]
             folder_path = data['folder_path']
-            folder_sort_key = folder_order.get(folder_path, 999) if folder_path else -1  # Root gets highest priority
+
+            if folder_path == '' or folder_path == 'root':
+                folder_sort_key = -1
+            else:
+                folder_sort_key = folder_order.get(folder_path, 999)
+
             playlist_sort_key = data['order_index']
-            return (folder_sort_key, playlist_sort_key, playlist_name)
+            return folder_sort_key, playlist_sort_key, playlist_name
 
         sorted_playlists = sorted(playlist_data.keys(), key=get_sort_key)
 
