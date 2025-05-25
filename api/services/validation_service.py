@@ -1,15 +1,18 @@
-# api/services/validation_service.py
+import json
 import os
+import re
+import shutil
 
 import Levenshtein
 from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
+from datetime import datetime
 
 from helpers.m3u_helper import (
     build_track_id_mapping,
     sanitize_filename,
     get_m3u_track_ids,
-    find_local_file_path_with_extensions
+    find_local_file_path_with_extensions, generate_m3u_playlist
 )
 from helpers.validation_helper import validate_master_tracks
 from sql.core.unit_of_work import UnitOfWork
@@ -776,3 +779,347 @@ def create_playlist_from_track_ids(track_ids, playlist_name, playlist_descriptio
             "success": False,
             "message": f"Failed to create playlist: {str(e)}"
         }
+
+
+def get_playlists_for_organization(exclusion_settings):
+    """
+    Get all playlists for organization, applying exclusion rules.
+
+    Args:
+        exclusion_settings: Dictionary with exclusion configuration from frontend
+
+    Returns:
+        Dictionary with all non-excluded playlists and current organization
+    """
+    # Get all playlists from database
+    with UnitOfWork() as uow:
+        all_playlists = uow.playlist_repository.get_all()
+        # Filter out the MASTER playlist
+        all_playlists = [p for p in all_playlists if p.name.upper() != "MASTER"]
+
+    # Apply exclusion logic based on frontend settings
+    filtered_playlists = []
+
+    for playlist in all_playlists:
+        if _should_exclude_playlist(playlist, exclusion_settings):
+            continue
+
+        # Get track count for this playlist
+        with UnitOfWork() as uow:
+            track_count = len(uow.track_playlist_repository.get_track_ids_for_playlist(playlist.playlist_id))
+
+        filtered_playlists.append({
+            'id': playlist.playlist_id,
+            'name': playlist.name,
+            'track_count': track_count,
+            'description': getattr(playlist, 'description', '') or ''
+        })
+
+    # Get current organization from existing structure (if any)
+    current_organization = _get_current_organization_structure()
+
+    return {
+        "playlists": filtered_playlists,
+        "current_organization": current_organization,
+        "total_playlists": len(filtered_playlists)
+    }
+
+
+def _should_exclude_playlist(playlist, exclusion_settings):
+    """Apply exclusion logic similar to spotify_client.py"""
+    if not exclusion_settings:
+        return False
+
+    name = playlist.name
+    description = getattr(playlist, 'description', '') or ''
+
+    # Check excluded keywords
+    excluded_keywords = exclusion_settings.get('excludedKeywords', [])
+    for keyword in excluded_keywords:
+        if keyword.lower() in name.lower():
+            return True
+
+    # Check excluded playlist IDs
+    excluded_ids = exclusion_settings.get('excludedPlaylistIds', [])
+    if playlist.playlist_id in excluded_ids:
+        return True
+
+    # Check description keywords
+    description_exclusions = exclusion_settings.get('excludeByDescription', [])
+    for keyword in description_exclusions:
+        # Create a regex pattern to match whole words (case-insensitive)
+        pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
+        if re.search(pattern, description.lower()):
+            return True
+
+    return False
+
+
+def _get_current_organization_structure():
+    """Get the current organization structure if it exists."""
+    # This could load from a saved structure file or analyze current m3u directory
+    # For now, return empty structure since we're starting fresh
+    return {
+        "folders": {},
+        "root_playlists": [],
+        "structure_version": "1.0"
+    }
+
+
+def preview_playlist_reorganization(playlists_dir, new_structure):
+    """
+    Preview what changes will be made to the file system.
+
+    Args:
+        playlists_dir: Directory containing current M3U playlists
+        new_structure: New organization structure
+
+    Returns:
+        Dictionary with preview of changes
+    """
+    changes = {
+        "folders_to_create": [],
+        "folders_to_remove": [],
+        "files_to_move": [],
+        "files_to_create": [],
+        "files_to_remove": [],
+        "backup_location": None
+    }
+
+    # Analyze current structure
+    current_files = {}
+    if os.path.exists(playlists_dir):
+        for root, dirs, files in os.walk(playlists_dir):
+            for file in files:
+                if file.lower().endswith('.m3u'):
+                    rel_path = os.path.relpath(root, playlists_dir)
+                    playlist_name = os.path.splitext(file)[0]
+                    current_files[playlist_name] = rel_path if rel_path != '.' else ''
+
+    # Determine what folders need to be created
+    folders_in_new_structure = set()
+    for folder_path in new_structure.get('folders', {}):
+        if folder_path:  # Skip empty root path
+            folders_in_new_structure.add(folder_path)
+            # Add parent folders too
+            parts = folder_path.split('/')
+            for i in range(1, len(parts)):
+                parent_path = '/'.join(parts[:i])
+                folders_in_new_structure.add(parent_path)
+
+    # Check which folders need to be created
+    for folder_path in folders_in_new_structure:
+        full_folder_path = os.path.join(playlists_dir, folder_path)
+        if not os.path.exists(full_folder_path):
+            changes["folders_to_create"].append(folder_path)
+
+    # Determine file movements/creations
+    all_new_playlist_locations = {}
+
+    # Root playlists
+    for playlist_name in new_structure.get('root_playlists', []):
+        all_new_playlist_locations[playlist_name] = ''
+
+    # Folder playlists
+    for folder_path, folder_data in new_structure.get('folders', {}).items():
+        for playlist_name in folder_data.get('playlists', []):
+            all_new_playlist_locations[playlist_name] = folder_path
+
+    # Compare with current locations
+    for playlist_name, new_location in all_new_playlist_locations.items():
+        current_location = current_files.get(playlist_name)
+
+        if current_location is None:
+            # File doesn't exist, needs to be created
+            new_path = os.path.join(new_location, f"{playlist_name}.m3u") if new_location else f"{playlist_name}.m3u"
+            changes["files_to_create"].append({
+                "playlist": playlist_name,
+                "path": new_path
+            })
+        elif current_location != new_location:
+            # File exists but needs to be moved
+            old_path = os.path.join(current_location,
+                                    f"{playlist_name}.m3u") if current_location else f"{playlist_name}.m3u"
+            new_path = os.path.join(new_location, f"{playlist_name}.m3u") if new_location else f"{playlist_name}.m3u"
+            changes["files_to_move"].append({
+                "playlist": playlist_name,
+                "from": old_path,
+                "to": new_path
+            })
+
+    # Check for files that will be orphaned (exist but not in new structure)
+    for playlist_name, current_location in current_files.items():
+        if playlist_name not in all_new_playlist_locations:
+            old_path = os.path.join(current_location,
+                                    f"{playlist_name}.m3u") if current_location else f"{playlist_name}.m3u"
+            changes["files_to_remove"].append({
+                "playlist": playlist_name,
+                "path": old_path
+            })
+
+    # Set backup location
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    changes["backup_location"] = f"{playlists_dir}_backup_{timestamp}"
+
+    return changes
+
+
+def apply_playlist_reorganization(playlists_dir, master_tracks_dir, new_structure, create_backup=True):
+    """
+    Apply the new playlist organization to the file system.
+
+    Args:
+        playlists_dir: Directory containing M3U playlists
+        master_tracks_dir: Directory containing master tracks
+        new_structure: New organization structure
+        create_backup: Whether to create a backup before making changes
+
+    Returns:
+        Dictionary with results of the operation
+    """
+    results = {
+        "backup_created": False,
+        "backup_location": None,
+        "folders_created": 0,
+        "files_moved": 0,
+        "files_created": 0,
+        "files_removed": 0,
+        "errors": []
+    }
+
+    try:
+        # Create backup if requested
+        if create_backup and os.path.exists(playlists_dir):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_location = f"{playlists_dir}_backup_{timestamp}"
+            shutil.copytree(playlists_dir, backup_location)
+            results["backup_created"] = True
+            results["backup_location"] = backup_location
+            print(f"Created backup at: {backup_location}")
+
+        # Ensure playlists directory exists
+        os.makedirs(playlists_dir, exist_ok=True)
+
+        # Build track ID mapping for M3U generation
+        track_id_map = build_track_id_mapping(master_tracks_dir)
+
+        # Create all necessary folders first
+        folders_in_new_structure = set()
+        for folder_path in new_structure.get('folders', {}):
+            if folder_path:  # Skip empty root path
+                folders_in_new_structure.add(folder_path)
+                # Add parent folders too
+                parts = folder_path.split('/')
+                for i in range(1, len(parts)):
+                    parent_path = '/'.join(parts[:i])
+                    folders_in_new_structure.add(parent_path)
+
+        for folder_path in sorted(folders_in_new_structure):  # Sort to create parents first
+            full_folder_path = os.path.join(playlists_dir, folder_path)
+            if not os.path.exists(full_folder_path):
+                os.makedirs(full_folder_path, exist_ok=True)
+                results["folders_created"] += 1
+                print(f"Created folder: {folder_path}")
+
+        # Generate/move M3U files according to new structure
+        all_playlist_locations = {}
+
+        # Root playlists
+        for playlist_name in new_structure.get('root_playlists', []):
+            all_playlist_locations[playlist_name] = ''
+
+        # Folder playlists
+        for folder_path, folder_data in new_structure.get('folders', {}).items():
+            for playlist_name in folder_data.get('playlists', []):
+                all_playlist_locations[playlist_name] = folder_path
+
+        # Process each playlist
+        for playlist_name, target_folder in all_playlist_locations.items():
+            try:
+                # Find playlist in database
+                with UnitOfWork() as uow:
+                    playlists = uow.playlist_repository.get_all()
+                    playlist = next((p for p in playlists if p.name == playlist_name), None)
+
+                    if not playlist:
+                        results["errors"].append(f"Playlist '{playlist_name}' not found in database")
+                        continue
+
+                # Determine target path
+                if target_folder:
+                    target_dir = os.path.join(playlists_dir, target_folder)
+                    target_path = os.path.join(target_dir, f"{playlist_name}.m3u")
+                else:
+                    target_path = os.path.join(playlists_dir, f"{playlist_name}.m3u")
+
+                # Check if file already exists at target location
+                if os.path.exists(target_path):
+                    print(f"File already exists at target location: {target_path}")
+                    continue
+
+                # Generate M3U file at new location
+                tracks_found, tracks_added = generate_m3u_playlist(
+                    playlist_name=playlist.name,
+                    playlist_id=playlist.playlist_id,
+                    master_tracks_dir=master_tracks_dir,
+                    m3u_path=target_path,
+                    extended=True,
+                    overwrite=True,
+                    track_id_map=track_id_map
+                )
+
+                if tracks_added > 0:
+                    results["files_created"] += 1
+                    print(f"Created M3U for '{playlist_name}' with {tracks_added} tracks at: {target_path}")
+                else:
+                    results["errors"].append(f"No tracks found for playlist '{playlist_name}'")
+
+            except Exception as e:
+                error_msg = f"Error processing playlist '{playlist_name}': {str(e)}"
+                results["errors"].append(error_msg)
+                print(error_msg)
+
+        # Remove old files that are no longer needed
+        if os.path.exists(playlists_dir):
+            for root, dirs, files in os.walk(playlists_dir):
+                for file in files:
+                    if file.lower().endswith('.m3u'):
+                        playlist_name = os.path.splitext(file)[0]
+                        current_path = os.path.join(root, file)
+
+                        # Check if this file is in the new structure
+                        if playlist_name in all_playlist_locations:
+                            expected_folder = all_playlist_locations[playlist_name]
+                            expected_path = os.path.join(playlists_dir, expected_folder,
+                                                         file) if expected_folder else os.path.join(playlists_dir, file)
+
+                            # If current path is not the expected path, remove it
+                            if os.path.normpath(current_path) != os.path.normpath(expected_path):
+                                try:
+                                    os.remove(current_path)
+                                    results["files_removed"] += 1
+                                    print(f"Removed old file: {current_path}")
+                                except Exception as e:
+                                    results["errors"].append(f"Error removing file {current_path}: {str(e)}")
+                        else:
+                            # Playlist not in new structure, remove it
+                            try:
+                                os.remove(current_path)
+                                results["files_removed"] += 1
+                                print(f"Removed orphaned file: {current_path}")
+                            except Exception as e:
+                                results["errors"].append(f"Error removing orphaned file {current_path}: {str(e)}")
+
+        # Save the new structure for future use
+        structure_file = os.path.join(playlists_dir, '.playlist_structure.json')
+        with open(structure_file, 'w', encoding='utf-8') as f:
+            json.dump(new_structure, f, indent=2, ensure_ascii=False)
+
+        print(
+            f"Organization complete. Created {results['files_created']} files, removed {results['files_removed']} files")
+
+    except Exception as e:
+        results["errors"].append(f"Fatal error during reorganization: {str(e)}")
+        raise
+
+    return results

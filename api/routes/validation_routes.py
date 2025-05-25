@@ -1,6 +1,7 @@
 # api/routes/validation_routes.py
-from flask import Blueprint, request, jsonify, current_app
+import json
 import traceback
+from flask import Blueprint, request, jsonify, current_app
 from api.services import validation_service
 
 bp = Blueprint('validation', __name__, url_prefix='/api/validation')
@@ -194,6 +195,97 @@ def create_extended_versions_playlist():
     except Exception as e:
         error_str = traceback.format_exc()
         print(f"Error creating extended versions playlist: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/playlist-organization', methods=['GET'])
+def get_playlist_organization():
+    """Get all playlists for organization (excluding forbidden ones)."""
+    try:
+        # Get exclusion settings from request (will be sent from frontend)
+        exclusion_settings = request.args.get('exclusionSettings')
+        if exclusion_settings:
+            exclusion_settings = json.loads(exclusion_settings)
+        else:
+            exclusion_settings = {}
+
+        result = validation_service.get_playlists_for_organization(exclusion_settings)
+        return jsonify({
+            "success": True,
+            **result
+        })
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error getting playlists for organization: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/playlist-organization/preview', methods=['POST'])
+def preview_playlist_organization():
+    """Preview what changes will be made to the file system."""
+    data = request.get_json()
+    playlists_dir = data.get('playlistsDir')
+    new_structure = data.get('newStructure')
+
+    if not playlists_dir or not new_structure:
+        return jsonify({
+            "success": False,
+            "message": "Playlists directory and new structure are required"
+        }), 400
+
+    try:
+        result = validation_service.preview_playlist_reorganization(playlists_dir, new_structure)
+        return jsonify({
+            "success": True,
+            **result
+        })
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error previewing playlist organization: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/playlist-organization/apply', methods=['POST'])
+def apply_playlist_organization():
+    """Apply the new playlist organization to the file system."""
+    data = request.get_json()
+    playlists_dir = data.get('playlistsDir')
+    master_tracks_dir = data.get('masterTracksDir') or current_app.config['MASTER_TRACKS_DIRECTORY_SSD']
+    new_structure = data.get('newStructure')
+    create_backup = data.get('createBackup', True)
+
+    if not playlists_dir or not new_structure:
+        return jsonify({
+            "success": False,
+            "message": "Playlists directory and new structure are required"
+        }), 400
+
+    try:
+        result = validation_service.apply_playlist_reorganization(
+            playlists_dir, master_tracks_dir, new_structure, create_backup
+        )
+        return jsonify({
+            "success": True,
+            **result
+        })
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error applying playlist organization: {e}")
         print(error_str)
         return jsonify({
             "success": False,
