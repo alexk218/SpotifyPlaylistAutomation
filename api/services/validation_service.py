@@ -781,13 +781,14 @@ def create_playlist_from_track_ids(track_ids, playlist_name, playlist_descriptio
         }
 
 
-def get_playlists_for_organization(exclusion_settings, playlists_dir=None):
+def get_playlists_for_organization(exclusion_settings, playlists_dir=None, force_reload=False):  # MODIFIED
     """
     Get all playlists for organization, applying exclusion rules.
 
     Args:
         exclusion_settings: Dictionary with exclusion configuration from frontend
         playlists_dir: Directory containing M3U playlists (optional)
+        force_reload: Force reload from saved structure without verification
 
     Returns:
         Dictionary with all non-excluded playlists and current organization
@@ -817,7 +818,7 @@ def get_playlists_for_organization(exclusion_settings, playlists_dir=None):
         })
 
     # Get current organization from existing structure (if any)
-    current_organization = _get_current_organization_structure(playlists_dir)
+    current_organization = _get_current_organization_structure(playlists_dir, force_reload)  # MODIFIED
 
     return {
         "playlists": filtered_playlists,
@@ -856,25 +857,51 @@ def _should_exclude_playlist(playlist, exclusion_settings):
     return False
 
 
-def _get_current_organization_structure(playlists_dir=None):
+def _get_current_organization_structure(playlists_dir=None, force_reload=False):
     """Get the current organization structure by scanning the actual directory."""
     if not playlists_dir:
-        # Try to get from a default location or return empty if not available
         return {
             "folders": {},
             "root_playlists": [],
             "structure_version": "1.0"
         }
 
-    # First try to load from saved structure file
+    # First, get all current playlist names from the directory
+    current_playlist_names = set()
+    if os.path.exists(playlists_dir):
+        for root, dirs, files in os.walk(playlists_dir):
+            for file in files:
+                if file.lower().endswith('.m3u'):
+                    playlist_name = os.path.splitext(file)[0]
+                    current_playlist_names.add(playlist_name)
+
+    # Try to load from saved structure file
     structure_file = os.path.join(playlists_dir, '.playlist_structure.json')
     if os.path.exists(structure_file):
         try:
             with open(structure_file, 'r', encoding='utf-8') as f:
                 saved_structure = json.load(f)
-                # Verify the structure still matches the actual directory
-                if _verify_structure_matches_directory(playlists_dir, saved_structure):
+
+                # If force_reload is True, skip verification and return saved structure
+                if force_reload:
+                    print("Force reload requested - using saved structure without verification")
                     return saved_structure
+
+                # NEW: Instead of strict verification, merge saved structure with current playlists
+                print(f"Merging saved structure with {len(current_playlist_names)} current playlists")
+                merged_structure = _merge_saved_structure_with_current_playlists(
+                    playlists_dir, saved_structure, current_playlist_names
+                )
+
+                # Save the merged structure back to file if there were changes
+                if merged_structure != saved_structure:
+                    print("Saving merged structure back to file")
+                    merged_structure["last_updated"] = datetime.now().isoformat()
+                    with open(structure_file, 'w', encoding='utf-8') as f:
+                        json.dump(merged_structure, f, indent=2, ensure_ascii=False)
+
+                return merged_structure
+
         except Exception as e:
             print(f"Error reading saved structure: {e}")
 
@@ -1209,3 +1236,61 @@ def apply_playlist_reorganization(playlists_dir, master_tracks_dir, new_structur
         raise
 
     return results
+
+
+def _merge_saved_structure_with_current_playlists(playlists_dir, saved_structure, all_playlist_names):
+    """
+    Merge saved structure with current playlists, adding new ones to root and removing missing ones.
+
+    Args:
+        playlists_dir: Directory containing M3U files
+        saved_structure: The saved structure from .playlist_structure.json
+        all_playlist_names: Set of all playlist names that currently exist
+
+    Returns:
+        Merged structure that preserves organization but includes new playlists
+    """
+    merged_structure = {
+        "folders": {},
+        "root_playlists": [],
+        "structure_version": saved_structure.get("structure_version", "1.0"),
+        "last_updated": saved_structure.get("last_updated")
+    }
+
+    # Track which playlists we've accounted for
+    accounted_playlists = set()
+
+    # Copy folder structure, filtering out playlists that no longer exist
+    for folder_path, folder_data in saved_structure.get("folders", {}).items():
+        existing_playlists = [
+            playlist for playlist in folder_data.get("playlists", [])
+            if playlist in all_playlist_names
+        ]
+
+        if existing_playlists:  # Only keep folders that have playlists
+            merged_structure["folders"][folder_path] = {
+                "playlists": existing_playlists
+            }
+            accounted_playlists.update(existing_playlists)
+
+    # Copy root playlists, filtering out ones that no longer exist
+    existing_root_playlists = [
+        playlist for playlist in saved_structure.get("root_playlists", [])
+        if playlist in all_playlist_names
+    ]
+    merged_structure["root_playlists"] = existing_root_playlists
+    accounted_playlists.update(existing_root_playlists)
+
+    # Add any new playlists to root
+    new_playlists = all_playlist_names - accounted_playlists
+    if new_playlists:
+        print(f"Found {len(new_playlists)} new playlists, adding to root: {list(new_playlists)}")
+        merged_structure["root_playlists"].extend(sorted(new_playlists))
+
+    # Remove empty folders
+    merged_structure["folders"] = {
+        path: data for path, data in merged_structure["folders"].items()
+        if data.get("playlists")
+    }
+
+    return merged_structure

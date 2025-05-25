@@ -210,13 +210,15 @@ def get_playlist_organization():
         # Get exclusion settings and playlists directory from request
         exclusion_settings = request.args.get('exclusionSettings')
         playlists_dir = request.args.get('playlistsDir')
+        force_reload = request.args.get('forceReload', 'false').lower() == 'true'  # NEW
 
         if exclusion_settings:
             exclusion_settings = json.loads(exclusion_settings)
         else:
             exclusion_settings = {}
 
-        result = validation_service.get_playlists_for_organization(exclusion_settings, playlists_dir)
+        result = validation_service.get_playlists_for_organization(exclusion_settings, playlists_dir,
+                                                                   force_reload)  # MODIFIED
         return jsonify({
             "success": True,
             **result
