@@ -59,6 +59,9 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
     playlists_to_delete = []
     unchanged_count = 0
 
+    existing_playlists = get_db_playlists()
+    sync_logger.info(f"Found {len(existing_playlists)} existing playlists in database")
+
     if precomputed_changes:
         playlists_to_add = precomputed_changes.get('to_add', playlists_to_add)
         playlists_to_update = precomputed_changes.get('to_update', playlists_to_update)
@@ -77,10 +80,6 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
         sync_logger.info(f"Using precomputed changes: {len(playlists_to_add)} to add, "
                          f"{len(playlists_to_update)} to update, {len(playlists_to_delete)} to delete")
     else:
-        # Get existing playlists from database with their snapshot IDs
-        existing_playlists = get_db_playlists()
-        sync_logger.info(f"Found {len(existing_playlists)} existing playlists in database")
-
         # Fetch all playlists from Spotify
         spotify_client = authenticate_spotify()
         spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
@@ -576,6 +575,9 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
     tracks_to_update = []
     tracks_to_delete = []
     unchanged_tracks = []
+
+    existing_tracks = get_db_tracks()
+    sync_logger.info(f"Found {len(existing_tracks)} existing tracks in database")
 
     if precomputed_changes:
         sync_logger.info("Using precomputed changes to avoid redundant analysis")
