@@ -588,8 +588,8 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
     for pl in user_playlists:
         # Check if the playlist tuple has enough elements and if it's not the MASTER playlist
         if isinstance(pl, tuple) and len(pl) >= 2:
-            # Assume playlist_id is either at index 1 or 2
-            pl_id = pl[1] if len(pl) == 2 else pl[2]
+            # playlist_id is ALWAYS at index 1, regardless of tuple length
+            pl_id = pl[1]  # playlist_id is always the second element
             if pl_id != master_playlist_id:
                 other_playlists.append(pl)
         else:
@@ -606,9 +606,9 @@ def sync_to_master_playlist(spotify_client: spotipy.Spotify, master_playlist_id:
         # FIXED: Safely extract name and ID based on tuple length
         if len(pl) == 2:
             playlist_name, playlist_id = pl
-            # In this case, there's no third element
         else:
-            playlist_name, _, playlist_id = pl
+            # For 3-element tuple: (playlist_name, playlist_id, snapshot_id)
+            playlist_name, playlist_id, _ = pl  # playlist_id is still at index 1
 
         print(f"Checking playlist {i}/{len(other_playlists)}: {playlist_name}")
         spotify_logger.info(f"Checking tracks in playlist: {playlist_name}")
