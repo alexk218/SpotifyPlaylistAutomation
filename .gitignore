@@ -1,6 +1,8 @@
 .env
 .cache
 .idea
+.coverage
+debug/debug_playlist_m3u.json
 exclusion_config.json
 playlists_markdown/
 txtfiles/
