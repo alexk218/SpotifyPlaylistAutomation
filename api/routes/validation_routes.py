@@ -296,3 +296,30 @@ def apply_playlist_organization():
             "message": str(e),
             "traceback": error_str
         }), 500
+
+
+@bp.route('/cleanup-orphaned-playlists', methods=['POST'])
+def cleanup_orphaned_playlists():
+    """Clean up orphaned M3U files that don't correspond to database playlists."""
+    data = request.get_json()
+    playlists_dir = data.get('playlistsDir')
+    dry_run = data.get('dryRun', False)
+
+    if not playlists_dir:
+        return jsonify({
+            "success": False,
+            "message": "Playlists directory not specified"
+        }), 400
+
+    try:
+        result = validation_service.cleanup_orphaned_playlists(playlists_dir, dry_run)
+        return jsonify(result)
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error cleaning up orphaned playlists: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500

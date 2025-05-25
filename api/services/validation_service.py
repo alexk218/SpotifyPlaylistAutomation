@@ -1294,3 +1294,132 @@ def _merge_saved_structure_with_current_playlists(playlists_dir, saved_structure
     }
 
     return merged_structure
+
+
+def cleanup_orphaned_playlists(playlists_dir, dry_run=False):
+    """
+    Detect and optionally remove M3U files that don't correspond to any database playlist.
+    Also clean up the playlist structure file.
+
+    Args:
+        playlists_dir: Directory containing M3U playlists
+        dry_run: If True, only report what would be cleaned up without making changes
+
+    Returns:
+        Dictionary with cleanup results
+    """
+    if not os.path.exists(playlists_dir):
+        return {
+            "success": False,
+            "message": "Playlists directory does not exist"
+        }
+
+    # Get all current playlist names from database (excluding MASTER)
+    with UnitOfWork() as uow:
+        db_playlists = uow.playlist_repository.get_all()
+        current_playlist_names = set(p.name for p in db_playlists if p.name.upper() != "MASTER")
+
+    # Find all M3U files
+    existing_m3u_files = {}  # {playlist_name: file_path}
+    for root, dirs, files in os.walk(playlists_dir):
+        for file in files:
+            if file.lower().endswith('.m3u'):
+                playlist_name = os.path.splitext(file)[0]
+                file_path = os.path.join(root, file)
+                existing_m3u_files[playlist_name] = file_path
+
+    # Identify orphaned files (M3U files without corresponding database playlist)
+    orphaned_files = {}
+    for playlist_name, file_path in existing_m3u_files.items():
+        if playlist_name not in current_playlist_names:
+            orphaned_files[playlist_name] = file_path
+
+    # Load current structure file
+    structure_file = os.path.join(playlists_dir, '.playlist_structure.json')
+    current_structure = None
+    if os.path.exists(structure_file):
+        try:
+            with open(structure_file, 'r', encoding='utf-8') as f:
+                current_structure = json.load(f)
+        except Exception as e:
+            print(f"Error loading structure file: {e}")
+
+    # Identify orphaned entries in structure file
+    orphaned_in_structure = []
+    if current_structure:
+        # Check root playlists
+        for playlist_name in current_structure.get('root_playlists', []):
+            if playlist_name not in current_playlist_names:
+                orphaned_in_structure.append(('root', playlist_name))
+
+        # Check folder playlists
+        for folder_path, folder_data in current_structure.get('folders', {}).items():
+            for playlist_name in folder_data.get('playlists', []):
+                if playlist_name not in current_playlist_names:
+                    orphaned_in_structure.append((folder_path, playlist_name))
+
+    results = {
+        "success": True,
+        "dry_run": dry_run,
+        "orphaned_files": orphaned_files,
+        "orphaned_in_structure": orphaned_in_structure,
+        "files_deleted": 0,
+        "structure_cleaned": False,
+        "current_playlists": len(current_playlist_names),
+        "existing_files": len(existing_m3u_files)
+    }
+
+    if dry_run:
+        results[
+            "message"] = f"Found {len(orphaned_files)} orphaned M3U files and {len(orphaned_in_structure)} orphaned structure entries"
+        return results
+
+    # Actually perform cleanup
+    deleted_files = []
+
+    # Delete orphaned M3U files
+    for playlist_name, file_path in orphaned_files.items():
+        try:
+            os.remove(file_path)
+            deleted_files.append(playlist_name)
+            print(f"Deleted orphaned M3U file: {file_path}")
+        except Exception as e:
+            print(f"Error deleting {file_path}: {e}")
+
+    results["files_deleted"] = len(deleted_files)
+
+    # Clean up structure file
+    if current_structure and orphaned_in_structure:
+        # Clean root playlists
+        current_structure["root_playlists"] = [
+            name for name in current_structure.get("root_playlists", [])
+            if name in current_playlist_names
+        ]
+
+        # Clean folder playlists
+        for folder_path in list(current_structure.get("folders", {}).keys()):
+            folder_data = current_structure["folders"][folder_path]
+            cleaned_playlists = [
+                name for name in folder_data.get("playlists", [])
+                if name in current_playlist_names
+            ]
+
+            if cleaned_playlists:
+                current_structure["folders"][folder_path]["playlists"] = cleaned_playlists
+            else:
+                # Remove empty folders
+                del current_structure["folders"][folder_path]
+
+        # Save cleaned structure
+        try:
+            current_structure["last_updated"] = datetime.now().isoformat()
+            with open(structure_file, 'w', encoding='utf-8') as f:
+                json.dump(current_structure, f, indent=2, ensure_ascii=False)
+            results["structure_cleaned"] = True
+            print("Cleaned playlist structure file")
+        except Exception as e:
+            print(f"Error saving cleaned structure: {e}")
+
+    results[
+        "message"] = f"Cleanup complete: {len(deleted_files)} files deleted, structure {'cleaned' if results['structure_cleaned'] else 'unchanged'}"
+    return results
