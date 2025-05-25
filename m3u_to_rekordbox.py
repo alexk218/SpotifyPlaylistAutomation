@@ -584,20 +584,53 @@ class RekordboxXmlGenerator:
 
     def _create_folder_structure(self):
         """
-        Create folder nodes based on directory structure.
+        Create folder nodes based on directory structure, respecting the order from structure file.
         Populates self.folder_nodes and updates self.created_folder_count
         """
         # Initialize folder nodes dict
         self.folder_nodes = {"": self.m3u_root_node}  # Empty key now represents the m3u folder
         self.created_folder_count = 0
 
-        # First create all folder nodes based on the directory structure
-        for folder_path, _ in set((path, name) for (path, name) in self.m3u_files_with_paths.keys()):
-            if not folder_path:  # Skip root level
+        # Load the playlist structure to get the correct folder order
+        structure_file = os.path.join(self.m3u_root_folder, '.playlist_structure.json')
+        ordered_folders = []
+
+        if os.path.exists(structure_file):
+            try:
+                with open(structure_file, 'r', encoding='utf-8') as f:
+                    structure = json.load(f)
+
+                # Get folders in the exact order they appear in the structure file
+                ordered_folders = list(structure.get('folders', {}).keys())
+                print(f"Creating folders in structure file order: {len(ordered_folders)} folders")
+
+            except Exception as e:
+                print(f"Warning: Could not load structure file for folder ordering: {e}")
+
+        # If no structure file, fall back to discovering folders from M3U files
+        if not ordered_folders:
+            print("No structure file found, using M3U discovery order")
+            discovered_folders = set()
+            for folder_path, _ in self.m3u_files_with_paths.keys():
+                if folder_path:  # Skip root level
+                    # Normalize path separators
+                    normalized_path = folder_path.replace('\\', '/')
+                    discovered_folders.add(normalized_path)
+            ordered_folders = sorted(list(discovered_folders))
+
+        # Create folders in the determined order
+        for folder_path in ordered_folders:
+            if not folder_path:  # Skip empty paths
                 continue
 
+            # Normalize path separators for consistency
+            if isinstance(folder_path, str):
+                normalized_folder_path = folder_path.replace('\\', '/')
+            else:
+                normalized_folder_path = str(folder_path).replace('\\', '/')
+
             # Split the path into individual folder segments
-            folder_segments = folder_path.split(os.path.sep)
+            folder_segments = normalized_folder_path.split('/')
 
             # Build the folder path step by step, creating nodes as needed
             current_path = ""
@@ -605,7 +638,7 @@ class RekordboxXmlGenerator:
 
             for segment in folder_segments:
                 if current_path:
-                    current_path = os.path.join(current_path, segment)
+                    current_path = current_path + '/' + segment
                 else:
                     current_path = segment
 
@@ -617,9 +650,44 @@ class RekordboxXmlGenerator:
                     folder_node.set("Count", "0")  # Will update later
                     self.folder_nodes[current_path] = folder_node
                     self.created_folder_count += 1
+                    print(f"Created folder: '{current_path}' (segment: '{segment}')")
 
                 # Update parent for next iteration
                 parent_node = self.folder_nodes[current_path]
+
+        # Also need to handle any folders that exist in M3U files but not in structure
+        # (in case there are M3U files in folders not listed in the structure)
+        for folder_path, _ in self.m3u_files_with_paths.keys():
+            if not folder_path:  # Skip root level
+                continue
+
+            # Normalize path separators
+            normalized_folder_path = folder_path.replace('\\', '/')
+
+            if normalized_folder_path not in self.folder_nodes:
+                print(f"Warning: Found M3U folder not in structure: '{normalized_folder_path}'")
+                # Create it using the same logic
+                folder_segments = normalized_folder_path.split('/')
+                current_path = ""
+                parent_node = self.m3u_root_node
+
+                for segment in folder_segments:
+                    if current_path:
+                        current_path = current_path + '/' + segment
+                    else:
+                        current_path = segment
+
+                    if current_path not in self.folder_nodes:
+                        folder_node = ET.SubElement(parent_node, "NODE")
+                        folder_node.set("Name", segment)
+                        folder_node.set("Type", "0")  # 0 = folder
+                        folder_node.set("Count", "0")  # Will update later
+                        self.folder_nodes[current_path] = folder_node
+                        self.created_folder_count += 1
+
+                    parent_node = self.folder_nodes[current_path]
+
+        print(f"Total folders created: {self.created_folder_count}")
 
     def _create_playlists(self):
         """
@@ -714,7 +782,8 @@ class RekordboxXmlGenerator:
             m3u_content = data['content']
 
             # Get the parent folder node
-            parent_node = self.folder_nodes.get(folder_path, self.m3u_root_node)
+            normalized_folder_path = folder_path.replace('\\', '/')
+            parent_node = self.folder_nodes.get(normalized_folder_path, self.m3u_root_node)
 
             # Create playlist node
             playlist = ET.SubElement(parent_node, "NODE")
