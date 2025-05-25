@@ -781,12 +781,13 @@ def create_playlist_from_track_ids(track_ids, playlist_name, playlist_descriptio
         }
 
 
-def get_playlists_for_organization(exclusion_settings):
+def get_playlists_for_organization(exclusion_settings, playlists_dir=None):
     """
     Get all playlists for organization, applying exclusion rules.
 
     Args:
         exclusion_settings: Dictionary with exclusion configuration from frontend
+        playlists_dir: Directory containing M3U playlists (optional)
 
     Returns:
         Dictionary with all non-excluded playlists and current organization
@@ -816,7 +817,7 @@ def get_playlists_for_organization(exclusion_settings):
         })
 
     # Get current organization from existing structure (if any)
-    current_organization = _get_current_organization_structure()
+    current_organization = _get_current_organization_structure(playlists_dir)
 
     return {
         "playlists": filtered_playlists,
@@ -855,15 +856,94 @@ def _should_exclude_playlist(playlist, exclusion_settings):
     return False
 
 
-def _get_current_organization_structure():
-    """Get the current organization structure if it exists."""
-    # This could load from a saved structure file or analyze current m3u directory
-    # For now, return empty structure since we're starting fresh
+def _get_current_organization_structure(playlists_dir=None):
+    """Get the current organization structure by scanning the actual directory."""
+    if not playlists_dir:
+        # Try to get from a default location or return empty if not available
+        return {
+            "folders": {},
+            "root_playlists": [],
+            "structure_version": "1.0"
+        }
+
+    # First try to load from saved structure file
+    structure_file = os.path.join(playlists_dir, '.playlist_structure.json')
+    if os.path.exists(structure_file):
+        try:
+            with open(structure_file, 'r', encoding='utf-8') as f:
+                saved_structure = json.load(f)
+                # Verify the structure still matches the actual directory
+                if _verify_structure_matches_directory(playlists_dir, saved_structure):
+                    return saved_structure
+        except Exception as e:
+            print(f"Error reading saved structure: {e}")
+
+    # Fallback: scan the actual directory structure
+    return _scan_directory_structure(playlists_dir)
+
+
+def _scan_directory_structure(playlists_dir):
+    """Scan the actual directory structure and build organization."""
+    if not os.path.exists(playlists_dir):
+        return {
+            "folders": {},
+            "root_playlists": [],
+            "structure_version": "1.0"
+        }
+
+    folders = {}
+    root_playlists = []
+
+    # Walk through the directory structure
+    for root, dirs, files in os.walk(playlists_dir):
+        # Get relative path from playlists_dir
+        rel_path = os.path.relpath(root, playlists_dir)
+        if rel_path == '.':
+            rel_path = ''
+
+        # Find M3U files in this directory
+        m3u_files = [f for f in files if f.lower().endswith('.m3u')]
+        playlist_names = [os.path.splitext(f)[0] for f in m3u_files]
+
+        if rel_path == '':
+            # Root directory playlists
+            root_playlists.extend(playlist_names)
+        else:
+            # Folder playlists
+            # Normalize path separators
+            folder_path = rel_path.replace('\\', '/')
+            if folder_path not in folders:
+                folders[folder_path] = {"playlists": []}
+            folders[folder_path]["playlists"].extend(playlist_names)
+
     return {
-        "folders": {},
-        "root_playlists": [],
+        "folders": folders,
+        "root_playlists": root_playlists,
         "structure_version": "1.0"
     }
+
+
+def _verify_structure_matches_directory(playlists_dir, structure):
+    """Verify that the saved structure still matches the actual directory."""
+    try:
+        actual_structure = _scan_directory_structure(playlists_dir)
+
+        # Simple verification - check if major structure elements match
+        actual_folders = set(actual_structure["folders"].keys())
+        saved_folders = set(structure.get("folders", {}).keys())
+
+        actual_root = set(actual_structure["root_playlists"])
+        saved_root = set(structure.get("root_playlists", []))
+
+        # If there's a significant difference, the structure is outdated
+        folder_diff = len(actual_folders.symmetric_difference(saved_folders))
+        root_diff = len(actual_root.symmetric_difference(saved_root))
+
+        # Allow some tolerance for small differences
+        return folder_diff <= 2 and root_diff <= 2
+
+    except Exception:
+        return False
 
 
 def preview_playlist_reorganization(playlists_dir, new_structure):
