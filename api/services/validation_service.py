@@ -1192,8 +1192,14 @@ def apply_playlist_reorganization(playlists_dir, master_tracks_dir, new_structur
 
         # Save the new structure for future use
         structure_file = os.path.join(playlists_dir, '.playlist_structure.json')
+        structure_to_save = {
+            "folders": new_structure.get('folders', {}),
+            "root_playlists": new_structure.get('root_playlists', []),
+            "structure_version": "1.0",
+            "last_updated": datetime.now().isoformat()
+        }
         with open(structure_file, 'w', encoding='utf-8') as f:
-            json.dump(new_structure, f, indent=2, ensure_ascii=False)
+            json.dump(structure_to_save, f, indent=2, ensure_ascii=False)
 
         print(
             f"Organization complete. Created {results['files_created']} files, removed {results['files_removed']} files")

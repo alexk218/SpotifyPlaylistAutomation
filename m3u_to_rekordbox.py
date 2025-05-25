@@ -623,13 +623,60 @@ class RekordboxXmlGenerator:
 
     def _create_playlists(self):
         """
-        Create playlist nodes within their folders.
-        Populates self.created_playlists
+        Create playlist nodes within their folders, respecting the exact order from structure.
         """
-        # Now create all playlist nodes within their respective folders
+        # Load the playlist structure if it exists
+        structure_file = os.path.join(self.m3u_root_folder, '.playlist_structure.json')
+        playlist_order = {}
+        folder_order = {}
+
+        if os.path.exists(structure_file):
+            try:
+                with open(structure_file, 'r', encoding='utf-8') as f:
+                    structure = json.load(f)
+
+                    # Extract playlist order within each folder
+                    playlist_order['root'] = structure.get('root_playlists', [])
+
+                    for folder_path, folder_data in structure.get('folders', {}).items():
+                        playlist_order[folder_path] = folder_data.get('playlists', [])
+
+                    # Extract folder order (sorted by path depth, then alphabetically)
+                    folder_paths = list(structure.get('folders', {}).keys())
+                    folder_order = {path: idx for idx, path in
+                                    enumerate(sorted(folder_paths, key=lambda x: (x.count('/'), x)))}
+
+            except Exception as e:
+                print(f"Warning: Could not load playlist structure: {e}")
+
+        # Create a mapping of playlist names to their M3U content and folder
+        playlist_data = {}
         for (folder_path, playlist_name), m3u_content in self.m3u_data.items():
+            playlist_data[playlist_name] = {
+                'content': m3u_content,
+                'folder_path': folder_path,
+                'order_index': playlist_order.get(folder_path, []).index(
+                    playlist_name) if playlist_name in playlist_order.get(folder_path, []) else 999
+            }
+
+        # Sort playlists first by folder order, then by playlist order within folder
+        def get_sort_key(playlist_name):
+            data = playlist_data[playlist_name]
+            folder_path = data['folder_path']
+            folder_sort_key = folder_order.get(folder_path, 999) if folder_path else -1  # Root gets highest priority
+            playlist_sort_key = data['order_index']
+            return (folder_sort_key, playlist_sort_key, playlist_name)
+
+        sorted_playlists = sorted(playlist_data.keys(), key=get_sort_key)
+
+        # Create playlists in the determined order
+        for playlist_name in sorted_playlists:
+            data = playlist_data[playlist_name]
+            folder_path = data['folder_path']
+            m3u_content = data['content']
+
             # Get the parent folder node
-            parent_node = self.folder_nodes.get(folder_path, self.m3u_root_node)  # Default to m3u root
+            parent_node = self.folder_nodes.get(folder_path, self.m3u_root_node)
 
             # Create playlist node
             playlist = ET.SubElement(parent_node, "NODE")
@@ -676,7 +723,7 @@ class RekordboxXmlGenerator:
         m3u_children = self.m3u_root_node.findall("./NODE")
         self.m3u_root_node.set("Count", str(len(m3u_children)))
 
-        # Update ROOT folder count - now using the stored reference
+        # Update ROOT folder count
         self.root_folder.set("Count", "1")  # Just the m3u folder
 
     def _write_xml_file(self, output_xml_path):
