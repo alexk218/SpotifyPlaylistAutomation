@@ -63,7 +63,6 @@ def sync_database():
     precomputed_changes = request.json.get('precomputed_changes_from_analysis')
     stage = request.json.get('stage', 'start')
 
-    # Get exclusion config from request
     exclusion_config = sync_service.get_exclusion_config(request.json)
 
     try:
