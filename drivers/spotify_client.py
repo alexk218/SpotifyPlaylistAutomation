@@ -15,7 +15,6 @@ load_dotenv()
 import spotipy
 from spotipy import SpotifyOAuth
 
-from cache_manager import spotify_cache
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -90,13 +89,6 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
     Returns:
         List of PlaylistInfo [playlist_name, playlist_id, snapshot_id]
     """
-    # Try to get playlists from cache first
-    # if not force_refresh:
-    #     cached_playlists = spotify_cache.get_playlists()
-    #     if cached_playlists:
-    #         spotify_logger.info(f"Using cached playlists data ({len(cached_playlists)} playlists)")
-    #         return cached_playlists
-
     # Get exclusion configuration - either from parameter or default file (exclusion_config.json)
     if exclusion_config is None:
         with config_path.open('r', encoding='utf-8') as config_file:
@@ -154,9 +146,6 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
 
     spotify_logger.info(f"Total playlists after exclusion: {len(my_playlists)}")
 
-    # Cache the result
-    spotify_cache.cache_playlists(my_playlists)
-
     return my_playlists
 
 
@@ -164,7 +153,6 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=F
     Tuple[str, str, str, str, datetime]]:
     """
     Fetch all unique tracks from 'MASTER' playlist.
-    Uses cache if available and not forcing refresh.
 
     Args:
         spotify_client: Authenticated Spotify client
@@ -174,14 +162,6 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=F
     Returns:
         List of tuples containing (TrackId, TrackTitle, Artists, Album, AddedAt)
     """
-    # Try to get master tracks from cache first
-    if not force_refresh:
-        cached_tracks = spotify_cache.get_master_tracks(master_playlist_id)
-        if cached_tracks:
-            spotify_logger.info(f"Using cached master tracks data ({len(cached_tracks)} tracks)")
-            return cached_tracks
-
-    # If we get here, we need to fetch from Spotify API
     spotify_logger.info(f"Fetching all unique tracks from 'MASTER' playlist (ID: {master_playlist_id})")
     all_tracks = []
 
@@ -267,9 +247,6 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=F
     spotify_logger.info(
         f"Fetched {len(unique_tracks_list)} unique tracks from 'MASTER' playlist (including {len(local_tracks)} local files)")
 
-    # Cache the result
-    spotify_cache.cache_master_tracks(master_playlist_id, unique_tracks_list)
-
     return unique_tracks_list
 
 
@@ -293,13 +270,6 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str, fo
             if track_ids:
                 spotify_logger.info(f"Retrieved {len(track_ids)} track IDs for playlist {playlist_id} from database")
                 return track_ids
-
-    # If not in database or forcing refresh, try cache
-    if not force_refresh:
-        cached_tracks = spotify_cache.get_playlist_tracks(playlist_id)
-        if cached_tracks:
-            spotify_logger.info(f"Using {len(cached_tracks)} cached track IDs for playlist {playlist_id}")
-            return cached_tracks
 
     # If we get here, fetch from Spotify API
     spotify_logger.info(f"Fetching tracks for playlist {playlist_id} from Spotify API")
@@ -384,9 +354,6 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str, fo
                 continue
 
         spotify_logger.info(f"Successfully fetched {len(track_ids)} tracks from playlist {playlist_id}")
-
-        # Cache the result
-        spotify_cache.cache_playlist_tracks(playlist_id, track_ids)
 
         # Debug output
         local_file_count = sum(1 for tid in track_ids if tid.startswith('local_'))

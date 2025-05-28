@@ -11,7 +11,6 @@ from helpers.sync_helper import sync_playlists_to_db, sync_tracks_to_db, \
     sync_track_playlist_associations_to_db
 from helpers.validation_helper import validate_master_tracks
 from utils.logger import setup_logger
-from cache_manager import spotify_cache
 
 load_dotenv()
 
@@ -67,9 +66,6 @@ def main():
     parser.add_argument('--validate-lengths', action='store_true',
                         help='Validate song lengths and report songs shorter than 5 minutes')
     parser.add_argument('--validate-all', action='store_true', help='Run all validation checks')
-
-    # Cache management
-    parser.add_argument('--clear-cache', action='store_true', help='Clear all cached Spotify API data')
 
     # Spotify sync
     parser.add_argument('--sync-master', action='store_true',
@@ -130,11 +126,6 @@ def main():
 
     if args.validate_lengths or args.validate_all:
         validate_song_lengths(tracks_dir)
-
-    # * Cache management
-    if args.clear_cache:
-        spotify_cache.clear_all_caches()
-        print("All Spotify API caches cleared.")
 
     # * Spotify sync
     if args.sync_master:
