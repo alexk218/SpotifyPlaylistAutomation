@@ -156,7 +156,7 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
     Args:
         action: Type of sync operation ('playlists', 'tracks', 'associations', 'all', 'clear')
         master_playlist_id: ID of the master playlist
-        force_refresh: Whether to force a full refresh (not implemented yet...)
+        force_refresh: Whether to force a full refresh (use snapshot_id to optimize API calls...)
         is_confirmed: Whether the operation is confirmed (if confirmed - perform sync operation, otherwise just analyze)
         precomputed_changes: Optional dictionary with precomputed changes (obtained from analysis)
         exclusion_config: Optional dictionary with exclusion configs (which Spotify playlists to exclude)
