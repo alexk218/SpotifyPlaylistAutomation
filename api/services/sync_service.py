@@ -6,12 +6,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from drivers.spotify_client import (
-    authenticate_spotify, sync_to_master_playlist, sync_unplaylisted_to_unsorted
+    authenticate_spotify, sync_to_master_playlist, sync_unplaylisted_to_unsorted, fetch_playlists
 )
 from helpers.sync_helper import (
     analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations,
     sync_playlists_to_db, sync_tracks_to_db, sync_track_playlist_associations_to_db
 )
+from sql.core.unit_of_work import UnitOfWork
 
 load_dotenv()
 
@@ -74,6 +75,7 @@ def get_exclusion_config(request_json=None):
 def sync_master_playlist(master_playlist_id, request_json=None):
     """
     Sync all tracks from all playlists to MASTER playlist.
+    Only processes playlists that have changed since last master sync.
 
     Args:
         master_playlist_id: ID of the master playlist
@@ -87,10 +89,54 @@ def sync_master_playlist(master_playlist_id, request_json=None):
     try:
         spotify_client = authenticate_spotify()
 
+        # Get all playlists from database
+        with UnitOfWork() as uow:
+            db_playlists = uow.playlist_repository.get_all()
+            db_playlists_dict = {p.playlist_id: p for p in db_playlists}
+
+        # Fetch current playlists from Spotify to get current snapshot_ids
+        spotify_playlists = fetch_playlists(spotify_client, force_refresh=True, exclusion_config=exclusion_config)
+
+        # Filter out MASTER playlist
+        spotify_playlists = [p for p in spotify_playlists if p.playlist_id != master_playlist_id]
+
+        # Find playlists that have changed since last master sync
+        changed_playlists = []
+        unchanged_playlists = []
+
+        for spotify_playlist in spotify_playlists:
+            playlist_id = spotify_playlist.playlist_id
+            current_snapshot = spotify_playlist.snapshot_id
+
+            # Check if this playlist exists in DB and if snapshot has changed
+            if playlist_id in db_playlists_dict:
+                db_playlist = db_playlists_dict[playlist_id]
+                if db_playlist.master_sync_snapshot_id != current_snapshot:
+                    changed_playlists.append(spotify_playlist)
+                else:
+                    unchanged_playlists.append(spotify_playlist)
+            else:
+                # New playlist not in database - include it
+                changed_playlists.append(spotify_playlist)
+
+        print(
+            f"Master sync optimization: {len(changed_playlists)} playlists changed, {len(unchanged_playlists)} unchanged")
+
+        if not changed_playlists:
+            return {
+                "success": True,
+                "message": "No playlists have changed since last master sync. No action needed."
+            }
+
         # Start a background thread for this operation
         def background_sync():
             try:
-                sync_to_master_playlist(spotify_client, master_playlist_id, exclusion_config)
+                sync_to_master_playlist(
+                    spotify_client,
+                    master_playlist_id,
+                    exclusion_config,
+                    changed_playlists
+                )
             except Exception as e:
                 error_str = traceback.format_exc()
                 print(f"Error in background sync: {e}")
@@ -102,7 +148,7 @@ def sync_master_playlist(master_playlist_id, request_json=None):
 
         return {
             "success": True,
-            "message": "Sync to master playlist started. This operation runs in the background and may take several minutes."
+            "message": f"Optimized sync to master playlist started. Processing {len(changed_playlists)} changed playlists (skipping {len(unchanged_playlists)} unchanged). This operation runs in the background and may take several minutes."
         }
     except Exception as e:
         error_str = traceback.format_exc()

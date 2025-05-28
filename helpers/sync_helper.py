@@ -191,7 +191,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
             new_playlist = Playlist(
                 playlist_id=playlist_data['id'],
                 name=playlist_data['name'],
-                snapshot_id=playlist_data['snapshot_id']
+                master_sync_snapshot_id=playlist_data['snapshot_id']
             )
             uow.playlist_repository.insert(new_playlist)
             added_count += 1
@@ -204,7 +204,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
 
             # Update the playlist with new data
             existing_playlist.name = playlist_data['name']
-            existing_playlist.snapshot_id = playlist_data['snapshot_id']
+            existing_playlist.master_sync_snapshot_id = playlist_data['snapshot_id']
             uow.playlist_repository.update(existing_playlist)
             updated_count += 1
             sync_logger.info(f"Updated playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
@@ -1433,7 +1433,7 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
             existing_playlist = existing_playlists[playlist_id]
 
             name_changed = existing_playlist.name != playlist_name
-            snapshot_id_changed = existing_playlist.snapshot_id != snapshot_id
+            snapshot_id_changed = existing_playlist.master_sync_snapshot_id != snapshot_id
 
             if name_changed or snapshot_id_changed:
                 # Mark for update
@@ -1442,7 +1442,7 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
                     'name': playlist_name,
                     'old_name': existing_playlist.name,
                     'snapshot_id': snapshot_id,
-                    'old_snapshot_id': existing_playlist.snapshot_id,
+                    'old_snapshot_id': existing_playlist.master_sync_snapshot_id,
                 })
             else:
                 unchanged_count += 1
