@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any
 from dotenv import load_dotenv
 
+from sql.dto.playlist_info import PlaylistInfo
+
 load_dotenv()
 
 import spotipy
@@ -42,7 +44,7 @@ def authenticate_spotify():
     return sp
 
 
-def is_forbidden_playlist(name: str, description: str, forbidden_playlists=None,
+def is_forbidden_playlist(name: str, description: str, playlist_id: str, forbidden_playlists=None,
                           forbidden_words=None, description_keywords=None, forbidden_playlist_ids=None) -> bool:
     # Use default lists if not provided
     forbidden_playlists = forbidden_playlists or []
@@ -61,6 +63,10 @@ def is_forbidden_playlist(name: str, description: str, forbidden_playlists=None,
         spotify_logger.info(f"Excluding playlist '{name}' as it is in forbidden_playlists.")
         return True
 
+    if playlist_id in forbidden_playlist_ids:
+        spotify_logger.info(f"Excluding playlist '{name}' because ID '{playlist_id}' is in forbidden_playlist_ids.")
+        return True
+
     for keyword in description_keywords:
         # Create a regex pattern to match whole words (case-insensitive)
         pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
@@ -71,7 +77,7 @@ def is_forbidden_playlist(name: str, description: str, forbidden_playlists=None,
     return False
 
 
-def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) -> List[Tuple[str, str, str]]:
+def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) -> List[PlaylistInfo]:
     """
     Fetch all user's private playlists (self-created), excluding forbidden playlists.
     Uses cache if available and not forcing refresh.
@@ -82,7 +88,7 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
         exclusion_config: Optional dictionary with exclusion configuration
 
     Returns:
-        List of tuples (playlist_name, playlist_id, snapshot_id)
+        List of PlaylistInfo [playlist_name, playlist_id, snapshot_id]
     """
     # Try to get playlists from cache first
     # if not force_refresh:
@@ -91,20 +97,18 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
     #         spotify_logger.info(f"Using cached playlists data ({len(cached_playlists)} playlists)")
     #         return cached_playlists
 
-    # Get exclusion configuration - either from parameter or default file
+    # Get exclusion configuration - either from parameter or default file (exclusion_config.json)
     if exclusion_config is None:
         with config_path.open('r', encoding='utf-8') as config_file:
             config = json.load(config_file)
     else:
         config = exclusion_config
 
-    # Get the exclusion settings
     forbidden_playlists = config.get('forbidden_playlists', [])
     forbidden_words = config.get('forbidden_words', [])
     description_keywords = config.get('description_keywords', [])
     forbidden_playlist_ids = config.get('forbidden_playlist_ids', [])
 
-    # If we get here, we need to fetch from Spotify API
     spotify_logger.info("Fetching all my playlists from Spotify API")
     user_id = spotify_client.current_user()['id']
     spotify_logger.info(f"User id: {user_id}")
@@ -128,7 +132,7 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
     spotify_logger.info(f"Total playlists fetched from API: {len(all_playlists)}")
 
     my_playlists = [
-        (
+        PlaylistInfo(
             playlist['name'],
             playlist['id'],
             playlist['snapshot_id']
@@ -139,12 +143,12 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
                 not is_forbidden_playlist(
                     playlist['name'],
                     playlist['description'] or "",
+                    playlist['id'],
                     forbidden_playlists,
                     forbidden_words,
                     description_keywords,
                     forbidden_playlist_ids
-                ) and
-                playlist['id'] not in forbidden_playlist_ids
+                )
         )
     ]
 

@@ -1,7 +1,7 @@
 import hashlib
 import time
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 from drivers.spotify_client import (
     authenticate_spotify,
@@ -11,6 +11,7 @@ from drivers.spotify_client import (
 )
 from helpers.file_helper import parse_local_file_uri, generate_local_track_id
 from sql.core.unit_of_work import UnitOfWork
+from sql.dto.playlist_info import PlaylistInfo
 from sql.models.playlist import Playlist
 from sql.models.track import Track
 from utils.logger import setup_logger
@@ -82,8 +83,8 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
     else:
         # Fetch all playlists from Spotify
         spotify_client = authenticate_spotify()
-        spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
-                                            exclusion_config=exclusion_config)
+        spotify_playlists: List[PlaylistInfo] = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                                                exclusion_config=exclusion_config)
         sync_logger.info(f"Fetched {len(spotify_playlists)} playlists from Spotify")
 
         # Track changes for analysis
@@ -93,12 +94,13 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
         unchanged_count = 0
 
         # Create a set of playlist IDs returned from Spotify
-        spotify_playlist_ids = set(playlist_id for _, playlist_id, _ in spotify_playlists)
+        spotify_playlist_ids = set(playlist.playlist_id for playlist in spotify_playlists)
 
         # Analyze changes (without applying them yet)
-        for playlist_data in spotify_playlists:
-            # Unpack the tuple (now includes snapshot_id)
-            playlist_name, playlist_id, snapshot_id = playlist_data
+        for playlist in spotify_playlists:
+            playlist_name = playlist.name
+            playlist_id = playlist.playlist_id
+            snapshot_id = playlist.snapshot_id
 
             # Check if playlist exists in database
             if playlist_id in existing_playlists:
@@ -250,39 +252,43 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
 
     # Fetch all playlists directly from Spotify to ensure associations are fresh
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
-                                        exclusion_config=exclusion_config)
+    spotify_playlists: List[PlaylistInfo] = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                                            exclusion_config=exclusion_config)
 
     # Filter out the master playlist for association lookups
-    other_playlists = [pl for pl in spotify_playlists if pl[1] != master_playlist_id]
+    other_playlists = [pl for pl in spotify_playlists if pl.playlist_id != master_playlist_id]
 
     # Filter to only process playlists that have changed based on snapshot_id
     changed_playlists = []
     unchanged_playlists = []
     changed_playlist_names = []
 
-    for playlist_name, playlist_id, snapshot_id in other_playlists:
+    for playlist in other_playlists:
         # Find the corresponding playlist in the database
         db_playlist = None
         for pl in all_playlists:
-            if pl.playlist_id == playlist_id:
+            if pl.playlist_id == playlist.playlist_id:
                 db_playlist = pl
                 break
 
         # If playlist exists in database, check if snapshot_id has changed
         if db_playlist:
-            if force_full_refresh or db_playlist.snapshot_id != snapshot_id:
-                changed_playlists.append((playlist_name, playlist_id, snapshot_id))
-                changed_playlist_names.append(playlist_name)
+            if force_full_refresh or db_playlist.snapshot_id != playlist.snapshot_id:
+                changed_playlists.append(playlist)
+                changed_playlist_names.append(playlist.name)
             else:
-                unchanged_playlists.append((playlist_name, playlist_id, snapshot_id))
+                unchanged_playlists.append(playlist)
         else:
             # New playlist not in database, always include it
-            changed_playlists.append((playlist_name, playlist_id, snapshot_id))
-            changed_playlist_names.append(playlist_name)
+            changed_playlists.append(playlist)
+            changed_playlist_names.append(playlist.name)
 
     print(f"Found {len(changed_playlists)} playlists that have changed since last sync")
     print(f"Skipping {len(unchanged_playlists)} unchanged playlists")
+
+    if len(unchanged_playlists) > 0:
+        print(
+            f"Efficiency gain: Only processing {len(changed_playlists)}/{len(other_playlists)} playlists ({(len(changed_playlists) / len(other_playlists) * 100):.1f}%)")
 
     if not changed_playlists and not force_full_refresh:
         return {
@@ -310,7 +316,9 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
     all_track_ids = {track.track_id for track in all_tracks}
 
     # Only process the changed playlists
-    for i, (playlist_name, playlist_id, _) in enumerate(changed_playlists, 1):
+    for i, playlist_info in enumerate(changed_playlists, 1):
+        playlist_name = playlist_info[0] if isinstance(playlist_info, tuple) else playlist_info.name
+        playlist_id = playlist_info[1] if isinstance(playlist_info, tuple) else playlist_info.playlist_id
         print(f"Processing playlist {i}/{len(changed_playlists)}: {playlist_name}")
 
         # Always force a fresh API call to get the most up-to-date associations
@@ -844,11 +852,11 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
 
     # Fetch all playlists directly from Spotify to ensure associations are fresh
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
-                                        exclusion_config=exclusion_config)
+    spotify_playlists: List[PlaylistInfo] = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                                            exclusion_config=exclusion_config)
 
     # Filter out the master playlist for association lookups
-    other_playlists = [pl for pl in spotify_playlists if pl[1] != master_playlist_id]
+    other_playlists = [pl for pl in spotify_playlists if pl.playlist_id != master_playlist_id]
 
     print(f"Fetched {len(spotify_playlists)} playlists from Spotify ({len(other_playlists)} excluding MASTER)")
 
@@ -856,23 +864,27 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
     changed_playlists = []
     unchanged_playlists = []
 
-    for playlist_name, playlist_id, snapshot_id in other_playlists:
+    for playlist in other_playlists:
         # Find the corresponding playlist in the database
         db_playlist = None
         for pl in all_playlists:
-            if pl.playlist_id == playlist_id:
+            if pl.playlist_id == playlist.playlist_id:
                 db_playlist = pl
                 break
 
         # If playlist exists in database, check if snapshot_id has changed
         if db_playlist:
-            if force_full_refresh or db_playlist.snapshot_id != snapshot_id:
-                changed_playlists.append((playlist_name, playlist_id, snapshot_id))
+            if force_full_refresh or db_playlist.snapshot_id != playlist.snapshot_id:
+                changed_playlists.append(playlist)
+                sync_logger.info(
+                    f"Playlist '{playlist.name}' snapshot_id changed: {db_playlist.snapshot_id} -> {playlist.snapshot_id}")
             else:
-                unchanged_playlists.append((playlist_name, playlist_id, snapshot_id))
+                unchanged_playlists.append(playlist)
+                sync_logger.debug(f"Playlist '{playlist.name}' unchanged (snapshot_id: {playlist.snapshot_id})")
         else:
             # New playlist not in database, always include it
-            changed_playlists.append((playlist_name, playlist_id, snapshot_id))
+            changed_playlists.append(playlist)
+            sync_logger.info(f"New playlist '{playlist.name}' found, will process associations")
 
     print(f"Found {len(changed_playlists)} playlists that have changed since last sync")
     print(f"Skipping {len(unchanged_playlists)} unchanged playlists")
@@ -900,7 +912,10 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
     all_track_ids = {track.track_id for track in all_tracks}
 
     # Only process the changed playlists
-    for i, (playlist_name, playlist_id, snapshot_id) in enumerate(changed_playlists, 1):
+    for i, playlist in enumerate(changed_playlists, 1):
+        playlist_name = playlist.name
+        playlist_id = playlist.playlist_id
+        snapshot_id = playlist.snapshot_id
         print(f"Processing playlist {i}/{len(changed_playlists)}: {playlist_name}")
 
         # Always force a fresh API call to get the most up-to-date associations
@@ -1262,27 +1277,20 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
         exclusion_config: Configuration for excluding playlists
 
     Returns:
-        Tuple of (added_count, updated_count, unchanged_count, deleted_count, changes_details)
+        Tuple of (added_count, updated_count, unchanged_count, deleted_count, changes_details (dict))
     """
     # Get existing playlists from database
     existing_playlists = get_db_playlists()
 
-    # Fetch all playlists from Spotify
+    # Fetch all playlists from Spotify (playlist_name, playlist_id, snapshot_id)
     spotify_client = authenticate_spotify()
-    spotify_playlists = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
-                                        exclusion_config=exclusion_config)
+    spotify_playlists: List[PlaylistInfo] = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
+                                                            exclusion_config=exclusion_config)
 
     # Create a set of playlist IDs returned from Spotify
     spotify_playlist_ids = set()
-    for playlist_data in spotify_playlists:
-        # Handle different tuple structures (legacy vs current)
-        if len(playlist_data) >= 3:
-            _, playlist_id, snapshot_id = playlist_data
-        else:
-            playlist_name, playlist_id = playlist_data
-            snapshot_id = ""  # Default empty snapshot_id if not available
-
-        spotify_playlist_ids.add(playlist_id)
+    for playlist in spotify_playlists:
+        spotify_playlist_ids.add(playlist.playlist_id)
 
     # Track changes for analysis
     playlists_to_add = []
@@ -1291,27 +1299,26 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
     unchanged_count = 0
 
     # Analyze changes
-    for playlist_data in spotify_playlists:
-        # Handle different tuple structures
-        if len(playlist_data) >= 3:
-            playlist_name, playlist_id, snapshot_id = playlist_data
-        else:
-            playlist_name, playlist_id = playlist_data
-            snapshot_id = ""  # Default empty snapshot_id if not available
+    for playlist in spotify_playlists:
+        playlist_name = playlist.name.strip()
+        playlist_id = playlist.playlist_id
+        snapshot_id = playlist.snapshot_id
 
         # Check if playlist exists in database
         if playlist_id in existing_playlists:
             existing_playlist = existing_playlists[playlist_id]
 
-            # Check if playlist details have changed
-            if (existing_playlist.name != playlist_name.strip()):
+            name_changed = existing_playlist.name != playlist_name
+            snapshot_id_changed = existing_playlist.snapshot_id != snapshot_id
+
+            if name_changed or snapshot_id_changed:
                 # Mark for update
                 playlists_to_update.append({
                     'id': playlist_id,
-                    'name': playlist_name.strip(),
+                    'name': playlist_name,
                     'old_name': existing_playlist.name,
                     'snapshot_id': snapshot_id,
-                    'old_snapshot_id': getattr(existing_playlist, 'snapshot_id', '')
+                    'old_snapshot_id': existing_playlist.snapshot_id,
                 })
             else:
                 unchanged_count += 1

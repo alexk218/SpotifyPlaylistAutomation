@@ -14,6 +14,7 @@ class Playlist:
         Args:
             playlist_id: Unique Spotify identifier for the playlist
             name: Name of the playlist
+            snapshot_id: Spotify snapshot ID for tracking changes
         """
         self.playlist_id = playlist_id
         self.name = name

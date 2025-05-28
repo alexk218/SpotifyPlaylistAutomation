@@ -144,6 +144,6 @@ class PlaylistRepository(BaseRepository[Playlist]):
         """
         playlist_id = row.PlaylistId
         name = row.PlaylistName.strip() if row.PlaylistName else ""
-        snapshot_id = row.SnapshotId if hasattr(row, 'SnapshotId') else None
+        snapshot_id = row.SnapshotId if hasattr(row, 'SnapshotId') and row.SnapshotId else ""
 
-        return Playlist(playlist_id, name)
+        return Playlist(playlist_id, name, snapshot_id)
