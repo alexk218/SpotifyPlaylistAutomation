@@ -1500,8 +1500,6 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
                 changes.append(f"Artists: '{existing_track.artists}' → '{artist_names}'")
             if existing_album != api_album:
                 changes.append(f"Album: '{existing_album}' → '{api_album}'")
-            if existing_track.album != album_name:
-                changes.append(f"Album: '{existing_track.album}' → '{album_name}'")
 
             # Check if track details have changed
             if changes:
