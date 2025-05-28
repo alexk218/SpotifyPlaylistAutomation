@@ -530,7 +530,7 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                         "all_changes": associations_changes.get('tracks_with_changes', [])
                     },
                     "next_stage": "complete",
-                    "needs_confirmation": True  # Always show confirmation
+                    "needs_confirmation": True
                 }
             else:
                 # Execute associations sync

@@ -304,10 +304,11 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
                 "unchanged_playlists": len(unchanged_playlists),
                 "changed_playlists": 0
             },
-            "changed_playlist_names": changed_playlist_names
+            "changed_playlist_names": changed_playlist_names,
+            "changed_playlists": []
         }
 
-    # We'll track all associations to completely refresh the database
+    # We'll track all associations for changed playlists only
     track_playlist_map = {}
 
     print("Fetching track-playlist associations from Spotify...")
@@ -316,9 +317,9 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
     all_track_ids = {track.track_id for track in all_tracks_in_db}
 
     # Only process the changed playlists
-    for i, playlist_info in enumerate(changed_playlists, 1):
-        playlist_name = playlist_info[0] if isinstance(playlist_info, tuple) else playlist_info.name
-        playlist_id = playlist_info[1] if isinstance(playlist_info, tuple) else playlist_info.playlist_id
+    for i, playlist in enumerate(changed_playlists, 1):
+        playlist_name = playlist.name
+        playlist_id = playlist.playlist_id
 
         print(f"Processing playlist {i}/{len(changed_playlists)}: {playlist_name}")
 
@@ -372,6 +373,9 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
 
     print("\nAnalyzing changes in associations...")
 
+    # Get the set of changed playlist names for filtering
+    changed_playlist_names_set = set(playlist.name for playlist in changed_playlists)
+
     with UnitOfWork() as uow:
         # Check each track to see what will change
         for track_id, new_playlist_names in track_playlist_map.items():
@@ -385,12 +389,17 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
                 if playlist:
                     current_playlist_names.append(playlist.name)
 
-            # Identify changes
-            new_playlist_names_set = set(new_playlist_names)
-            current_playlist_names_set = set(current_playlist_names)
+            # IMPORTANT: Only consider associations for changed playlists
+            # Keep associations for unchanged playlists as-is
+            current_changed_playlists = set(current_playlist_names) & changed_playlist_names_set
+            current_unchanged_playlists = set(current_playlist_names) - changed_playlist_names_set
 
-            to_add = new_playlist_names_set - current_playlist_names_set
-            to_remove = current_playlist_names_set - new_playlist_names_set
+            # The new state should be: unchanged playlists + new associations from changed playlists
+            expected_final_playlists = current_unchanged_playlists | set(new_playlist_names)
+            current_all_playlists = set(current_playlist_names)
+
+            to_add = expected_final_playlists - current_all_playlists
+            to_remove = current_all_playlists - expected_final_playlists
 
             # Only record if there are changes
             if to_add or to_remove:
@@ -423,6 +432,99 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
                         'remove_from': list(to_remove)
                     })
 
+        # ALSO: Handle tracks that are no longer in any of the changed playlists
+        # but still have associations to those playlists in the database
+        all_track_ids_in_changed_playlists = set(track_playlist_map.keys())
+
+        # Find tracks that have associations to changed playlists but aren't in the new mapping
+        for playlist in changed_playlists:
+            current_track_ids_in_playlist = uow.track_playlist_repository.get_track_ids_for_playlist(
+                playlist.playlist_id)
+
+            for track_id in current_track_ids_in_playlist:
+                if track_id not in all_track_ids_in_changed_playlists:
+                    # This track was removed from this changed playlist
+                    track = uow.track_repository.get_by_id(track_id)
+                    if track:
+                        # Only remove association to this specific changed playlist
+                        track_info = f"{track.artists} - {track.title}"
+
+                        if track_id not in actual_changes:
+                            actual_changes[track_id] = {
+                                'track_info': track_info,
+                                'to_add': set(),
+                                'to_remove': {playlist.name}
+                            }
+                            tracks_with_changes.append({
+                                'track_id': track_id,
+                                'track_info': track_info,
+                                'title': track.title,
+                                'artists': track.artists,
+                                'add_to': [],
+                                'remove_from': [playlist.name]
+                            })
+                            associations_to_remove += 1
+
+                            # Add to samples for UI
+                            samples.append({
+                                'track': track_info,
+                                'track_info': track_info,
+                                'title': track.title,
+                                'artists': track.artists,
+                                'add_to': [],
+                                'remove_from': [playlist.name]
+                            })
+                        else:
+                            # Add to existing changes
+                            actual_changes[track_id]['to_remove'].add(playlist.name)
+                            # Update the corresponding entry in tracks_with_changes
+                            for change in tracks_with_changes:
+                                if change['track_id'] == track_id:
+                                    change['remove_from'].append(playlist.name)
+                                    break
+                            # Update samples as well
+                            for sample in samples:
+                                if sample['track_info'] == track_info:
+                                    sample['remove_from'].append(playlist.name)
+                                    break
+                            associations_to_remove += 1
+
+    # If there are changed playlists but no actual association changes needed,
+    # we still need to update associations_snapshot_id to mark them as processed
+    if changed_playlists and not tracks_with_changes:
+        print(
+            f"\nNo association changes needed, but updating associations_snapshot_id for {len(changed_playlists)} changed playlists...")
+        with UnitOfWork() as uow:
+            for playlist in changed_playlists:
+                db_playlist = uow.playlist_repository.get_by_id(playlist.playlist_id)
+                if db_playlist:
+                    old_snapshot = db_playlist.associations_snapshot_id
+                    db_playlist.associations_snapshot_id = playlist.snapshot_id
+                    uow.playlist_repository.update(db_playlist)
+                    sync_logger.info(
+                        f"Updated associations_snapshot_id for '{playlist.name}': {old_snapshot} -> {playlist.snapshot_id}")
+                    print(f"  - Updated '{playlist.name}': {old_snapshot} -> {playlist.snapshot_id}")
+
+        # Return the analysis results with information about changed playlists
+        return {
+            "tracks_with_changes": tracks_with_changes,
+            "associations_to_add": associations_to_add,
+            "associations_to_remove": associations_to_remove,
+            "samples": samples,
+            "all_changes": samples,
+            "stats": {
+                "tracks_with_playlists": tracks_with_playlists,
+                "tracks_without_playlists": len(all_track_ids) - tracks_with_playlists,
+                "total_associations": total_associations,
+                "unchanged_playlists": len(unchanged_playlists),
+                "changed_playlists": len(changed_playlists)
+            },
+            "changed_playlist_names": changed_playlist_names,
+            "changed_playlists": [{"name": p.name, "id": p.playlist_id, "snapshot_id": p.snapshot_id} for p in
+                                  changed_playlists],
+            "snapshot_ids_updated": True  # Flag to indicate we updated the IDs
+        }
+
     # Return the analysis results with information about changed playlists
     return {
         "tracks_with_changes": tracks_with_changes,
@@ -437,7 +539,9 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
             "unchanged_playlists": len(unchanged_playlists),
             "changed_playlists": len(changed_playlists)
         },
-        "changed_playlist_names": changed_playlist_names
+        "changed_playlist_names": changed_playlist_names,
+        "changed_playlists": [{"name": p.name, "id": p.playlist_id, "snapshot_id": p.snapshot_id} for p in
+                              changed_playlists]
     }
 
 
@@ -496,6 +600,20 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
                 if total_changes > 20 and progress_index % 10 == 0:
                     print(f"Progress: {progress_index + 1}/{total_changes} tracks processed")
 
+        # Update associations_snapshot_id for all changed playlists
+        if 'changed_playlists' in precomputed_changes:
+            with UnitOfWork() as uow:
+                for playlist_info in precomputed_changes['changed_playlists']:
+                    playlist_id = playlist_info['id']
+                    snapshot_id = playlist_info['snapshot_id']
+                    playlist_name = playlist_info['name']
+
+                    db_playlist = uow.playlist_repository.get_by_id(playlist_id)
+                    if db_playlist:
+                        db_playlist.associations_snapshot_id = snapshot_id
+                        uow.playlist_repository.update(db_playlist)
+                        sync_logger.info(f"Updated associations_snapshot_id for '{playlist_name}' to: {snapshot_id}")
+
         # Final stats
         stats = {
             "tracks_with_playlists": precomputed_changes.get('tracks_with_playlists', 0),
@@ -553,10 +671,11 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
             if force_full_refresh or db_playlist.associations_snapshot_id != playlist.snapshot_id:
                 changed_playlists.append(playlist)
                 sync_logger.info(
-                    f"Playlist '{playlist.name}' snapshot_id changed: {db_playlist.snapshot_id} -> {playlist.snapshot_id}")
+                    f"Playlist '{playlist.name}' associations_snapshot_id changed: {db_playlist.associations_snapshot_id} -> {playlist.snapshot_id}")
             else:
                 unchanged_playlists.append(playlist)
-                sync_logger.debug(f"Playlist '{playlist.name}' unchanged (snapshot_id: {playlist.snapshot_id})")
+                sync_logger.debug(
+                    f"Playlist '{playlist.name}' unchanged (associations_snapshot_id: {playlist.snapshot_id})")
         else:
             # New playlist not in database, always include it
             changed_playlists.append(playlist)
@@ -579,7 +698,7 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
             "no_changes": True
         }
 
-    # We'll track all associations to completely refresh the database
+    # We'll track associations for changed playlists only
     track_playlist_map = {}
 
     print("Fetching track-playlist associations from Spotify...")
@@ -591,7 +710,6 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
     for i, playlist in enumerate(changed_playlists, 1):
         playlist_name = playlist.name
         playlist_id = playlist.playlist_id
-        snapshot_id = playlist.snapshot_id
         print(f"Processing playlist {i}/{len(changed_playlists)}: {playlist_name}")
 
         # Always force a fresh API call to get the most up-to-date associations
@@ -600,25 +718,6 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
         # Log number of local files
         local_files = [tid for tid in playlist_track_ids if tid.startswith('local_')]
         sync_logger.info(f"Found {len(local_files)} local files in playlist '{playlist_name}'")
-        print(f"Found {len(local_files)} local files in playlist '{playlist_name}'")  # Add print for debugging
-
-        # Update the playlist's snapshot_id in the database
-        with UnitOfWork() as uow:
-            db_playlist = uow.playlist_repository.get_by_id(playlist_id)
-            if db_playlist:
-                db_playlist.associations_snapshot_id = snapshot_id
-                uow.playlist_repository.update(db_playlist)
-                sync_logger.info(f"Updated snapshot_id for playlist '{playlist_name}'")
-            else:
-                # New playlist, create it
-                new_playlist = Playlist(
-                    playlist_id=playlist_id,
-                    name=playlist_name,
-                    snapshot_id=snapshot_id,
-                    associations_snapshot_id=snapshot_id,
-                )
-                uow.playlist_repository.insert(new_playlist)
-                sync_logger.info(f"Added new playlist '{playlist_name}' with snapshot_id")
 
         # Add special handling for local files
         for track_id in playlist_track_ids:
@@ -662,6 +761,9 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
 
     print("\nAnalyzing changes in associations...")
 
+    # Get the set of changed playlist names for filtering
+    changed_playlist_names_set = set(playlist.name for playlist in changed_playlists)
+
     with UnitOfWork() as uow:
         # Check each track to see what will change
         for track_id, new_playlist_names in track_playlist_map.items():
@@ -675,12 +777,16 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
                 if playlist:
                     current_playlist_names.append(playlist.name)
 
-            # Identify changes
-            new_playlist_names_set = set(new_playlist_names)
-            current_playlist_names_set = set(current_playlist_names)
+            # IMPORTANT: Only consider associations for changed playlists
+            current_changed_playlists = set(current_playlist_names) & changed_playlist_names_set
+            current_unchanged_playlists = set(current_playlist_names) - changed_playlist_names_set
 
-            to_add = new_playlist_names_set - current_playlist_names_set
-            to_remove = current_playlist_names_set - new_playlist_names_set
+            # The new state should be: unchanged playlists + new associations from changed playlists
+            expected_final_playlists = current_unchanged_playlists | set(new_playlist_names)
+            current_all_playlists = set(current_playlist_names)
+
+            to_add = expected_final_playlists - current_all_playlists
+            to_remove = current_all_playlists - expected_final_playlists
 
             # Only record if there are changes
             if to_add or to_remove:
@@ -694,6 +800,31 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
                     tracks_with_changes += 1
                     associations_to_add += len(to_add)
                     associations_to_remove += len(to_remove)
+
+        # ALSO: Handle tracks that are no longer in any of the changed playlists
+        all_track_ids_in_changed_playlists = set(track_playlist_map.keys())
+
+        for playlist in changed_playlists:
+            current_track_ids_in_playlist = uow.track_playlist_repository.get_track_ids_for_playlist(
+                playlist.playlist_id)
+
+            for track_id in current_track_ids_in_playlist:
+                if track_id not in all_track_ids_in_changed_playlists:
+                    # This track was removed from this changed playlist
+                    track = uow.track_repository.get_by_id(track_id)
+                    if track:
+                        if track_id not in actual_changes:
+                            actual_changes[track_id] = {
+                                'track_info': f"{track.artists} - {track.title}",
+                                'to_add': set(),
+                                'to_remove': {playlist.name}
+                            }
+                            tracks_with_changes += 1
+                            associations_to_remove += 1
+                        else:
+                            # Add to existing changes
+                            actual_changes[track_id]['to_remove'].add(playlist.name)
+                            associations_to_remove += 1
 
     # Now display the actual changes that will be made
     if actual_changes:
@@ -729,6 +860,16 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
 
     # Ask for confirmation only if there are changes
     if not actual_changes:
+        # Update associations_snapshot_id even if no changes (to mark as processed)
+        with UnitOfWork() as uow:
+            for playlist in changed_playlists:
+                db_playlist = uow.playlist_repository.get_by_id(playlist.playlist_id)
+                if db_playlist:
+                    db_playlist.associations_snapshot_id = playlist.snapshot_id
+                    uow.playlist_repository.update(db_playlist)
+                    sync_logger.info(
+                        f"Updated associations_snapshot_id for '{playlist.name}' to: {playlist.snapshot_id}")
+
         return {
             "tracks_with_playlists": tracks_with_playlists,
             "tracks_without_playlists": len(all_track_ids) - tracks_with_playlists,
@@ -796,39 +937,19 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
                 print(
                     f"Progress: {list(actual_changes.keys()).index(track_id) + 1}/{len(actual_changes)} tracks processed")
 
-    # Update associations for tracks that should have no playlists but currently have some
-    tracks_without_playlists = all_track_ids - set(track_playlist_map.keys())
-    if tracks_without_playlists:
-        # Check which ones actually have associations that need to be removed
-        tracks_to_clear = []
-
-        with UnitOfWork() as uow:
-            for track_id in tracks_without_playlists:
-                current_playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_track(track_id)
-                if current_playlist_ids:  # Only process if it has associations
-                    track = uow.track_repository.get_by_id(track_id)
-                    track_info = f"{track.artists} - {track.title}" if track else f"ID:{track_id}"
-                    tracks_to_clear.append((track_id, track_info))
-
-        if tracks_to_clear:
-            print(f"\nRemoving all associations from {len(tracks_to_clear)} tracks that should have no playlists...")
-
-            for i, (track_id, track_info) in enumerate(tracks_to_clear):
-                with UnitOfWork() as uow:
-                    result = sync_track_playlist_associations_for_single_track(uow, track_id, set())
-                    associations_removed += result["removed"]
-
-                    if result["removed"] > 0:
-                        sync_logger.info(f"Removed all associations for '{track_info}': removed {result['removed']}")
-
-                # Print progress for large operations
-                if len(tracks_to_clear) > 20 and (i + 1) % 20 == 0:
-                    print(f"Progress: {i + 1}/{len(tracks_to_clear)} tracks processed")
+    # Update associations_snapshot_id for all processed playlists AFTER successful sync
+    with UnitOfWork() as uow:
+        for playlist in changed_playlists:
+            db_playlist = uow.playlist_repository.get_by_id(playlist.playlist_id)
+            if db_playlist:
+                db_playlist.associations_snapshot_id = playlist.snapshot_id
+                uow.playlist_repository.update(db_playlist)
+                sync_logger.info(f"Updated associations_snapshot_id for '{playlist.name}' to: {playlist.snapshot_id}")
 
     # Final statistics
     stats = {
         "tracks_with_playlists": tracks_with_playlists,
-        "tracks_without_playlists": len(tracks_without_playlists),
+        "tracks_without_playlists": len(all_track_ids) - tracks_with_playlists,
         "total_associations": total_associations,
         "associations_added": associations_added,
         "associations_removed": associations_removed,
@@ -844,7 +965,7 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
     print(f"  - {len(changed_playlists)} playlists had changes")
     print(f"  - {len(unchanged_playlists)} playlists are unchanged")
     print(f"  - {tracks_with_playlists} tracks have playlist associations")
-    print(f"  - {len(tracks_without_playlists)} tracks have no playlist associations")
+    print(f"  - {len(all_track_ids) - tracks_with_playlists} tracks have no playlist associations")
 
     sync_logger.info(
         f"Association sync complete: {associations_added} added, {associations_removed} removed for {len(actual_changes)} tracks")
