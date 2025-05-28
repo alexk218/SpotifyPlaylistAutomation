@@ -60,8 +60,8 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
     playlists_to_delete = []
     unchanged_count = 0
 
-    existing_playlists = get_db_playlists()
-    sync_logger.info(f"Found {len(existing_playlists)} existing playlists in database")
+    existing_playlists_db = get_db_playlists()
+    sync_logger.info(f"Found {len(existing_playlists_db)} existing playlists in database")
 
     if precomputed_changes:
         playlists_to_add = precomputed_changes.get('to_add', playlists_to_add)
@@ -103,12 +103,12 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
             snapshot_id = playlist.snapshot_id
 
             # Check if playlist exists in database
-            if playlist_id in existing_playlists:
-                existing_playlist = existing_playlists[playlist_id]
+            if playlist_id in existing_playlists_db:
+                existing_playlist = existing_playlists_db[playlist_id]
 
                 # Check if playlist details have changed
                 if (existing_playlist.name != playlist_name.strip() or
-                        existing_playlist.snapshot_id != snapshot_id):
+                        existing_playlist.associations_snapshot_id != snapshot_id):
 
                     # Mark for update
                     playlists_to_update.append({
@@ -116,7 +116,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
                         'name': playlist_name.strip(),
                         'old_name': existing_playlist.name,
                         'snapshot_id': snapshot_id,
-                        'old_snapshot_id': existing_playlist.snapshot_id,
+                        'old_snapshot_id': existing_playlist.associations_snapshot_id,
                     })
                 else:
                     unchanged_count += 1
@@ -129,7 +129,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
                 })
 
         # Find playlists to delete (in database but not in Spotify results)
-        for playlist_id, playlist in existing_playlists.items():
+        for playlist_id, playlist in existing_playlists_db.items():
             if playlist_id not in spotify_playlist_ids:
                 playlists_to_delete.append({
                     'id': playlist_id,
@@ -200,7 +200,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
         # Update existing playlists
         for playlist_data in playlists_to_update:
             # Get the existing playlist
-            existing_playlist = existing_playlists[playlist_data['id']]
+            existing_playlist = existing_playlists_db[playlist_data['id']]
 
             # Update the playlist with new data
             existing_playlist.name = playlist_data['name']
@@ -1439,12 +1439,12 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
         Tuple of (tracks_to_add, tracks_to_update, unchanged_tracks, tracks_to_delete)
     """
     # Get existing tracks from database
-    existing_tracks = get_db_tracks()
+    master_tracks_db = get_db_tracks()
 
     # Create a lookup dictionary for local tracks in the database
     # This will help us match local files more effectively
     local_tracks_lookup = {}
-    for track_id, track in existing_tracks.items():
+    for track_id, track in master_tracks_db.items():
         if track.is_local or track_id.startswith('local_'):
             # Create alternative keys for matching
             normalized_key = f"{track.artists}_{track.title}".lower().replace(' ', '')
@@ -1452,15 +1452,15 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
 
     # Fetch all tracks from the MASTER playlist
     spotify_client = authenticate_spotify()
-    master_tracks = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_full_refresh)
+    master_tracks_api = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_full_refresh)
 
     # Analyze changes without applying them
     tracks_to_add = []
     tracks_to_update = []
     unchanged_tracks = []
-    master_track_ids = set()  # ADDED: Track all master playlist track IDs
+    master_track_ids = set()
 
-    for track_data in master_tracks:
+    for track_data in master_tracks_api:
         track_id, track_title, artist_names, album_name, added_at = track_data
 
         # Handle local files
@@ -1485,19 +1485,26 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
                 track_id = generate_local_track_id(metadata)
                 sync_logger.info(f"Generated new ID for local file: '{track_title}' -> {track_id}")
 
-        # ADDED: Add to master track IDs set
         master_track_ids.add(track_id)
 
         # Check if track exists in database
-        if track_id in existing_tracks:
-            existing_track = existing_tracks[track_id]
+        if track_id in master_tracks_db:
+            existing_track = master_tracks_db[track_id]
+            existing_album = existing_track.album or "Unknown Album"
+            api_album = album_name or "Unknown Album"
+
+            changes = []
+            if existing_track.title != track_title:
+                changes.append(f"Title: '{existing_track.title}' → '{track_title}'")
+            if existing_track.artists != artist_names:
+                changes.append(f"Artists: '{existing_track.artists}' → '{artist_names}'")
+            if existing_album != api_album:
+                changes.append(f"Album: '{existing_album}' → '{api_album}'")
+            if existing_track.album != album_name:
+                changes.append(f"Album: '{existing_track.album}' → '{album_name}'")
 
             # Check if track details have changed
-            if (existing_track.title != track_title or
-                    existing_track.artists != artist_names or
-                    existing_track.album != album_name):
-
-                # Mark for update
+            if changes:
                 tracks_to_update.append({
                     'id': track_id,
                     'title': track_title,
@@ -1506,8 +1513,10 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
                     'is_local': is_local,
                     'old_title': existing_track.title,
                     'old_artists': existing_track.artists,
-                    'old_album': existing_track.album
+                    'old_album': existing_track.album,
+                    'changes': changes
                 })
+
             else:
                 unchanged_tracks.append(track_id)
         else:
@@ -1518,7 +1527,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
 
                 # Check if we can find a match by normalized artist+title
                 found_match = False
-                for existing_id, existing_track in existing_tracks.items():
+                for existing_id, existing_track in master_tracks_db.items():
                     if existing_track.is_local:
                         existing_normalized_key = f"{existing_track.artists}_{existing_track.title}".lower().replace(
                             ' ', '')
@@ -1545,7 +1554,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
 
     # Find tracks that are in the database but not in the master playlist
     tracks_to_delete = []
-    for track_id, track in existing_tracks.items():
+    for track_id, track in master_tracks_db.items():
         if track_id not in master_track_ids:
             tracks_to_delete.append({
                 'id': track_id,

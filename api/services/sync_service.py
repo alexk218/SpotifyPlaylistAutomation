@@ -258,7 +258,8 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                     "artists": track['artists'],
                     "title": track['title'],
                     "album": track.get('album', 'Unknown Album'),
-                    "is_local": track.get('is_local', False)
+                    "is_local": track.get('is_local', False),
+                    "changes": track['changes'],
                 })
 
             all_tracks_to_delete = []
@@ -458,7 +459,8 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                         "artists": track['artists'],
                         "title": track['title'],
                         "album": track.get('album', 'Unknown Album'),
-                        "is_local": track.get('is_local', False)
+                        "is_local": track.get('is_local', False),
+                        "changes": track['changes'],
                     })
 
                 # Format tracks to delete
