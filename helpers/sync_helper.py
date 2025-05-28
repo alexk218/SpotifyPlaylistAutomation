@@ -7,7 +7,7 @@ from drivers.spotify_client import (
     authenticate_spotify,
     fetch_playlists,
     fetch_master_tracks,
-    get_playlist_track_ids
+    get_track_ids_for_playlist
 )
 from helpers.file_helper import parse_local_file_uri, generate_local_track_id
 from sql.core.unit_of_work import UnitOfWork
@@ -324,7 +324,7 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
         print(f"Processing playlist {i}/{len(changed_playlists)}: {playlist_name}")
 
         # Always force a fresh API call to get the most up-to-date associations
-        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
+        playlist_track_ids = get_track_ids_for_playlist(spotify_client, playlist_id, force_refresh=True)
 
         # Log number of local files
         local_files = [tid for tid in playlist_track_ids if tid.startswith('local_')]
@@ -713,7 +713,7 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
         print(f"Processing playlist {i}/{len(changed_playlists)}: {playlist_name}")
 
         # Always force a fresh API call to get the most up-to-date associations
-        playlist_track_ids = get_playlist_track_ids(spotify_client, playlist_id, force_refresh=True)
+        playlist_track_ids = get_track_ids_for_playlist(spotify_client, playlist_id, force_refresh=True)
 
         # Log number of local files
         local_files = [tid for tid in playlist_track_ids if tid.startswith('local_')]

@@ -849,53 +849,6 @@ def api_validate_tracks():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-@app.route('/api/sync-to-master', methods=['POST'])
-def api_sync_to_master():
-    try:
-        # Get the master playlist ID
-        master_playlist_id = request.json.get('master_playlist_id')
-        if not master_playlist_id:
-            master_playlist_id = MASTER_PLAYLIST_ID
-
-        if not master_playlist_id:
-            return jsonify({
-                "success": False,
-                "message": "Master playlist ID not provided or found in environment"
-            }), 400
-
-        exclusion_config = get_exclusion_config(request.json)
-
-        spotify_client = authenticate_spotify()
-
-        response = {
-            "success": True,
-            "message": "Sync to master playlist started. This operation runs in the background and may take several minutes."
-        }
-
-        def background_sync():
-            try:
-                sync_to_master_playlist(spotify_client, master_playlist_id, exclusion_config)
-            except Exception as e:
-                error_str = traceback.format_exc()
-                print(f"Error in background sync: {e}")
-                print(error_str)
-
-        thread = threading.Thread(target=background_sync)
-        thread.daemon = True
-        thread.start()
-
-        return jsonify(response)
-
-    except Exception as e:
-        error_str = traceback.format_exc()
-        print(f"Error starting sync: {e}")
-        print(error_str)
-        return jsonify({
-            "success": False,
-            "message": f"Error: {str(e)}"
-        }), 500
-
-
 @app.route('/api/analyze-playlists', methods=['POST'])
 def api_analyze_playlists_changes():
     try:

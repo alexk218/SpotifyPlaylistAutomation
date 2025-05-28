@@ -1,8 +1,7 @@
 from dotenv import load_dotenv
-from utils import logger
+
+from drivers.spotify_client import authenticate_spotify, fetch_playlists, fetch_master_tracks
 from scripts.action_steps import *
-from drivers.spotify_client import authenticate_spotify, fetch_playlists, fetch_all_unique_tracks, fetch_master_tracks, \
-    find_playlists_for_master_tracks
 
 load_dotenv()
 
@@ -31,20 +30,6 @@ class Debug:
         master_tracks = fetch_master_tracks(self.spotify_client, MASTER_PLAYLIST_ID)
         print("Master Tracks:")
         for track in master_tracks:
-            print(track)
-
-    def debug_find_playlists_for_master_tracks(self):
-        master_tracks = fetch_master_tracks(self.spotify_client, MASTER_PLAYLIST_ID)
-        playlists = find_playlists_for_master_tracks(self.spotify_client, master_tracks, MASTER_PLAYLIST_ID)
-        print("Playlists:")
-        for playlist in playlists:
-            print(playlist)
-
-    def debug_fetch_all_unique_tracks(self):
-        my_playlists = fetch_playlists(self.spotify_client)
-        all_unique_tracks = fetch_all_unique_tracks(self.spotify_client, my_playlists)
-        print("All Tracks:")
-        for track in all_unique_tracks:
             print(track)
 
 

@@ -1,15 +1,9 @@
 import os
 from datetime import datetime
-from typing import Optional, List, Tuple
+from typing import Optional
 
 from dotenv import load_dotenv
-from drivers.spotify_client import authenticate_spotify, fetch_playlists, fetch_master_tracks, \
-    find_playlists_for_master_tracks
-from sql.dto.playlist_info import PlaylistInfo
 
-from sql.models.track import Track
-from sql.models.playlist import Playlist
-from sql.core.connection import DatabaseConnection
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 

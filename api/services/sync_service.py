@@ -105,12 +105,7 @@ def sync_master_playlist(master_playlist_id, request_json=None):
         # Start a background thread for the sync operation
         def background_sync():
             try:
-                sync_to_master_playlist(
-                    spotify_client,
-                    master_playlist_id,
-                    exclusion_config,
-                    playlists_to_process
-                )
+                sync_to_master_playlist(spotify_client, master_playlist_id, playlists_to_process)
             except Exception as e:
                 error_str = traceback.format_exc()
                 print(f"Error in background sync: {e}")

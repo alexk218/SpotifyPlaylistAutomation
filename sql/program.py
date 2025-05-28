@@ -131,7 +131,7 @@ def main():
     if args.sync_master:
         # ! Lots of API calls
         spotify_client = authenticate_spotify()
-        sync_to_master_playlist(spotify_client, MASTER_PLAYLIST_ID)
+        sync_to_master_playlist(spotify_client, MASTER_PLAYLIST_ID, )
 
     if args.sync_unplaylisted:
         # ! Lots of API calls
