@@ -75,21 +75,22 @@ def get_exclusion_config(request_json=None):
 def sync_master_playlist(master_playlist_id, request_json=None):
     """
     Sync all tracks from all playlists to MASTER playlist.
-    Only processes playlists that have changed since last master sync.
+    Supports both optimized (changed playlists only) and full refresh modes.
 
     Args:
         master_playlist_id: ID of the master playlist
-        request_json: Optional dictionary with request data
+        request_json: Optional dictionary with request data (including force_refresh flag)
 
     Returns:
         Success status
     """
     exclusion_config = get_exclusion_config(request_json)
+    force_refresh = request_json.get('force_refresh', False) if request_json else False
 
     try:
         spotify_client = authenticate_spotify()
 
-        # Get all playlists from database
+        # Get all playlists from database for snapshot comparison
         with UnitOfWork() as uow:
             db_playlists = uow.playlist_repository.get_all()
             db_playlists_dict = {p.playlist_id: p for p in db_playlists}
@@ -100,42 +101,52 @@ def sync_master_playlist(master_playlist_id, request_json=None):
         # Filter out MASTER playlist
         spotify_playlists = [p for p in spotify_playlists if p.playlist_id != master_playlist_id]
 
-        # Find playlists that have changed since last master sync
-        changed_playlists = []
-        unchanged_playlists = []
+        if force_refresh:
+            # Full refresh mode - process ALL playlists
+            playlists_to_process = spotify_playlists
+            print(f"Force refresh mode: Processing all {len(playlists_to_process)} playlists...")
 
-        for spotify_playlist in spotify_playlists:
-            playlist_id = spotify_playlist.playlist_id
-            current_snapshot = spotify_playlist.snapshot_id
+            message = f"Full master playlist sync started (processing all {len(playlists_to_process)} playlists). This operation runs in the background and may take several minutes."
+        else:
+            # Optimized mode - only process changed playlists
+            changed_playlists = []
+            unchanged_playlists = []
 
-            # Check if this playlist exists in DB and if snapshot has changed
-            if playlist_id in db_playlists_dict:
-                db_playlist = db_playlists_dict[playlist_id]
-                if db_playlist.master_sync_snapshot_id != current_snapshot:
-                    changed_playlists.append(spotify_playlist)
+            for spotify_playlist in spotify_playlists:
+                playlist_id = spotify_playlist.playlist_id
+                current_snapshot = spotify_playlist.snapshot_id
+
+                # Check if this playlist exists in DB and if snapshot has changed
+                if playlist_id in db_playlists_dict:
+                    db_playlist = db_playlists_dict[playlist_id]
+                    if db_playlist.master_sync_snapshot_id != current_snapshot:
+                        changed_playlists.append(spotify_playlist)
+                    else:
+                        unchanged_playlists.append(spotify_playlist)
                 else:
-                    unchanged_playlists.append(spotify_playlist)
-            else:
-                # New playlist not in database - include it
-                changed_playlists.append(spotify_playlist)
+                    # New playlist not in database - include it
+                    changed_playlists.append(spotify_playlist)
 
-        print(
-            f"Master sync optimization: {len(changed_playlists)} playlists changed, {len(unchanged_playlists)} unchanged")
+            playlists_to_process = changed_playlists
+            print(
+                f"Optimized master sync: {len(changed_playlists)} playlists changed, {len(unchanged_playlists)} unchanged")
 
-        if not changed_playlists:
-            return {
-                "success": True,
-                "message": "No playlists have changed since last master sync. No action needed."
-            }
+            if not changed_playlists:
+                return {
+                    "success": True,
+                    "message": "No playlists have changed since last master sync. No action needed."
+                }
 
-        # Start a background thread for this operation
+            message = f"Optimized master playlist sync started. Processing {len(changed_playlists)} changed playlists (skipping {len(unchanged_playlists)} unchanged). This operation runs in the background and may take several minutes."
+
+        # Start a background thread for the sync operation
         def background_sync():
             try:
                 sync_to_master_playlist(
                     spotify_client,
                     master_playlist_id,
                     exclusion_config,
-                    changed_playlists
+                    playlists_to_process
                 )
             except Exception as e:
                 error_str = traceback.format_exc()
@@ -148,8 +159,9 @@ def sync_master_playlist(master_playlist_id, request_json=None):
 
         return {
             "success": True,
-            "message": f"Optimized sync to master playlist started. Processing {len(changed_playlists)} changed playlists (skipping {len(unchanged_playlists)} unchanged). This operation runs in the background and may take several minutes."
+            "message": message
         }
+
     except Exception as e:
         error_str = traceback.format_exc()
         print(f"Error starting sync: {e}")

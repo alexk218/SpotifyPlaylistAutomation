@@ -578,8 +578,6 @@ def sync_to_master_playlist(spotify_client, master_playlist_id, exclusion_config
         exclusion_config: Exclusion configuration
         changed_playlists_only: List of PlaylistInfo objects that have changed
     """
-    from sql.core.unit_of_work import UnitOfWork
-
     print(f"Starting MASTER sync for {len(changed_playlists_only)} changed playlists...")
 
     # Get current tracks in master playlist
