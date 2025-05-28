@@ -1,11 +1,9 @@
 import hashlib
-import json
 import os
-import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Any
 from dotenv import load_dotenv
 
 from helpers.playlist_helper import is_forbidden_playlist, load_exclusion_config
@@ -216,7 +214,7 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str, fo
     Args:
         spotify_client: Authenticated Spotify client
         playlist_id: The playlist ID to fetch tracks for
-        force_refresh: Whether to force a refresh from the API
+        force_refresh: Whether to force a refresh from the API or use DB for track IDs for each playlist
 
     Returns:
         List of track IDs
@@ -314,54 +312,11 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str, fo
 
         spotify_logger.info(f"Successfully fetched {len(track_ids)} tracks from playlist {playlist_id}")
 
-        # Debug output
-        local_file_count = sum(1 for tid in track_ids if tid.startswith('local_'))
-
         return track_ids
 
     except Exception as e:
         spotify_logger.error(f"Failed to fetch tracks for playlist {playlist_id}: {str(e)}")
         return []
-
-
-def get_playlist_tracks_from_db(playlist_id: str) -> List[str]:
-    """
-    Get all track IDs for a playlist from the database.
-
-    Args:
-        playlist_id: Playlist ID
-
-    Returns:
-        List of track IDs
-    """
-    with UnitOfWork() as uow:
-        track_ids = uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id)
-        spotify_logger.info(f"Retrieved {len(track_ids)} track IDs for playlist {playlist_id} from database")
-        return track_ids
-
-
-def fetch_master_tracks_from_db() -> List[Dict[str, Any]]:
-    """
-    Get track details from the database for all tracks in the MASTER playlist.
-
-    Returns:
-        List of track data dictionaries
-    """
-    with UnitOfWork() as uow:
-        tracks = uow.track_repository.get_all()
-
-        track_data = []
-        for track in tracks:
-            track_data.append({
-                'id': track.track_id,
-                'name': track.title,
-                'artists': track.artists,
-                'album': track.album,
-                'added_at': track.added_to_master
-            })
-
-        spotify_logger.info(f"Retrieved {len(track_data)} tracks from database")
-        return track_data
 
 
 def find_playlists_for_master_tracks(spotify_client, master_tracks: List[Tuple[str, str, str, str, datetime]],

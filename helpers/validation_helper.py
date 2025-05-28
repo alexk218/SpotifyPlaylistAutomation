@@ -5,9 +5,6 @@ from typing import Dict, Optional, Any
 
 from mutagen.id3 import ID3
 
-from drivers.spotify_client import (
-    fetch_master_tracks_from_db
-)
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -59,7 +56,9 @@ def validate_master_tracks(master_tracks_dir: str) -> Dict[str, int]:
     master_validation_dir.mkdir(exist_ok=True)
 
     # Get tracks from database first, only use API if empty
-    master_tracks = fetch_master_tracks_from_db()
+    with UnitOfWork() as uow:
+        master_tracks = uow.track_repository.get_all_as_dict_list()
+
     validation_logger.info(f"Retrieved {len(master_tracks)} master tracks from database")
 
     # If no tracks in database, we'd need to get from Spotify (not implemented here)

@@ -202,6 +202,28 @@ class TrackRepository(BaseRepository[Track]):
         # All tracks in the database have IDs, so this is just for API compatibility
         return total_tracks, total_tracks
 
+    def get_all_as_dict_list(self) -> List[Dict[str, Any]]:
+        """
+        Get all tracks formatted as dictionaries for API consumption.
+
+        Returns:
+            List of track data dictionaries
+        """
+        tracks = self.get_all()
+
+        track_data = []
+        for track in tracks:
+            track_data.append({
+                'id': track.track_id,
+                'name': track.title,
+                'artists': track.artists,
+                'album': track.album,
+                'added_at': track.added_to_master
+            })
+
+        self.db_logger.info(f"Retrieved {len(track_data)} tracks as dictionaries")
+        return track_data
+
     def _map_to_model(self, row: pyodbc.Row) -> Track:
         # Extract values from the row
         track_id = row.TrackId

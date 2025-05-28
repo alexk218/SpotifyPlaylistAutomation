@@ -478,7 +478,6 @@ def validate_tracks(master_tracks_dir):
     Returns:
         Dictionary with validation results
     """
-    # Use the existing validate_master_tracks function
     result = validate_master_tracks(master_tracks_dir)
 
     return result
