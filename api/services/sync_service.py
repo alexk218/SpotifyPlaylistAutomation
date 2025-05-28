@@ -232,7 +232,7 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
     elif action == 'tracks':
         # If not confirmed, return the analysis result
         if not is_confirmed:
-            tracks_to_add, tracks_to_update, unchanged_tracks = analyze_tracks_changes(
+            tracks_to_add, tracks_to_update, unchanged_tracks, tracks_to_delete = analyze_tracks_changes(
                 master_playlist_id, force_full_refresh=force_refresh
             )
 
@@ -261,14 +261,25 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                     "is_local": track.get('is_local', False)
                 })
 
+            all_tracks_to_delete = []
+            for track in tracks_to_delete:
+                all_tracks_to_delete.append({
+                    "id": track.get('id'),
+                    "artists": track['artists'],
+                    "title": track['title'],
+                    "album": track.get('album', 'Unknown Album'),
+                    "is_local": track.get('is_local', False)
+                })
+
             return {
                 "success": True,
                 "action": "tracks",
                 "stage": "analysis",
-                "message": f"Analysis complete: {len(tracks_to_add)} to add, {len(tracks_to_update)} to update, {len(unchanged_tracks)} unchanged",
+                "message": f"Analysis complete: {len(tracks_to_add)} to add, {len(tracks_to_update)} to update, {len(tracks_to_delete)} to delete, {len(unchanged_tracks)} unchanged",
                 "stats": {
                     "added": len(tracks_to_add),
                     "updated": len(tracks_to_update),
+                    "deleted": len(tracks_to_delete),
                     "unchanged": len(unchanged_tracks)
                 },
                 "details": {
@@ -277,9 +288,12 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                     "to_add_total": len(tracks_to_add),
                     "all_items_to_update": all_tracks_to_update,
                     "to_update": all_tracks_to_update[:20],
-                    "to_update_total": len(tracks_to_update)
+                    "to_update_total": len(tracks_to_update),
+                    "all_items_to_delete": all_tracks_to_delete,
+                    "to_delete": all_tracks_to_delete[:20],
+                    "to_delete_total": len(tracks_to_delete)
                 },
-                "needs_confirmation": len(tracks_to_add) > 0 or len(tracks_to_update) > 0
+                "needs_confirmation": len(tracks_to_add) > 0 or len(tracks_to_update) > 0 or len(tracks_to_delete) > 0
             }
 
         # Otherwise, proceed with execution
@@ -408,7 +422,8 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
         elif stage == 'tracks':
             if not is_confirmed:
                 # Analyze tracks - make sure to capture ALL changes including deletions
-                tracks_to_add, tracks_to_update, tracks_unchanged = analyze_tracks_changes(
+                tracks_to_add, tracks_to_update, tracks_unchanged, tracks_to_delete = analyze_tracks_changes(
+                    # MODIFIED
                     master_playlist_id, force_full_refresh=force_refresh
                 )
 
@@ -437,41 +452,16 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                         "is_local": track.get('is_local', False)
                     })
 
-                # Get tracks to delete by calling the sync function in analysis mode
-                # This ensures we capture the same logic as the actual sync
-                try:
-                    from helpers.sync_helper import get_db_tracks
-                    from drivers.spotify_client import authenticate_spotify, fetch_master_tracks
-
-                    existing_tracks = get_db_tracks()
-                    spotify_client = authenticate_spotify()
-                    master_tracks = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_refresh)
-
-                    # Find tracks to delete (same logic as in sync_tracks_to_db)
-                    master_track_ids = set()
-                    for track_data in master_tracks:
-                        track_id, track_title, artist_names, album_name, added_at = track_data
-                        if track_id is None:  # Local file
-                            from helpers.file_helper import generate_local_track_id
-                            normalized_title = ''.join(c for c in track_title if c.isalnum() or c in ' &-_')
-                            normalized_artist = ''.join(c for c in artist_names if c.isalnum() or c in ' &-_')
-                            metadata = {'title': normalized_title, 'artist': normalized_artist}
-                            track_id = generate_local_track_id(metadata)
-                        master_track_ids.add(track_id)
-
-                    tracks_to_delete = []
-                    for track_id, track in existing_tracks.items():
-                        if track_id not in master_track_ids:
-                            tracks_to_delete.append({
-                                'id': track_id,
-                                'title': track.title,
-                                'artists': track.artists,
-                                'album': track.album,
-                                'is_local': getattr(track, 'is_local', False)
-                            })
-                except Exception as e:
-                    print(f"Error analyzing tracks to delete: {e}")
-                    tracks_to_delete = []
+                # Format tracks to delete
+                all_tracks_to_delete = []
+                for track in tracks_to_delete:
+                    all_tracks_to_delete.append({
+                        "id": track.get('id'),
+                        "artists": track['artists'],
+                        "title": track['title'],
+                        "album": track.get('album', 'Unknown Album'),
+                        "is_local": track.get('is_local', False)
+                    })
 
                 return {
                     "success": True,
@@ -482,8 +472,8 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                     "stats": {
                         "added": len(tracks_to_add),
                         "updated": len(tracks_to_update),
-                        "unchanged": len(tracks_unchanged),
-                        "deleted": len(tracks_to_delete)
+                        "deleted": len(tracks_to_delete),  # NEW
+                        "unchanged": len(tracks_unchanged)
                     },
                     "details": {
                         "all_items_to_add": all_tracks_to_add,
@@ -492,8 +482,8 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                         "all_items_to_update": all_tracks_to_update,
                         "to_update": all_tracks_to_update[:20],
                         "to_update_total": len(tracks_to_update),
-                        "all_items_to_delete": tracks_to_delete,
-                        "to_delete": tracks_to_delete[:20],
+                        "all_items_to_delete": all_tracks_to_delete,
+                        "to_delete": all_tracks_to_delete[:20],
                         "to_delete_total": len(tracks_to_delete)
                     },
                     "next_stage": "associations",
