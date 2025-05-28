@@ -1,13 +1,12 @@
-import json
 import threading
 import traceback
-from pathlib import Path
 
 from dotenv import load_dotenv
 
 from drivers.spotify_client import (
     authenticate_spotify, sync_to_master_playlist, sync_unplaylisted_to_unsorted, fetch_playlists
 )
+from helpers.playlist_helper import load_exclusion_config
 from helpers.sync_helper import (
     analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations,
     sync_playlists_to_db, sync_tracks_to_db, sync_track_playlist_associations_to_db
@@ -19,57 +18,21 @@ load_dotenv()
 
 def get_exclusion_config(request_json=None):
     """
-    Get the exclusion configuration for playlists.
-
-    Args:
-        request_json: Optional dictionary with request data
-
-    Returns:
-        Dictionary with exclusion configuration
+    Get exclusion configuration from HTTP request format.
     """
-    # Find the path to the exclusion config
-    project_root = Path(__file__).resolve().parent.parent.parent
-    config_path = project_root / 'exclusion_config.json'
-
-    # Default config from file
-    default_config = {}
-    try:
-        with config_path.open('r', encoding='utf-8') as config_file:
-            default_config = json.load(config_file)
-    except Exception as e:
-        print(f"Error loading default config: {e}")
-        default_config = {
-            "forbidden_playlists": [],
-            "forbidden_words": [],
-            "description_keywords": []
-        }
-
-    # If request contains playlist settings, use those instead
+    # If request contains playlist settings, extract and use those
     if request_json and 'playlistSettings' in request_json:
         client_settings = request_json['playlistSettings']
 
-        # Create a new config based on client settings
-        config = {
+        return {
             "forbidden_playlists": [],
-            "forbidden_words": [],
-            "description_keywords": [],
-            "forbidden_playlist_ids": []
+            "forbidden_words": client_settings.get('excludedKeywords', []),
+            "description_keywords": client_settings.get('excludeByDescription', []),
+            "forbidden_playlist_ids": client_settings.get('excludedPlaylistIds', [])
         }
 
-        # Map client-side settings to server-side format
-        if 'excludedKeywords' in client_settings:
-            config['forbidden_words'] = client_settings['excludedKeywords']
-
-        if 'excludedPlaylistIds' in client_settings:
-            config['forbidden_playlist_ids'] = client_settings['excludedPlaylistIds']
-
-        if 'excludeByDescription' in client_settings:
-            config['description_keywords'] = client_settings['excludeByDescription']
-
-        return config
-
-    # If no client settings, return default
-    return default_config
+    # Otherwise load default config
+    return load_exclusion_config()
 
 
 def sync_master_playlist(master_playlist_id, request_json=None):

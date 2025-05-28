@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any
 from dotenv import load_dotenv
 
+from helpers.playlist_helper import is_forbidden_playlist, load_exclusion_config
 from sql.dto.playlist_info import PlaylistInfo
 
 load_dotenv()
@@ -43,39 +44,6 @@ def authenticate_spotify():
     return sp
 
 
-def is_forbidden_playlist(name: str, description: str, playlist_id: str, forbidden_playlists=None,
-                          forbidden_words=None, description_keywords=None, forbidden_playlist_ids=None) -> bool:
-    # Use default lists if not provided
-    forbidden_playlists = forbidden_playlists or []
-    forbidden_words = forbidden_words or []
-    description_keywords = description_keywords or []
-    forbidden_playlist_ids = forbidden_playlist_ids or []
-
-    name_lower = name.lower()
-    description_lower = description.lower()
-
-    if any(word.lower() in name_lower for word in forbidden_words):
-        spotify_logger.info(f"Excluding playlist '{name}' due to forbidden word in name.")
-        return True
-
-    if name in forbidden_playlists:
-        spotify_logger.info(f"Excluding playlist '{name}' as it is in forbidden_playlists.")
-        return True
-
-    if playlist_id in forbidden_playlist_ids:
-        spotify_logger.info(f"Excluding playlist '{name}' because ID '{playlist_id}' is in forbidden_playlist_ids.")
-        return True
-
-    for keyword in description_keywords:
-        # Create a regex pattern to match whole words (case-insensitive)
-        pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
-        if re.search(pattern, description_lower):
-            spotify_logger.info(f"Excluding playlist '{name}' because description contains '{keyword}'.")
-            return True
-
-    return False
-
-
 def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) -> List[PlaylistInfo]:
     """
     Fetch all user's private playlists (self-created), excluding forbidden playlists.
@@ -89,17 +57,7 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
     Returns:
         List of PlaylistInfo [playlist_name, playlist_id, snapshot_id]
     """
-    # Get exclusion configuration - either from parameter or default file (exclusion_config.json)
-    if exclusion_config is None:
-        with config_path.open('r', encoding='utf-8') as config_file:
-            config = json.load(config_file)
-    else:
-        config = exclusion_config
-
-    forbidden_playlists = config.get('forbidden_playlists', [])
-    forbidden_words = config.get('forbidden_words', [])
-    description_keywords = config.get('description_keywords', [])
-    forbidden_playlist_ids = config.get('forbidden_playlist_ids', [])
+    config = load_exclusion_config(exclusion_config)
 
     spotify_logger.info("Fetching all my playlists from Spotify API")
     user_id = spotify_client.current_user()['id']
@@ -136,10 +94,10 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
                     playlist['name'],
                     playlist['description'] or "",
                     playlist['id'],
-                    forbidden_playlists,
-                    forbidden_words,
-                    description_keywords,
-                    forbidden_playlist_ids
+                    config.get('forbidden_playlists', []),
+                    config.get('forbidden_words', []),
+                    config.get('description_keywords', []),
+                    config.get('forbidden_playlist_ids', [])
                 )
         )
     ]
@@ -322,7 +280,8 @@ def get_playlist_track_ids(spotify_client: spotipy.Spotify, playlist_id: str, fo
 
                         # Log the local file
                         spotify_logger.debug(f"Found local file in playlist: '{track_name}' by '{artist_name}'")
-                        print(f"Found local file: '{track_name}' by '{artist_name}'")  # Add print for debugging
+                        spotify_logger.info(
+                            f"Found local file: '{track_name}' by '{artist_name}'")
 
                         # Generate a consistent ID for the local file
                         normalized_name = ''.join(c.lower() for c in track_name if c.isalnum() or c in ' &-_')

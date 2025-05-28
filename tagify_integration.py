@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import re
@@ -5,29 +6,27 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
-import traceback
-import argparse
 import Levenshtein
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
+from flask import redirect
 from flask_cors import CORS
 from mutagen.id3 import ID3, ID3NoHeaderError
-from flask import redirect
 from mutagen.mp3 import MP3
 
-from drivers.spotify_client import authenticate_spotify, get_playlist_track_ids, fetch_playlists, \
-    sync_to_master_playlist, config_path
+from drivers.spotify_client import authenticate_spotify, sync_to_master_playlist, config_path
 from helpers.file_helper import embed_track_id
+from helpers.m3u_helper import build_track_id_mapping, generate_m3u_playlist, find_local_file_path_with_extensions, \
+    get_m3u_track_ids
+from helpers.m3u_helper import sanitize_filename
 from helpers.sync_helper import analyze_playlists_changes, analyze_tracks_changes, analyze_track_playlist_associations, \
     sync_playlists_to_db, sync_tracks_to_db, sync_track_playlist_associations_to_db
 from m3u_to_rekordbox import RekordboxXmlGenerator
 from sql.core.unit_of_work import UnitOfWork
-from helpers.m3u_helper import build_track_id_mapping, generate_m3u_playlist, find_local_file_path_with_extensions, \
-    get_m3u_track_ids
-from helpers.m3u_helper import sanitize_filename
 from sql.helpers.db_helper import clear_db
 
 # Load environment variables
