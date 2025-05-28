@@ -238,16 +238,16 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
 
     # Get all tracks from database
     with UnitOfWork() as uow:
-        all_tracks = uow.track_repository.get_all()
+        all_tracks_in_db = uow.track_repository.get_all()
         # Create a lookup dictionary for tracks by ID for quick access
-        tracks_by_id = {track.track_id: track for track in all_tracks}
-        total_tracks = len(all_tracks)
+        tracks_by_id = {track.track_id: track for track in all_tracks_in_db}
+        total_tracks = len(all_tracks_in_db)
         sync_logger.info(f"Found {total_tracks} tracks in database")
 
     # Get all playlists from database
     with UnitOfWork() as uow:
-        all_playlists = uow.playlist_repository.get_all()
-        total_playlists = len(all_playlists)
+        all_playlists_in_db = uow.playlist_repository.get_all()
+        total_playlists = len(all_playlists_in_db)
         sync_logger.info(f"Found {total_playlists} playlists in database")
 
     # Fetch all playlists directly from Spotify to ensure associations are fresh
@@ -256,17 +256,17 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
                                                             exclusion_config=exclusion_config)
 
     # Filter out the master playlist for association lookups
-    other_playlists = [pl for pl in spotify_playlists if pl.playlist_id != master_playlist_id]
+    all_playlists_except_master_api = [pl for pl in spotify_playlists if pl.playlist_id != master_playlist_id]
 
     # Filter to only process playlists that have changed based on snapshot_id
     changed_playlists = []
     unchanged_playlists = []
     changed_playlist_names = []
 
-    for playlist in other_playlists:
+    for playlist in all_playlists_except_master_api:
         # Find the corresponding playlist in the database
         db_playlist = None
-        for pl in all_playlists:
+        for pl in all_playlists_in_db:
             if pl.playlist_id == playlist.playlist_id:
                 db_playlist = pl
                 break
@@ -288,7 +288,7 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
 
     if len(unchanged_playlists) > 0:
         print(
-            f"Efficiency gain: Only processing {len(changed_playlists)}/{len(other_playlists)} playlists ({(len(changed_playlists) / len(other_playlists) * 100):.1f}%)")
+            f"Efficiency gain: Only processing {len(changed_playlists)}/{len(all_playlists_except_master_api)} playlists ({(len(changed_playlists) / len(all_playlists_except_master_api) * 100):.1f}%)")
 
     if not changed_playlists and not force_full_refresh:
         return {
@@ -313,12 +313,13 @@ def analyze_track_playlist_associations(master_playlist_id: str, force_full_refr
     print("Fetching track-playlist associations from Spotify...")
 
     # First, build a list of all track IDs for reference
-    all_track_ids = {track.track_id for track in all_tracks}
+    all_track_ids = {track.track_id for track in all_tracks_in_db}
 
     # Only process the changed playlists
     for i, playlist_info in enumerate(changed_playlists, 1):
         playlist_name = playlist_info[0] if isinstance(playlist_info, tuple) else playlist_info.name
         playlist_id = playlist_info[1] if isinstance(playlist_info, tuple) else playlist_info.playlist_id
+
         print(f"Processing playlist {i}/{len(changed_playlists)}: {playlist_name}")
 
         # Always force a fresh API call to get the most up-to-date associations
@@ -840,14 +841,14 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
 
     # Get all tracks from database
     with UnitOfWork() as uow:
-        all_tracks = uow.track_repository.get_all()
-        total_tracks = len(all_tracks)
+        all_tracks_db = uow.track_repository.get_all()
+        total_tracks = len(all_tracks_db)
         sync_logger.info(f"Found {total_tracks} tracks in database")
 
     # Get all playlists from database
     with UnitOfWork() as uow:
-        all_playlists = uow.playlist_repository.get_all()
-        total_playlists = len(all_playlists)
+        all_playlists_db = uow.playlist_repository.get_all()
+        total_playlists = len(all_playlists_db)
         sync_logger.info(f"Found {total_playlists} playlists in database")
 
     # Fetch all playlists directly from Spotify to ensure associations are fresh
@@ -856,18 +857,19 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
                                                             exclusion_config=exclusion_config)
 
     # Filter out the master playlist for association lookups
-    other_playlists = [pl for pl in spotify_playlists if pl.playlist_id != master_playlist_id]
+    all_playlists_except_master_api = [pl for pl in spotify_playlists if pl.playlist_id != master_playlist_id]
 
-    print(f"Fetched {len(spotify_playlists)} playlists from Spotify ({len(other_playlists)} excluding MASTER)")
+    print(
+        f"Fetched {len(spotify_playlists)} playlists from Spotify ({len(all_playlists_except_master_api)} excluding MASTER)")
 
     # Filter to only process playlists that have changed based on snapshot_id
     changed_playlists = []
     unchanged_playlists = []
 
-    for playlist in other_playlists:
+    for playlist in all_playlists_except_master_api:
         # Find the corresponding playlist in the database
         db_playlist = None
-        for pl in all_playlists:
+        for pl in all_playlists_db:
             if pl.playlist_id == playlist.playlist_id:
                 db_playlist = pl
                 break
@@ -909,7 +911,7 @@ def sync_track_playlist_associations_to_db(master_playlist_id: str, force_full_r
     print("Fetching track-playlist associations from Spotify...")
 
     # First, build a list of all track IDs for reference
-    all_track_ids = {track.track_id for track in all_tracks}
+    all_track_ids = {track.track_id for track in all_tracks_db}
 
     # Only process the changed playlists
     for i, playlist in enumerate(changed_playlists, 1):
