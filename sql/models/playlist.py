@@ -7,7 +7,7 @@ class Playlist:
     Contains business logic and relationships related to playlists.
     """
 
-    def __init__(self, playlist_id: str, name: str, snapshot_id: str = None):
+    def __init__(self, playlist_id: str, name: str, snapshot_id: str = None, associations_snapshot_id: str = None):
         """
         Initialize a new Playlist instance.
 
@@ -15,10 +15,12 @@ class Playlist:
             playlist_id: Unique Spotify identifier for the playlist
             name: Name of the playlist
             snapshot_id: Spotify snapshot ID for tracking changes
+            associations_snapshot_id: Snapshot ID since last time associations were synced
         """
         self.playlist_id = playlist_id
         self.name = name
         self.snapshot_id = snapshot_id
+        self.associations_snapshot_id = associations_snapshot_id or ""
         self.tracks = []
 
     def add_track(self, track) -> None:
