@@ -13,13 +13,13 @@ class PlaylistRepository(BaseRepository[Playlist]):
 
     def insert(self, playlist: Playlist) -> None:
         query = """
-                INSERT INTO Playlists (PlaylistId, PlaylistName, SnapshotId, AssociationsSnapshotId, AddedDate)
-                VALUES (?, ?, ?, GETDATE()) \
+                INSERT INTO Playlists (PlaylistId, PlaylistName, MasterSyncSnapshotId, AssociationsSnapshotId, AddedDate)
+                VALUES (?, ?, ?, ?, GETDATE())
                 """
         self.execute_non_query(query, (
             playlist.playlist_id,
             playlist.name,
-            playlist.snapshot_id,
+            playlist.master_sync_snapshot_id,
             playlist.associations_snapshot_id,
         ))
         self.db_logger.info(f"Inserted playlist: {playlist.playlist_id} - {playlist.name}")
@@ -28,13 +28,13 @@ class PlaylistRepository(BaseRepository[Playlist]):
         query = """
                 UPDATE Playlists
                 SET PlaylistName = ?,
-                    SnapshotId   = ?,
+                    MasterSyncSnapshotId = ?,
                     AssociationsSnapshotId = ?
                 WHERE PlaylistId = ?
                 """
         rows_affected = self.execute_non_query(query, (
             playlist.name,
-            playlist.snapshot_id,
+            playlist.master_sync_snapshot_id,
             playlist.associations_snapshot_id,
             playlist.playlist_id
         ))
@@ -147,8 +147,9 @@ class PlaylistRepository(BaseRepository[Playlist]):
         """
         playlist_id = row.PlaylistId
         name = row.PlaylistName.strip() if row.PlaylistName else ""
-        snapshot_id = row.SnapshotId if hasattr(row, 'SnapshotId') and row.SnapshotId else ""
+        master_sync_snapshot_id = row.MasterSyncSnapshotId if hasattr(row,
+                                                                      'MasterSyncSnapshotId') and row.MasterSyncSnapshotId else ""
         associations_snapshot_id = row.AssociationsSnapshotId if hasattr(row,
                                                                          'AssociationsSnapshotId') and row.AssociationsSnapshotId else ""
 
-        return Playlist(playlist_id, name, snapshot_id, associations_snapshot_id)
+        return Playlist(playlist_id, name, master_sync_snapshot_id, associations_snapshot_id)
