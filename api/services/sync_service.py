@@ -297,7 +297,17 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
             }
 
         # Otherwise, proceed with execution
-        track_changes_from_analysis = precomputed_changes
+        if 'details' in precomputed_changes:
+            # Extract the properly structured changes from the analysis details
+            track_changes_from_analysis = {
+                'tracks_to_add': precomputed_changes['details'].get('all_items_to_add', []),
+                'tracks_to_update': precomputed_changes['details'].get('all_items_to_update', []),
+                'tracks_to_delete': precomputed_changes['details'].get('all_items_to_delete', []),
+                'unchanged_tracks': precomputed_changes['stats'].get('unchanged', 0)
+            }
+        else:
+            track_changes_from_analysis = precomputed_changes
+
         added, updated, unchanged, deleted = sync_tracks_to_db(
             master_playlist_id,
             force_full_refresh=force_refresh,
@@ -423,7 +433,6 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
             if not is_confirmed:
                 # Analyze tracks - make sure to capture ALL changes including deletions
                 tracks_to_add, tracks_to_update, tracks_unchanged, tracks_to_delete = analyze_tracks_changes(
-                    # MODIFIED
                     master_playlist_id, force_full_refresh=force_refresh
                 )
 
@@ -491,11 +500,23 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 }
             else:
                 # Execute tracks sync
+                if 'details' in precomputed_changes:
+                    # Extract the properly structured changes from the analysis details
+                    track_changes_from_analysis = {
+                        'tracks_to_add': precomputed_changes['details'].get('all_items_to_add', []),
+                        'tracks_to_update': precomputed_changes['details'].get('all_items_to_update', []),
+                        'tracks_to_delete': precomputed_changes['details'].get('all_items_to_delete', []),
+                        # This was missing!
+                        'unchanged_tracks': precomputed_changes['stats'].get('unchanged', 0)
+                    }
+                else:
+                    track_changes_from_analysis = precomputed_changes
+
                 added, updated, unchanged, deleted = sync_tracks_to_db(
                     master_playlist_id,
                     force_full_refresh=force_refresh,
                     auto_confirm=True,
-                    precomputed_changes=precomputed_changes
+                    precomputed_changes=track_changes_from_analysis
                 )
 
                 return {

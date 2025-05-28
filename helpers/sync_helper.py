@@ -997,7 +997,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         sync_logger.info("Using precomputed changes to avoid redundant analysis")
         tracks_to_add = precomputed_changes.get('tracks_to_add', tracks_to_add)
         tracks_to_update = precomputed_changes.get('tracks_to_update', tracks_to_update)
-        tracks_to_delete = precomputed_changes.get('tracks_to_delete', tracks_to_delete)  # NEW
+        tracks_to_delete = precomputed_changes.get('tracks_to_delete', tracks_to_delete)
         unchanged_tracks = precomputed_changes.get('unchanged_tracks', unchanged_tracks)
 
         sync_logger.info(f"Precomputed changes: {len(tracks_to_add)} to add, "
@@ -1140,6 +1140,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
     print("\nApplying track changes to database...")
     with UnitOfWork() as uow:
+        # Delete tracks first
         for track_data in tracks_to_delete:
             track_id = track_data['id']
 
@@ -1159,6 +1160,84 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             except Exception as e:
                 sync_logger.error(f"Error deleting track {track_id}: {e}")
                 print(f"Warning: Error deleting track {track_id}")
+
+        # Add new tracks
+        for track_data in tracks_to_add:
+            track_id = track_data['id']
+            track_title = track_data['title']
+            artist_names = track_data['artists']
+            album_name = track_data['album']
+            is_local = track_data['is_local']
+            added_at = None
+            if 'added_at' in track_data and track_data['added_at']:
+                # If it's already a datetime object, use it directly
+                if isinstance(track_data['added_at'], datetime):
+                    added_at = track_data['added_at']
+                # If it's a string, try to parse it
+                elif isinstance(track_data['added_at'], str):
+                    try:
+                        # Try ISO format first
+                        added_at = datetime.fromisoformat(track_data['added_at'].replace('Z', '+00:00'))
+                    except ValueError:
+                        try:
+                            # Try RFC 822 format (e.g., 'Sun, 18 May 2025 04:14:05 GMT')
+                            from email.utils import parsedate_to_datetime
+                            added_at = parsedate_to_datetime(track_data['added_at'])
+                        except Exception:
+                            try:
+                                # Try RFC 822 format with strptime as fallback
+                                added_at = datetime.strptime(track_data['added_at'], '%a, %d %b %Y %H:%M:%S GMT')
+                            except ValueError:
+                                try:
+                                    # Try other common formats
+                                    added_at = datetime.strptime(track_data['added_at'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                                except ValueError:
+                                    try:
+                                        added_at = datetime.strptime(track_data['added_at'], '%Y-%m-%d %H:%M:%S')
+                                    except ValueError:
+                                        # If all parsing fails, log and use None
+                                        sync_logger.warning(
+                                            f"Could not parse date: {track_data['added_at']} for track {track_id}")
+                                        added_at = None
+
+            # For newly added tracks with no added_at, you might want to use current time
+            if added_at is None:
+                added_at = datetime.now()
+                sync_logger.debug(f"Using current time for AddedToMaster: {added_at} for track {track_id}")
+
+            # Create new track
+            new_track = Track(
+                track_id=track_id,
+                title=track_title,
+                artists=artist_names,
+                album=album_name,
+                added_to_master=added_at,
+                is_local=is_local,
+            )
+            uow.track_repository.insert(new_track)
+            added_count += 1
+            sync_logger.info(f"Added new track: {track_title} (ID: {track_id})")
+
+        # Update existing tracks
+        for track_data in tracks_to_update:
+            track_id = track_data['id']
+            track_title = track_data['title']
+            artist_names = track_data['artists']
+            album_name = track_data['album']
+            is_local = track_data['is_local']
+
+            # Get the existing track
+            existing_track = existing_tracks[track_id]
+
+            # Update the track
+            existing_track.title = track_title
+            existing_track.artists = artist_names
+            existing_track.album = album_name
+            existing_track.is_local = is_local
+
+            uow.track_repository.update(existing_track)
+            updated_count += 1
+            sync_logger.info(f"Updated track: {track_title} (ID: {track_id})")
 
     # Log final results with deletion counts
     print(f"\nTrack sync complete: {added_count} added, {updated_count} updated, "
@@ -1357,7 +1436,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
         force_full_refresh: Whether to force a full refresh, ignoring existing data
 
     Returns:
-        Tuple of (tracks_to_add, tracks_to_update, unchanged_tracks, tracks_to_delete)  # MODIFIED
+        Tuple of (tracks_to_add, tracks_to_update, unchanged_tracks, tracks_to_delete)
     """
     # Get existing tracks from database
     existing_tracks = get_db_tracks()
@@ -1379,9 +1458,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
     tracks_to_add = []
     tracks_to_update = []
     unchanged_tracks = []
-
-    # Build set of master track IDs for deletion analysis
-    master_track_ids = set()
+    master_track_ids = set()  # ADDED: Track all master playlist track IDs
 
     for track_data in master_tracks:
         track_id, track_title, artist_names, album_name, added_at = track_data
@@ -1408,7 +1485,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
                 track_id = generate_local_track_id(metadata)
                 sync_logger.info(f"Generated new ID for local file: '{track_title}' -> {track_id}")
 
-        # Add to master track IDs set
+        # ADDED: Add to master track IDs set
         master_track_ids.add(track_id)
 
         # Check if track exists in database
@@ -1466,7 +1543,7 @@ def analyze_tracks_changes(master_playlist_id: str, force_full_refresh: bool = F
                 'is_local': is_local
             })
 
-    # NEW: Find tracks that are in the database but not in the master playlist
+    # Find tracks that are in the database but not in the master playlist
     tracks_to_delete = []
     for track_id, track in existing_tracks.items():
         if track_id not in master_track_ids:
