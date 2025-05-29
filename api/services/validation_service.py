@@ -1063,9 +1063,10 @@ def preview_playlist_reorganization(playlists_dir, new_structure):
                 "path": old_path
             })
 
-    # Set backup location
+    # Set backup location (in m3u_playlists_backup directory)
+    backup_base_dir = os.path.join(os.path.dirname(playlists_dir), "m3u_playlists_backup")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    changes["backup_location"] = f"{playlists_dir}_backup_{timestamp}"
+    changes["backup_location"] = os.path.join(backup_base_dir, f"backup_{timestamp}")
 
     return changes
 
@@ -1096,8 +1097,13 @@ def apply_playlist_reorganization(playlists_dir, master_tracks_dir, new_structur
     try:
         # Create backup if requested
         if create_backup and os.path.exists(playlists_dir):
+            # Create backup in dedicated backup directory
+            backup_base_dir = os.path.join(os.path.dirname(playlists_dir), "m3u_playlists_backup")
+            os.makedirs(backup_base_dir, exist_ok=True)
+
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_location = f"{playlists_dir}_backup_{timestamp}"
+            backup_location = os.path.join(backup_base_dir, f"backup_{timestamp}")
+
             shutil.copytree(playlists_dir, backup_location)
             results["backup_created"] = True
             results["backup_location"] = backup_location
