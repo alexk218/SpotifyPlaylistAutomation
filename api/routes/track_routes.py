@@ -228,3 +228,33 @@ def direct_tracks_compare():
             "message": str(e),
             "traceback": error_str
         }), 500
+
+
+@bp.route('/download', methods=['POST'])
+def download_track():
+    """Download a track using spotDL and embed metadata."""
+    track_id = request.json.get('track_id')
+    download_dir = request.json.get('download_dir') or current_app.config.get('MASTER_TRACKS_DIRECTORY_SSD')
+
+    if not track_id:
+        return jsonify({
+            "success": False,
+            "message": "Track ID is required"
+        }), 400
+
+    try:
+        result = track_service.download_and_embed_track(track_id, download_dir)
+        return jsonify({
+            "success": True,
+            "message": f"Successfully downloaded and embedded metadata for track",
+            **result
+        })
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error downloading track: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500

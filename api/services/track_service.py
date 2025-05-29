@@ -1,6 +1,7 @@
 # api/services/track_service.py
 import os
 import re
+import subprocess
 from datetime import datetime
 
 import Levenshtein
@@ -597,3 +598,94 @@ def direct_tracks_compare(master_tracks_dir, master_playlist_id=None):
             "music_directory": master_tracks_dir,
             "master_playlist_id": master_playlist_id
         }
+
+
+def download_and_embed_track(track_id: str, download_dir: str):
+    """
+    Download a track using spotDL and embed the TrackId metadata.
+
+    Args:
+        track_id: Spotify track ID
+        download_dir: Directory to download the track to
+
+    Returns:
+        Dictionary with download results
+    """
+    # Get track details from database first
+    with UnitOfWork() as uow:
+        track = uow.track_repository.get_by_id(track_id)
+        if not track:
+            raise ValueError(f"Track ID '{track_id}' not found in database")
+
+    # Construct Spotify URL
+    spotify_url = f"https://open.spotify.com/track/{track_id}"
+
+    try:
+        # Run spotDL command
+        cmd = ["spotdl", spotify_url, "--output", download_dir]
+
+        # Execute the command and capture output
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode == 0:
+            # Parse the output to find the downloaded file
+            output_lines = result.stdout.strip().split('\n')
+            downloaded_file = None
+
+            # Look for the downloaded file pattern
+            for line in output_lines:
+                if 'Downloaded' in line and download_dir in line:
+                    # Extract filename from spotDL output
+                    # Example: Downloaded "Artist - Song": path
+                    parts = line.split(': ')
+                    if len(parts) >= 2:
+                        # Find the actual file that was created
+                        for file in os.listdir(download_dir):
+                            if file.endswith('.mp3') and track.title in file:
+                                downloaded_file = os.path.join(download_dir, file)
+                                break
+                    break
+
+            if not downloaded_file:
+                # Fallback: find the most recently created MP3 file
+                mp3_files = [f for f in os.listdir(download_dir) if f.endswith('.mp3')]
+                if mp3_files:
+                    newest_file = max(mp3_files, key=lambda x: os.path.getctime(os.path.join(download_dir, x)))
+                    downloaded_file = os.path.join(download_dir, newest_file)
+
+            if downloaded_file and os.path.exists(downloaded_file):
+                # Embed the TrackId using existing helper
+                from helpers.file_helper import embed_track_id
+                embed_success = embed_track_id(downloaded_file, track_id)
+
+                if embed_success:
+                    return {
+                        "downloaded_file": downloaded_file,
+                        "track_info": f"{track.artists} - {track.title}",
+                        "metadata_embedded": True,
+                        "spotdl_output": result.stdout
+                    }
+                else:
+                    return {
+                        "downloaded_file": downloaded_file,
+                        "track_info": f"{track.artists} - {track.title}",
+                        "metadata_embedded": False,
+                        "warning": "Download successful but metadata embedding failed",
+                        "spotdl_output": result.stdout
+                    }
+            else:
+                raise RuntimeError(f"Download appeared successful but could not locate downloaded file")
+        else:
+            # spotDL command failed
+            error_output = result.stderr or result.stdout
+            raise RuntimeError(f"spotDL failed: {error_output}")
+
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Download timed out after 5 minutes")
+    except Exception as e:
+        raise RuntimeError(f"Download failed: {str(e)}")
