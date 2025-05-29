@@ -28,7 +28,8 @@ class BaseRepository(Generic[T]):
 
     def execute_query(self, query: str, params: Optional[Tuple] = None) -> pyodbc.Cursor:
         """
-        Execute a SQL query with optional parameters.
+        Execute a SQL query with optional parameters
+        A query RETURNS VALUES -> SELECT statements.
 
         Args:
             query: SQL query to execute
@@ -53,6 +54,25 @@ class BaseRepository(Generic[T]):
             if params:
                 self.db_logger.error(f"Params: {params}")
             raise
+
+    def execute_non_query(self, query: str, params: Optional[Tuple] = None) -> int:
+        """
+        Execute a non-query SQL statement.
+        Non-query doesn't return anything -> INSERT, UPDATE, DELETE
+
+        Args:
+            query: SQL statement to execute
+            params: Parameters for the statement
+
+        Returns:
+            Number of rows affected
+        """
+        cursor = self.execute_query(query, params)
+        try:
+            row_count = cursor.rowcount
+            return row_count
+        finally:
+            cursor.close()
 
     def fetch_all(self, query: str, params: Optional[Tuple] = None) -> List[Any]:
         """
@@ -87,24 +107,6 @@ class BaseRepository(Generic[T]):
         try:
             result = cursor.fetchone()
             return result
-        finally:
-            cursor.close()
-
-    def execute_non_query(self, query: str, params: Optional[Tuple] = None) -> int:
-        """
-        Execute a non-query SQL statement (INSERT, UPDATE, DELETE).
-
-        Args:
-            query: SQL statement to execute
-            params: Parameters for the statement
-
-        Returns:
-            Number of rows affected
-        """
-        cursor = self.execute_query(query, params)
-        try:
-            row_count = cursor.rowcount
-            return row_count
         finally:
             cursor.close()
 
