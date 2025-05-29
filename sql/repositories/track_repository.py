@@ -18,7 +18,7 @@ class TrackRepository(BaseRepository[Track]):
         Args:
             connection: Active database connection
         """
-        super().__init__(connection, Track)
+        super().__init__(connection)
         self.table_name = "Tracks"
         self.id_column = "TrackId"
 

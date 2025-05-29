@@ -7,7 +7,7 @@ from sql.repositories.base_repository import BaseRepository
 
 class PlaylistRepository(BaseRepository[Playlist]):
     def __init__(self, connection: pyodbc.Connection):
-        super().__init__(connection, Playlist)
+        super().__init__(connection)
         self.table_name = "Playlists"
         self.id_column = "PlaylistId"
 

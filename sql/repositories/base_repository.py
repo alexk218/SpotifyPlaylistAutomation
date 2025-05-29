@@ -12,16 +12,14 @@ class BaseRepository(Generic[T]):
     Base repository class providing common database operations.
     """
 
-    def __init__(self, connection: pyodbc.Connection, model_class: Type[T] = None):
+    def __init__(self, connection: pyodbc.Connection):
         """
         Initialize a new BaseRepository.
 
         Args:
             connection: Active database connection
-            model_class: The model class this repository handles
         """
         self.connection = connection
-        self.model_class = model_class
         self.table_name = ""  # Override in subclasses
         self.id_column = ""  # Override in subclasses
         self.db_logger = setup_logger('repository', 'sql', 'repository.log')
@@ -29,7 +27,7 @@ class BaseRepository(Generic[T]):
     def execute_query(self, query: str, params: Optional[Tuple] = None) -> pyodbc.Cursor:
         """
         Execute a SQL query with optional parameters
-        A query RETURNS VALUES -> SELECT statements.
+        A query RETURNS VALUES -> SELECT statements. So we return a cursor to read results.
 
         Args:
             query: SQL query to execute
