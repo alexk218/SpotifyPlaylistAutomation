@@ -12,35 +12,12 @@ from drivers.spotify_client import (
 from helpers.file_helper import parse_local_file_uri, generate_local_track_id
 from sql.core.unit_of_work import UnitOfWork
 from sql.dto.playlist_info import PlaylistInfo
+from sql.helpers.db_helper import get_db_playlists, get_db_tracks
 from sql.models.playlist import Playlist
 from sql.models.track import Track
 from utils.logger import setup_logger
 
 sync_logger = setup_logger('sync_helper', 'sql', 'sync.log')
-
-
-def get_db_playlists() -> Dict[str, Playlist]:
-    """
-    Get all playlists from the database.
-
-    Returns:
-        Dictionary of playlist_id to Playlist objects
-    """
-    with UnitOfWork() as uow:
-        playlists = uow.playlist_repository.get_all()
-        return {playlist.playlist_id: playlist for playlist in playlists}
-
-
-def get_db_tracks() -> Dict[str, Track]:
-    """
-    Get all tracks from the database.
-
-    Returns:
-        Dictionary of track_id to Track objects
-    """
-    with UnitOfWork() as uow:
-        tracks = uow.track_repository.get_all()
-        return {track.track_id: track for track in tracks}
 
 
 def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomputed_changes: Dict = None,
@@ -55,10 +32,11 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
     sync_logger.info("Starting incremental playlist sync")
     print("Starting incremental playlist sync...")
 
+    # track changes for analysis
     playlists_to_add = []
     playlists_to_update = []
     playlists_to_delete = []
-    unchanged_count = 0
+    unchanged_playlists_count = 0
 
     existing_playlists_db = get_db_playlists()
     sync_logger.info(f"Found {len(existing_playlists_db)} existing playlists in database")
@@ -67,7 +45,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
         playlists_to_add = precomputed_changes.get('to_add', playlists_to_add)
         playlists_to_update = precomputed_changes.get('to_update', playlists_to_update)
         playlists_to_delete = precomputed_changes.get('to_delete', playlists_to_delete)
-        unchanged_count = precomputed_changes.get('unchanged', unchanged_count)
+        unchanged_playlists_count = precomputed_changes.get('unchanged', unchanged_playlists_count)
 
         # Ensure all playlist entries have a snapshot_id
         for playlist in playlists_to_add:
@@ -86,12 +64,6 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
         spotify_playlists: List[PlaylistInfo] = fetch_playlists(spotify_client, force_refresh=force_full_refresh,
                                                                 exclusion_config=exclusion_config)
         sync_logger.info(f"Fetched {len(spotify_playlists)} playlists from Spotify")
-
-        # Track changes for analysis
-        playlists_to_add = []
-        playlists_to_update = []
-        playlists_to_delete = []
-        unchanged_count = 0
 
         # Create a set of playlist IDs returned from Spotify
         spotify_playlist_ids = set(playlist.playlist_id for playlist in spotify_playlists)
@@ -119,7 +91,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
                         'old_snapshot_id': existing_playlist.associations_snapshot_id,
                     })
                 else:
-                    unchanged_count += 1
+                    unchanged_playlists_count += 1
             else:
                 # Mark for addition
                 playlists_to_add.append({
@@ -142,7 +114,7 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
     print(f"\nPlaylists to add: {len(playlists_to_add)}")
     print(f"Playlists to update: {len(playlists_to_update)}")
     print(f"Playlists to delete: {len(playlists_to_delete)}")
-    print(f"Unchanged playlists: {unchanged_count}")
+    print(f"Unchanged playlists: {unchanged_playlists_count}")
 
     # Display detailed changes
     if playlists_to_add:
@@ -173,10 +145,10 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
         if confirmation.lower() != 'y':
             sync_logger.info("Playlist sync cancelled by user")
             print("Sync cancelled.")
-            return 0, 0, unchanged_count, 0
+            return 0, 0, unchanged_playlists_count, 0
     elif not playlists_to_add and not playlists_to_update and not playlists_to_delete:
         print("\nNo changes needed. Database is up to date.")
-        return 0, 0, unchanged_count, 0
+        return 0, 0, unchanged_playlists_count, 0
 
     # If confirmed, apply the changes
     added_count = 0
@@ -220,12 +192,12 @@ def sync_playlists_to_db(force_full_refresh=False, auto_confirm=False, precomput
             sync_logger.info(f"Deleted playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
 
     print(
-        f"\nPlaylist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged, {deleted_count} deleted")
+        f"\nPlaylist sync complete: {added_count} added, {updated_count} updated, {unchanged_playlists_count} unchanged, {deleted_count} deleted")
     sync_logger.info(
-        f"Playlist sync complete: {added_count} added, {updated_count} updated, {unchanged_count} unchanged, {deleted_count} deleted"
+        f"Playlist sync complete: {added_count} added, {updated_count} updated, {unchanged_playlists_count} unchanged, {deleted_count} deleted"
     )
 
-    return added_count, updated_count, unchanged_count, deleted_count
+    return added_count, updated_count, unchanged_playlists_count, deleted_count
 
 
 def analyze_track_playlist_associations(master_playlist_id: str, force_full_refresh: bool = False,
@@ -990,9 +962,6 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
     tracks_to_delete = []
     unchanged_tracks = []
 
-    existing_tracks = get_db_tracks()
-    sync_logger.info(f"Found {len(existing_tracks)} existing tracks in database")
-
     if precomputed_changes:
         sync_logger.info("Using precomputed changes to avoid redundant analysis")
         tracks_to_add = precomputed_changes.get('tracks_to_add', tracks_to_add)
@@ -1002,17 +971,17 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
         sync_logger.info(f"Precomputed changes: {len(tracks_to_add)} to add, "
                          f"{len(tracks_to_update)} to update, "
-                         f"{len(tracks_to_delete)} to delete, "  # NEW
+                         f"{len(tracks_to_delete)} to delete, "
                          f"{len(unchanged_tracks) if isinstance(unchanged_tracks, list) else unchanged_tracks} unchanged")
     else:
         # Get existing tracks from database
-        existing_tracks = get_db_tracks()
-        sync_logger.info(f"Found {len(existing_tracks)} existing tracks in database")
+        master_tracks_db = get_db_tracks()
+        sync_logger.info(f"Found {len(master_tracks_db)} existing tracks in database")
 
         # Fetch all tracks from the MASTER playlist
         spotify_client = authenticate_spotify()
-        master_tracks = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_full_refresh)
-        sync_logger.info(f"Fetched {len(master_tracks)} tracks from MASTER playlist")
+        master_tracks_api = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_full_refresh)
+        sync_logger.info(f"Fetched {len(master_tracks_api)} tracks from MASTER playlist")
 
         # Analyze changes (without applying them yet)
         tracks_to_add = []
@@ -1022,7 +991,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         # Build set of master track IDs for deletion detection
         master_track_ids = set()
 
-        for track_data in master_tracks:
+        for track_data in master_tracks_api:
             track_id, track_title, artist_names, album_name, added_at = track_data
 
             # Check if this is a local file (track_id is None)
@@ -1047,8 +1016,8 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             master_track_ids.add(track_id)
 
             # Check if track exists in database
-            if track_id in existing_tracks:
-                existing_track = existing_tracks[track_id]
+            if track_id in master_tracks_db:
+                existing_track = master_tracks_db[track_id]
 
                 # Check if track details have changed
                 if (existing_track.title != track_title or
@@ -1081,7 +1050,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
         # Find tracks that are in the database but not in the master playlist
         tracks_to_delete = []
-        for track_id, track in existing_tracks.items():
+        for track_id, track in master_tracks_db.items():
             if track_id not in master_track_ids:
                 tracks_to_delete.append({
                     'id': track_id,
@@ -1146,7 +1115,10 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
             # First remove all playlist associations for this track
             try:
-                uow.track_playlist_repository.delete_by_track_id(track_id)
+                # Get all playlist IDs for this track and remove associations one by one
+                playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_track(track_id)
+                for playlist_id in playlist_ids:
+                    uow.track_playlist_repository.delete(track_id, playlist_id)
                 sync_logger.info(f"Removed playlist associations for track: {track_data['title']} (ID: {track_id})")
             except Exception as e:
                 sync_logger.error(f"Error removing playlist associations for track {track_id}: {e}")
@@ -1154,7 +1126,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
             # Then delete the track itself
             try:
-                uow.track_repository.delete(track_id)
+                uow.track_repository.delete_by_track_id(track_id)
                 deleted_count += 1
                 sync_logger.info(f"Deleted track: {track_data['title']} (ID: {track_id})")
             except Exception as e:
@@ -1227,7 +1199,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             is_local = track_data['is_local']
 
             # Get the existing track
-            existing_track = existing_tracks[track_id]
+            existing_track = master_tracks_db[track_id]
 
             # Update the track
             existing_track.title = track_title
@@ -1355,7 +1327,7 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
         Tuple of (added_count, updated_count, unchanged_count, deleted_count, changes_details (dict))
     """
     # Get existing playlists from database
-    existing_playlists = get_db_playlists()
+    existing_playlists_db = get_db_playlists()
 
     # Fetch all playlists from Spotify (playlist_name, playlist_id, snapshot_id)
     spotify_client = authenticate_spotify()
@@ -1380,8 +1352,8 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
         snapshot_id = playlist.snapshot_id
 
         # Check if playlist exists in database
-        if playlist_id in existing_playlists:
-            existing_playlist = existing_playlists[playlist_id]
+        if playlist_id in existing_playlists_db:
+            existing_playlist = existing_playlists_db[playlist_id]
 
             name_changed = existing_playlist.name != playlist_name
             snapshot_id_changed = existing_playlist.master_sync_snapshot_id != snapshot_id
@@ -1406,7 +1378,7 @@ def analyze_playlists_changes(force_full_refresh=False, exclusion_config=None):
             })
 
     # Find playlists to delete
-    for playlist_id, playlist in existing_playlists.items():
+    for playlist_id, playlist in existing_playlists_db.items():
         if playlist_id not in spotify_playlist_ids:
             playlists_to_delete.append({
                 'id': playlist_id,

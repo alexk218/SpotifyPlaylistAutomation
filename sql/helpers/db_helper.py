@@ -1,10 +1,12 @@
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 from dotenv import load_dotenv
 
 from sql.core.unit_of_work import UnitOfWork
+from sql.models.playlist import Playlist
+from sql.models.track import Track
 from utils.logger import setup_logger
 
 load_dotenv()
@@ -139,3 +141,27 @@ def track_id_exists_in_db(track_id):
     with UnitOfWork() as uow:
         track = uow.track_repository.get_by_id(track_id)
         return track is not None
+
+
+def get_db_playlists() -> Dict[str, Playlist]:
+    """
+    Get all playlists from the database.
+
+    Returns:
+        Dictionary of playlist_id to Playlist objects
+    """
+    with UnitOfWork() as uow:
+        playlists = uow.playlist_repository.get_all()
+        return {playlist.playlist_id: playlist for playlist in playlists}
+
+
+def get_db_tracks() -> Dict[str, Track]:
+    """
+    Get all tracks from the database.
+
+    Returns:
+        Dictionary of track_id to Track objects
+    """
+    with UnitOfWork() as uow:
+        tracks = uow.track_repository.get_all()
+        return {track.track_id: track for track in tracks}
