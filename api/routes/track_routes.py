@@ -258,3 +258,33 @@ def download_track():
             "message": str(e),
             "traceback": error_str
         }), 500
+
+
+@bp.route('/download-batch', methods=['POST'])
+def download_batch():
+    """Download multiple tracks using spotDL and embed metadata."""
+    track_ids = request.json.get('track_ids', [])
+    download_dir = request.json.get('download_dir') or current_app.config.get('MASTER_TRACKS_DIRECTORY_SSD')
+
+    if not track_ids:
+        return jsonify({
+            "success": False,
+            "message": "Track IDs are required"
+        }), 400
+
+    try:
+        result = track_service.download_all_missing_tracks(track_ids, download_dir)
+        return jsonify({
+            "success": True,
+            "message": f"Batch download completed: {result['success_count']} successful, {result['failure_count']} failed",
+            **result
+        })
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error in batch download: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500

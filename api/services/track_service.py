@@ -1,8 +1,8 @@
-# api/services/track_service.py
 import os
 import re
 import subprocess
 from datetime import datetime
+from typing import List
 
 import Levenshtein
 from mutagen.id3 import ID3, ID3NoHeaderError
@@ -603,13 +603,6 @@ def direct_tracks_compare(master_tracks_dir, master_playlist_id=None):
 def download_and_embed_track(track_id: str, download_dir: str):
     """
     Download a track using spotDL and embed the TrackId metadata.
-
-    Args:
-        track_id: Spotify track ID
-        download_dir: Directory to download the track to
-
-    Returns:
-        Dictionary with download results
     """
     # Get track details from database first
     with UnitOfWork() as uow:
@@ -620,45 +613,101 @@ def download_and_embed_track(track_id: str, download_dir: str):
     # Construct Spotify URL
     spotify_url = f"https://open.spotify.com/track/{track_id}"
 
+    # Get list of existing files BEFORE download
+    existing_files = set()
     try:
-        # Run spotDL command
+        for file in os.listdir(download_dir):
+            if file.endswith('.mp3'):
+                existing_files.add(file)
+    except Exception as e:
+        print(f"Warning: Could not list existing files: {e}")
+        existing_files = set()
+
+    try:
+        # Run spotDL command with proper encoding handling
         cmd = ["spotdl", spotify_url, "--output", download_dir]
 
-        # Execute the command and capture output
+        print(f"Attempting to download: {track.artists} - {track.title}")
+
+        # Execute the command and capture output with UTF-8 encoding
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=300,  # 5 minute timeout
+            encoding='utf-8',  # Force UTF-8 encoding
+            errors='replace'  # Replace problematic characters instead of crashing
         )
 
+        print(f"spotDL exit code: {result.returncode}")
+        print(f"spotDL stdout: {result.stdout}")
+        if result.stderr:
+            print(f"spotDL stderr: {result.stderr}")
+
         if result.returncode == 0:
-            # Parse the output to find the downloaded file
-            output_lines = result.stdout.strip().split('\n')
-            downloaded_file = None
+            # Check if spotDL actually downloaded something
+            download_success_indicators = [
+                "Downloaded",
+                "download complete",
+                "Successfully downloaded"
+            ]
 
-            # Look for the downloaded file pattern
-            for line in output_lines:
-                if 'Downloaded' in line and download_dir in line:
-                    # Extract filename from spotDL output
-                    # Example: Downloaded "Artist - Song": path
-                    parts = line.split(': ')
-                    if len(parts) >= 2:
-                        # Find the actual file that was created
-                        for file in os.listdir(download_dir):
-                            if file.endswith('.mp3') and track.title in file:
-                                downloaded_file = os.path.join(download_dir, file)
-                                break
-                    break
+            output_text = result.stdout.lower() if result.stdout else ""
+            download_indicated = any(indicator in output_text for indicator in download_success_indicators)
 
-            if not downloaded_file:
-                # Fallback: find the most recently created MP3 file
-                mp3_files = [f for f in os.listdir(download_dir) if f.endswith('.mp3')]
-                if mp3_files:
-                    newest_file = max(mp3_files, key=lambda x: os.path.getctime(os.path.join(download_dir, x)))
-                    downloaded_file = os.path.join(download_dir, newest_file)
+            # Also check for failure indicators
+            failure_indicators = [
+                "no results found",
+                "could not find",
+                "failed to download",
+                "error:",
+                "not found"
+            ]
 
-            if downloaded_file and os.path.exists(downloaded_file):
+            failure_indicated = any(indicator in output_text for indicator in failure_indicators)
+
+            if failure_indicated:
+                raise RuntimeError(f"spotDL could not find track: {track.artists} - {track.title}")
+
+            # Find NEW files that were created after the download
+            new_files = []
+            try:
+                current_files = set()
+                for file in os.listdir(download_dir):
+                    if file.endswith('.mp3'):
+                        current_files.add(file)
+
+                # Find files that didn't exist before
+                newly_created_files = current_files - existing_files
+
+                if newly_created_files:
+                    print(f"Found {len(newly_created_files)} new files: {newly_created_files}")
+
+                    # Get the newest of the new files
+                    newest_time = 0
+                    newest_file = None
+
+                    for file in newly_created_files:
+                        file_path = os.path.join(download_dir, file)
+                        try:
+                            creation_time = os.path.getctime(file_path)
+                            if creation_time > newest_time:
+                                newest_time = creation_time
+                                newest_file = file_path
+                        except Exception as e:
+                            print(f"Error checking file time for {file}: {e}")
+
+                    if newest_file:
+                        new_files.append(newest_file)
+
+            except Exception as e:
+                print(f"Error finding new files: {e}")
+
+            # If we found new files, use the newest one
+            if new_files:
+                downloaded_file = new_files[0]
+                print(f"Using newly downloaded file: {downloaded_file}")
+
                 # Embed the TrackId using existing helper
                 from helpers.file_helper import embed_track_id
                 embed_success = embed_track_id(downloaded_file, track_id)
@@ -668,7 +717,7 @@ def download_and_embed_track(track_id: str, download_dir: str):
                         "downloaded_file": downloaded_file,
                         "track_info": f"{track.artists} - {track.title}",
                         "metadata_embedded": True,
-                        "spotdl_output": result.stdout
+                        "spotdl_output": result.stdout[:500] if result.stdout else ""
                     }
                 else:
                     return {
@@ -676,16 +725,98 @@ def download_and_embed_track(track_id: str, download_dir: str):
                         "track_info": f"{track.artists} - {track.title}",
                         "metadata_embedded": False,
                         "warning": "Download successful but metadata embedding failed",
-                        "spotdl_output": result.stdout
+                        "spotdl_output": result.stdout[:500] if result.stdout else ""
                     }
             else:
-                raise RuntimeError(f"Download appeared successful but could not locate downloaded file")
+                # No new files found - download likely failed
+                if download_indicated:
+                    raise RuntimeError(
+                        f"spotDL indicated success but no new files found for: {track.artists} - {track.title}")
+                else:
+                    raise RuntimeError(
+                        f"No download occurred for: {track.artists} - {track.title}. Track may not be available on YouTube.")
         else:
             # spotDL command failed
-            error_output = result.stderr or result.stdout
-            raise RuntimeError(f"spotDL failed: {error_output}")
+            error_output = result.stderr or result.stdout or "Unknown error"
+            raise RuntimeError(f"spotDL failed for '{track.artists} - {track.title}': {error_output[:500]}")
 
     except subprocess.TimeoutExpired:
-        raise RuntimeError("Download timed out after 5 minutes")
+        raise RuntimeError(f"Download timed out after 5 minutes for: {track.artists} - {track.title}")
+    except UnicodeDecodeError as e:
+        raise RuntimeError(f"Encoding error during download of '{track.artists} - {track.title}': {str(e)}")
     except Exception as e:
-        raise RuntimeError(f"Download failed: {str(e)}")
+        raise RuntimeError(f"Download failed for '{track.artists} - {track.title}': {str(e)}")
+
+
+def download_all_missing_tracks(track_ids: List[str], download_dir: str, progress_callback=None):
+    """
+    Download multiple tracks with progress tracking.
+    """
+    total_tracks = len(track_ids)
+    successful_downloads = []
+    failed_downloads = []
+
+    for i, track_id in enumerate(track_ids):
+        try:
+            # Get track info for better progress display
+            with UnitOfWork() as uow:
+                track = uow.track_repository.get_by_id(track_id)
+                track_name = f"{track.artists} - {track.title}" if track else f"Track {track_id}"
+
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback({
+                    'current': i,
+                    'total': total_tracks,
+                    'track_id': track_id,
+                    'track_name': track_name,
+                    'status': 'downloading'
+                })
+
+            print(f"Downloading {i + 1}/{total_tracks}: {track_name}")
+            result = download_and_embed_track(track_id, download_dir)
+
+            successful_downloads.append({
+                'track_id': track_id,
+                'track_name': track_name,
+                'result': result
+            })
+
+            if progress_callback:
+                progress_callback({
+                    'current': i + 1,
+                    'total': total_tracks,
+                    'track_id': track_id,
+                    'track_name': track_name,
+                    'status': 'completed'
+                })
+
+            print(f"✓ Successfully downloaded: {track_name}")
+
+        except Exception as e:
+            error_msg = str(e)
+            failed_downloads.append({
+                'track_id': track_id,
+                'track_name': track_name if 'track_name' in locals() else f"Track {track_id}",
+                'error': error_msg
+            })
+
+            if progress_callback:
+                progress_callback({
+                    'current': i + 1,
+                    'total': total_tracks,
+                    'track_id': track_id,
+                    'track_name': track_name if 'track_name' in locals() else f"Track {track_id}",
+                    'status': 'failed',
+                    'error': error_msg
+                })
+
+            print(f"✗ Failed to download {track_name if 'track_name' in locals() else track_id}: {error_msg}")
+
+    return {
+        'total_tracks': total_tracks,
+        'successful_downloads': successful_downloads,
+        'failed_downloads': failed_downloads,
+        'success_count': len(successful_downloads),
+        'failure_count': len(failed_downloads)
+    }
