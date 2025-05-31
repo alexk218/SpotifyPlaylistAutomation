@@ -69,33 +69,6 @@ def build_track_id_mapping(master_tracks_dir: str) -> Dict[str, str]:
     return track_id_to_path
 
 
-def get_all_playlist_track_associations(uow) -> Dict[str, Set[str]]:
-    """
-    Get all playlist-track associations in a single database query
-    to avoid multiple queries per playlist.
-
-    Args:
-        uow: Active Unit of Work
-
-    Returns:
-        Dictionary mapping playlist_ids to sets of track_ids
-    """
-    all_associations = {}
-
-    m3u_logger.info("Fetching all playlist-track associations")
-
-    # Get all playlists
-    playlists = uow.playlist_repository.get_all()
-
-    # For each playlist, get its tracks (could be optimized further with a custom query)
-    for playlist in playlists:
-        track_ids = uow.track_playlist_repository.get_track_ids_for_playlist(playlist.playlist_id)
-        all_associations[playlist.playlist_id] = set(track_ids)
-
-    m3u_logger.info(f"Fetched associations for {len(all_associations)} playlists")
-    return all_associations
-
-
 def get_m3u_track_ids(m3u_path: str, track_id_map: Optional[Dict[str, str]] = None) -> Set[str]:
     """
     Extract track IDs from an M3U file by examining the referenced files.
