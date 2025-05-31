@@ -28,7 +28,45 @@ def build_track_id_mapping(master_tracks_dir: str) -> Dict[str, str]:
     """
     track_id_to_path = {}
     total_files = 0
-    wav_aiff_files = []
+
+    # Get all local tracks from database for filename matching
+    local_tracks_by_filename = {}
+    try:
+        with UnitOfWork() as uow:
+            all_tracks = uow.track_repository.get_all()
+            for track in all_tracks:
+                if track.is_local or track.track_id.startswith('local_'):
+                    # Create multiple lookup keys for better matching
+                    title = track.title or ''
+                    artists = track.artists or ''
+
+                    # Sanitize titles to match how they would appear in filenames
+                    sanitized_title = sanitize_filename(title, preserve_spaces=True).lower()
+                    sanitized_artist_title = sanitize_filename(f"{artists} - {title}", preserve_spaces=True).lower()
+                    sanitized_title_artist = sanitize_filename(f"{title} - {artists}", preserve_spaces=True).lower()
+
+                    # Key variations for matching
+                    keys = [
+                        title.lower(),
+                        f"{artists} - {title}".lower(),
+                        f"{title} - {artists}".lower(),
+                        title.lower().replace(' ', '_'),
+                        f"{artists} - {title}".lower().replace(' ', '_'),
+                        # Add sanitized versions
+                        sanitized_title,
+                        sanitized_artist_title,
+                        sanitized_title_artist,
+                        sanitized_title.replace(' ', '_'),
+                        sanitized_artist_title.replace(' ', '_'),
+                        sanitized_title_artist.replace(' ', '_')
+                    ]
+
+                    for key in keys:
+                        if key and key not in local_tracks_by_filename:
+                            local_tracks_by_filename[key] = track.track_id
+
+    except Exception as e:
+        m3u_logger.error(f"Error loading local tracks from database: {e}")
 
     print("Scanning music files for Track IDs...")
     m3u_logger.info(f"Building track ID mapping from {master_tracks_dir}")
@@ -46,15 +84,48 @@ def build_track_id_mapping(master_tracks_dir: str) -> Dict[str, str]:
             file_path = os.path.join(root, filename)
 
             if file_ext == '.mp3':
+                track_id = None
+
+                # First, try to get embedded TrackID
                 try:
                     tags = ID3(file_path)
                     if 'TXXX:TRACKID' in tags:
                         track_id = tags['TXXX:TRACKID'].text[0]
                         track_id_to_path[track_id] = file_path
+                        continue  # Found TrackID, move to next file
                 except Exception as e:
-                    # Skip files with errors
                     m3u_logger.debug(f"Error reading ID3 tag from {file_path}: {e}")
-                    pass
+
+                # If no TrackID found, try to match with local tracks by filename
+                if track_id is None:
+                    filename_no_ext = os.path.splitext(filename)[0]
+
+                    # Try different matching patterns
+                    lookup_keys = [
+                        filename_no_ext.lower(),
+                        filename_no_ext.lower().replace(' ', '_'),
+                        filename_no_ext.lower().replace('_', ' '),
+                        # Also try with common character replacements reversed
+                        filename_no_ext.lower().replace('_', ':'),
+                        filename_no_ext.lower().replace('_', ':').replace(' ', '_')
+                    ]
+
+                    for key in lookup_keys:
+                        if key in local_tracks_by_filename:
+                            track_id = local_tracks_by_filename[key]
+                            track_id_to_path[track_id] = file_path
+                            m3u_logger.info(f"Matched local MP3 file: {filename} -> {track_id}")
+                            break
+
+                    if track_id is None:
+                        # Try partial matching for "Artist - Title" format
+                        if " - " in filename_no_ext:
+                            artist_title_key = filename_no_ext.lower()
+                            if artist_title_key in local_tracks_by_filename:
+                                track_id = local_tracks_by_filename[artist_title_key]
+                                track_id_to_path[track_id] = file_path
+                                m3u_logger.info(f"Matched local MP3 file by artist-title: {filename} -> {track_id}")
+
             else:  # WAV or AIFF file
                 # For WAV/AIFF files, we'll generate a virtual track ID based on filename
                 # This allows us to reference them in playlists without embedding TrackId
