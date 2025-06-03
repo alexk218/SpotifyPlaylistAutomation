@@ -1,0 +1,44 @@
+{
+  "description": "Expected results after syncing track-playlist associations",
+  "expected_stats": {
+    "associations_added": 1,
+    "associations_removed": 1,
+    "tracks_with_changes": 2
+  },
+  "expected_changes": [
+    {
+      "track_id": "track_to_be_removed",
+      "track_info": "Artist B - Track to be Removed",
+      "add_to": [],
+      "remove_from": [
+        "Changed Playlist"
+      ]
+    },
+    {
+      "track_id": "track_to_be_added",
+      "track_info": "Artist C - Track to be Added",
+      "add_to": [
+        "Changed Playlist"
+      ],
+      "remove_from": []
+    }
+  ],
+  "expected_final_associations": [
+    {
+      "track_id": "track_in_changed_playlist",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "track_in_changed_playlist",
+      "playlist_id": "playlist_changed_123"
+    },
+    {
+      "track_id": "track_to_be_removed",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "track_to_be_added",
+      "playlist_id": "test_master_playlist"
+    }
+  ]
+}

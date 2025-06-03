@@ -1,0 +1,26 @@
+{
+  "description": "Mock data for association sync tests - includes changed playlists and their track associations",
+  "changed_playlists": [
+    {
+      "name": "Changed Playlist",
+      "playlist_id": "playlist_changed_123",
+      "snapshot_id": "new_assoc_123"
+    }
+  ],
+  "unchanged_playlists": [
+    {
+      "name": "Unchanged Playlist",
+      "playlist_id": "playlist_unchanged_456",
+      "snapshot_id": "current_assoc_456"
+    }
+  ],
+  "playlist_track_associations": {
+    "playlist_changed_123": [
+      "track_in_changed_playlist",
+      "track_to_be_added"
+    ],
+    "playlist_unchanged_456": [
+      "track_in_changed_playlist"
+    ]
+  }
+}

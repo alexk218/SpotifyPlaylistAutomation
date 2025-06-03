@@ -1,0 +1,32 @@
+{
+  "description": "Expected results after syncing playlists",
+  "expected_stats": {
+    "added": 1,
+    "updated": 2,
+    "unchanged": 0,
+    "deleted": 1
+  },
+  "expected_final_playlists": [
+    {
+      "playlist_id": "37i9dQZF1DXcBWIGoYBM5M",
+      "name": "Today's Top Hits",
+      "master_sync_snapshot_id": "new_snapshot_123",
+      "associations_snapshot_id": "old_assoc_456"
+    },
+    {
+      "playlist_id": "37i9dQZF1DX0XUsuxWHRQd",
+      "name": "RapCaviar Updated",
+      "master_sync_snapshot_id": "new_snapshot_789",
+      "associations_snapshot_id": "old_assoc_012"
+    },
+    {
+      "playlist_id": "new_playlist_456",
+      "name": "New Playlist",
+      "master_sync_snapshot_id": "snapshot_new_456",
+      "associations_snapshot_id": ""
+    }
+  ],
+  "expected_deleted_playlists": [
+    "playlist_to_be_deleted"
+  ]
+}

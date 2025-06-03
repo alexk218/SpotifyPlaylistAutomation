@@ -1,0 +1,55 @@
+{
+  "description": "Initial database state for playlist sync tests",
+  "playlists": [
+    {
+      "playlist_id": "37i9dQZF1DXcBWIGoYBM5M",
+      "name": "Today's Top Hits",
+      "master_sync_snapshot_id": "old_snapshot_123",
+      "associations_snapshot_id": "old_assoc_456"
+    },
+    {
+      "playlist_id": "37i9dQZF1DX0XUsuxWHRQd",
+      "name": "RapCaviar",
+      "master_sync_snapshot_id": "old_snapshot_789",
+      "associations_snapshot_id": "old_assoc_012"
+    },
+    {
+      "playlist_id": "playlist_to_be_deleted",
+      "name": "Old Playlist",
+      "master_sync_snapshot_id": "snapshot_xyz",
+      "associations_snapshot_id": "assoc_xyz"
+    }
+  ],
+  "tracks": [
+    {
+      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
+      "title": "Sunset Falling Down",
+      "artists": "Tal Fussman",
+      "album": "NO DISCO",
+      "added_to_master": "2025-05-31T22:03:46.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "7z5dZ9mvhklOsfWtZYOQ9J",
+      "title": "Meditations on Loop",
+      "artists": "Anden",
+      "album": "Tais Hauton",
+      "added_to_master": "2025-01-02T21:39:19.000Z",
+      "is_local": false
+    }
+  ],
+  "track_playlist_associations": [
+    {
+      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
+      "playlist_id": "37i9dQZF1DXcBWIGoYBM5M"
+    },
+    {
+      "track_id": "7z5dZ9mvhklOsfWtZYOQ9J",
+      "playlist_id": "37i9dQZF1DX0XUsuxWHRQd"
+    },
+    {
+      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
+      "playlist_id": "playlist_to_be_deleted"
+    }
+  ]
+}

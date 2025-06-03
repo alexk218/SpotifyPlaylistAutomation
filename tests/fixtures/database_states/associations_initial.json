@@ -1,0 +1,67 @@
+{
+  "description": "Initial database state for track-playlist associations sync tests",
+  "master_playlist": {
+    "playlist_id": "test_master_playlist",
+    "name": "MASTER",
+    "master_sync_snapshot_id": "",
+    "associations_snapshot_id": ""
+  },
+  "playlists": [
+    {
+      "playlist_id": "playlist_changed_123",
+      "name": "Changed Playlist",
+      "master_sync_snapshot_id": "master_snap_123",
+      "associations_snapshot_id": "old_assoc_123"
+    },
+    {
+      "playlist_id": "playlist_unchanged_456",
+      "name": "Unchanged Playlist",
+      "master_sync_snapshot_id": "master_snap_456",
+      "associations_snapshot_id": "current_assoc_456"
+    }
+  ],
+  "tracks": [
+    {
+      "track_id": "track_in_changed_playlist",
+      "title": "Track in Changed Playlist",
+      "artists": "Artist A",
+      "album": "Album A",
+      "added_to_master": "2025-05-31T22:03:46.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "track_to_be_removed",
+      "title": "Track to be Removed",
+      "artists": "Artist B",
+      "album": "Album B",
+      "added_to_master": "2025-01-02T21:39:19.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "track_to_be_added",
+      "title": "Track to be Added",
+      "artists": "Artist C",
+      "album": "Album C",
+      "added_to_master": "2025-03-15T14:30:00.000Z",
+      "is_local": false
+    }
+  ],
+  "track_playlist_associations": [
+    {
+      "track_id": "track_in_changed_playlist",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "track_to_be_removed",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "track_to_be_removed",
+      "playlist_id": "playlist_changed_123"
+    },
+    {
+      "track_id": "track_to_be_added",
+      "playlist_id": "test_master_playlist"
+    }
+  ]
+}
