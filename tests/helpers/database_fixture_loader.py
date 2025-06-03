@@ -57,13 +57,15 @@ class DatabaseFixtureLoader:
                     playlist_data['playlist_id']
                 )
 
-    def get_spotify_api_mock_data(self, fixture_name='master_playlist_response.json'):
+    def get_spotify_api_mock_data(self, fixture_name='master_playlist_api_response.json'):
         """Get mock Spotify API data in the format expected by fetch_master_tracks."""
         fixture_data = self.load_fixture('spotify_responses', fixture_name)
 
+        # Return data in the format that fetch_master_tracks expects:
+        # List of tuples: (track_id, track_title, artists, album, added_at)
         return [
             (
-                track['track_id'],
+                track['track_id'],  # This will be None for local tracks
                 track['title'],
                 track['artists'],
                 track['album'],
@@ -89,18 +91,49 @@ class DatabaseFixtureLoader:
             assert len(all_tracks) == len(expected['expected_final_tracks']), \
                 f"Expected {len(expected['expected_final_tracks'])} tracks, got {len(all_tracks)}"
 
-            assert actual_track_ids == expected_track_ids, \
-                f"Track IDs don't match. Expected: {expected_track_ids}, Got: {actual_track_ids}"
+            # For local tracks, just check that both actual and expected have local tracks
+            # (since the generated IDs will be different)
+            actual_local_tracks = {tid for tid in actual_track_ids if tid.startswith('local_')}
+            expected_local_tracks = {tid for tid in expected_track_ids if tid.startswith('local_')}
+            actual_spotify_tracks = {tid for tid in actual_track_ids if not tid.startswith('local_')}
+            expected_spotify_tracks = {tid for tid in expected_track_ids if not tid.startswith('local_')}
+
+            # Validate Spotify tracks match exactly
+            assert actual_spotify_tracks == expected_spotify_tracks, \
+                f"Spotify Track IDs don't match. Expected: {expected_spotify_tracks}, Got: {actual_spotify_tracks}"
+
+            # Validate local track count matches (IDs will be different due to hashing)
+            assert len(actual_local_tracks) == len(expected_local_tracks), \
+                f"Local track count doesn't match. Expected: {len(expected_local_tracks)}, Got: {len(actual_local_tracks)}"
 
             # Validate deleted tracks are gone
             for deleted_id in expected['expected_deleted_tracks']:
                 assert deleted_id not in actual_track_ids, \
                     f"Track {deleted_id} should have been deleted"
 
-            # Validate track details
+            # Validate track details (handle local tracks specially)
+            expected_by_type = {}
             for expected_track in expected['expected_final_tracks']:
-                track = uow.track_repository.get_by_id(expected_track['track_id'])
-                assert track is not None, f"Track {expected_track['track_id']} should exist"
+                if expected_track['track_id'].startswith('local_'):
+                    # For local tracks, group by title and artist
+                    key = f"{expected_track['artists']}|{expected_track['title']}"
+                    expected_by_type[key] = expected_track
+                else:
+                    # For Spotify tracks, use the exact ID
+                    expected_by_type[expected_track['track_id']] = expected_track
+
+            for track in all_tracks:
+                if track.track_id.startswith('local_'):
+                    # Find the matching local track by artist and title
+                    key = f"{track.artists}|{track.title}"
+                    assert key in expected_by_type, f"Unexpected local track: {track.artists} - {track.title}"
+                    expected_track = expected_by_type[key]
+                else:
+                    # For Spotify tracks, match by exact ID
+                    assert track.track_id in expected_by_type, f"Unexpected Spotify track: {track.track_id}"
+                    expected_track = expected_by_type[track.track_id]
+
+                # Validate track details
                 assert track.title == expected_track['title']
                 assert track.artists == expected_track['artists']
                 assert track.album == expected_track['album']

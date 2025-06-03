@@ -37,21 +37,13 @@ def client():
         yield client
 
 
-@pytest.fixture
-def mock_spotify_client():
-    with patch('tagify_integration.authenticate_spotify') as mock:
-        mock_client = MagicMock()
-        mock.return_value = mock_client
-        yield mock_client
-
-
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_database():
     """Ensure we're using a test database for all tests."""
     # Override database configuration for tests
     test_db_config = {
         "SERVER_CONNECTION_STRING": SERVER_CONNECTION_STRING,
-        "DATABASE_NAME": "SpotifyPlaylistAutomation_TEST"
+        "DATABASE_NAME": "SpotifyData_TEST"
     }
 
     with patch.dict(os.environ, test_db_config):
