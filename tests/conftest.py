@@ -5,6 +5,11 @@ from pathlib import Path
 import tempfile
 import json
 from unittest.mock import patch, MagicMock
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SERVER_CONNECTION_STRING = os.getenv("SERVER_CONNECTION_STRING")
 
 # Add project root to path so imports work
 project_root = Path(__file__).resolve().parent.parent
@@ -38,6 +43,36 @@ def mock_spotify_client():
         mock_client = MagicMock()
         mock.return_value = mock_client
         yield mock_client
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_database():
+    """Ensure we're using a test database for all tests."""
+    # Override database configuration for tests
+    test_db_config = {
+        "SERVER_CONNECTION_STRING": SERVER_CONNECTION_STRING,
+        "DATABASE_NAME": "SpotifyPlaylistAutomation_TEST"
+    }
+
+    with patch.dict(os.environ, test_db_config):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def clean_database_after_test():
+    """Clean database state after each test."""
+    yield  # Run the test
+
+    # Cleanup after test
+    from sql.core.unit_of_work import UnitOfWork
+    try:
+        with UnitOfWork() as uow:
+            # Clear all test data in reverse order (foreign keys)
+            uow.track_playlist_repository.delete_all()
+            uow.track_repository.delete_all()
+            uow.playlist_repository.delete_all()
+    except Exception as e:
+        print(f"Warning: Could not clean database after test: {e}")
 
 
 # Mock unit of work

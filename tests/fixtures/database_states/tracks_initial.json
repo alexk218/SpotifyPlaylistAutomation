@@ -1,0 +1,51 @@
+{
+  "description": "Initial database state for sync tests",
+  "master_playlist": {
+    "playlist_id": "test_master_playlist",
+    "name": "MASTER",
+    "master_sync_snapshot_id": "",
+    "associations_snapshot_id": ""
+  },
+  "tracks": [
+    {
+      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
+      "title": "Sunset Falling Down",
+      "artists": "Tal Fussman",
+      "album": "NO DISCO",
+      "added_to_master": "2025-05-31T22:03:46.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "7z5dZ9mvhklOsfWtZYOQ9J",
+      "title": "Meditations on Loop",
+      "artists": "Anden",
+      "album": "Tais Hauton",
+      "added_to_master": "2025-01-02T21:39:19.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "7zLm8NfYfn4IRd3GF35N3O",
+      "title": "Filtered African Blues - FNX Omar Remix",
+      "artists": "Oscar P, FNX OMAR",
+      "album": "Filtered African Blues",
+      "added_to_master": "2024-09-30T19:16:32.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "7zNX28H2cf2OKdQn5G5HbP",
+      "title": "Ultima Hora - Mama's Basement Cut",
+      "artists": "Hillel Shabtai",
+      "album": "Ultima Hora",
+      "added_to_master": "2025-01-02T21:40:25.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "local_018e875efa0d7fd2",
+      "title": "Around (Thomas Lerian 'Don't This' Edit)",
+      "artists": "",
+      "album": "",
+      "added_to_master": "2025-05-10T06:28:30.000Z",
+      "is_local": true
+    }
+  ]
+}

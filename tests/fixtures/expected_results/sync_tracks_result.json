@@ -1,0 +1,31 @@
+{
+  "description": "Expected results after syncing tracks",
+  "expected_stats": {
+    "added": 1,
+    "updated": 0,
+    "unchanged": 1,
+    "deleted": 4
+  },
+  "expected_final_tracks": [
+    {
+      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
+      "title": "Sunset Falling Down",
+      "artists": "Tal Fussman",
+      "album": "NO DISCO",
+      "is_local": false
+    },
+    {
+      "track_id": "6O5y18vxALUmmBRpG9iKZ9",
+      "title": "Your Life Better",
+      "artists": "Chris Micali",
+      "album": "So Easy / Your Life Better",
+      "is_local": false
+    }
+  ],
+  "expected_deleted_tracks": [
+    "7z5dZ9mvhklOsfWtZYOQ9J",
+    "7zLm8NfYfn4IRd3GF35N3O",
+    "7zNX28H2cf2OKdQn5G5HbP",
+    "local_018e875efa0d7fd2"
+  ]
+}

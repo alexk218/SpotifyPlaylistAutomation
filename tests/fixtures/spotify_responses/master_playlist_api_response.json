@@ -1,0 +1,24 @@
+{
+  "description": "Spotify API response for MASTER playlist - API data",
+  "api_tracks": [
+    {
+      "uri": "spotify:track:4U4Sa6KyRGOzqbpBT8vuMl",
+      "name": "Sunset Falling Down",
+      "artists": "Tal Fussman",
+      "album": "NO DISCO",
+      "is_local": false,
+      "added_at": "2025-05-31T22:03:43Z"
+    },
+    {
+      "uri": "spotify:track:6O5y18vxALUmmBRpG9iKZ9",
+      "name": "Your Life Better",
+      "artists": "Chris Micali",
+      "album": "So Easy / Your Life Better",
+      "is_local": false,
+      "added_at": "2025-05-31T22:04:35Z"
+    },
+    {
+      "uri"
+    }
+  ]
+}
