@@ -3,42 +3,47 @@
   "expected_stats": {
     "added": 2,
     "updated": 1,
-    "unchanged": 1,
-    "deleted": 3
+    "unchanged": 2,
+    "deleted": 1
   },
   "expected_final_tracks": [
     {
-      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
-      "title": "Sunset Falling Down",
-      "artists": "Tal Fussman",
-      "album": "NO DISCO",
+      "track_id": "track_stays_unchanged",
+      "title": "Track That Stays Unchanged",
+      "artists": "Unchanged Artist",
+      "album": "Unchanged Album",
       "is_local": false
     },
     {
-      "track_id": "6O5y18vxALUmmBRpG9iKZ9",
-      "title": "Your Life Better",
-      "artists": "Chris Micali",
-      "album": "So Easy / Your Life Better",
+      "track_id": "track_to_be_updated",
+      "title": "Track With Updated Title",
+      "artists": "Updated Artist Name",
+      "album": "Updated Album Name",
       "is_local": false
     },
     {
-      "track_id": "local_9f8c7e6d5a4b3c2e",
-      "title": "Nine Miles",
-      "artists": "MeShow.Rec",
-      "album": "Local File",
+      "track_id": "track_added_from_api",
+      "title": "New Track From API",
+      "artists": "New API Artist",
+      "album": "New API Album",
+      "is_local": false
+    },
+    {
+      "track_id": "local_track_added_from_api",
+      "title": "New Local Track From API",
+      "artists": "New Local Artist",
+      "album": "New Local Album",
       "is_local": true
     },
     {
-      "track_id": "update_track_id",
-      "title": "TRACK UPDATED",
-      "artists": "ARTISTS UPDATED",
-      "album": "ALBUM UPDATED",
-      "is_local": false
+      "track_id": "local_track_existing",
+      "title": "Existing Local Track",
+      "artists": "Local Artist",
+      "album": "Local Album",
+      "is_local": true
     }
   ],
   "expected_deleted_tracks": [
-    "7z5dZ9mvhklOsfWtZYOQ9J",
-    "7zLm8NfYfn4IRd3GF35N3O",
-    "local_018e875efa0d7fd2"
+    "track_to_be_deleted"
   ]
 }

@@ -18,7 +18,7 @@ from tagify_integration import app
 def mock_env_variables():
     with patch.dict(os.environ, {
         "MASTER_TRACKS_DIRECTORY_SSD": "/mock/tracks/dir",
-        "MASTER_PLAYLIST_ID": "test_master_playlist_id",
+        "MASTER_PLAYLIST_ID": "test_master_playlist",
     }):
         yield
 

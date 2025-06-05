@@ -2,32 +2,40 @@
   "description": "Spotify API response for MASTER playlist - API data returned and formatted by fetch_master_tracks",
   "api_tracks": [
     {
-      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
-      "title": "Sunset Falling Down",
-      "artists": "Tal Fussman",
-      "album": "NO DISCO",
-      "added_at": "2025-05-31T22:03:43Z"
+      "track_id": "track_stays_unchanged",
+      "title": "Track That Stays Unchanged",
+      "artists": "Unchanged Artist",
+      "album": "Unchanged Album",
+      "added_at": "2025-05-31T22:03:46Z"
     },
     {
-      "track_id": "6O5y18vxALUmmBRpG9iKZ9",
-      "title": "Your Life Better",
-      "artists": "Chris Micali",
-      "album": "So Easy / Your Life Better",
-      "added_at": "2025-05-31T22:04:35Z"
+      "track_id": "track_to_be_updated",
+      "title": "Track With Updated Title",
+      "artists": "Updated Artist Name",
+      "album": "Updated Album Name",
+      "added_at": "2024-09-30T19:16:32Z"
+    },
+    {
+      "track_id": "track_added_from_api",
+      "title": "New Track From API",
+      "artists": "New API Artist",
+      "album": "New API Album",
+      "added_at": "2025-06-01T10:00:00Z"
+    },
+    {
+      "track_id": "local_track_existing",
+      "title": "Existing Local Track",
+      "artists": "Local Artist",
+      "album": "Local Album",
+      "added_at": "2025-05-10T06:28:30Z",
+      "is_local": true
     },
     {
       "track_id": null,
-      "title": "Nine Miles",
-      "artists": "MeShow.Rec",
-      "album": "Local File",
-      "added_at": "2025-05-10T06:28:30Z"
-    },
-    {
-      "track_id": "update_track_id",
-      "title": "TRACK UPDATED",
-      "artists": "ARTISTS UPDATED",
-      "album": "ALBUM UPDATED",
-      "added_at": "2024-03-27T22:03:46Z"
+      "title": "New Local Track From API",
+      "artists": "New Local Artist",
+      "album": "New Local Album",
+      "added_at": "2025-05-15T08:30:00Z"
     }
   ]
 }
