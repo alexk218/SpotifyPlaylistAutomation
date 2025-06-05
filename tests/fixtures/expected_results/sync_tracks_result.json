@@ -8,6 +8,7 @@
   },
   "expected_final_tracks": [
     {
+      "uri": "spotify:track:track_stays_unchanged",
       "track_id": "track_stays_unchanged",
       "title": "Track That Stays Unchanged",
       "artists": "Unchanged Artist",
@@ -15,6 +16,7 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_to_be_updated",
       "track_id": "track_to_be_updated",
       "title": "Track With Updated Title",
       "artists": "Updated Artist Name",
@@ -22,6 +24,7 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_added_from_api",
       "track_id": "track_added_from_api",
       "title": "New Track From API",
       "artists": "New API Artist",
@@ -29,21 +32,23 @@
       "is_local": false
     },
     {
-      "track_id": "local_track_added_from_api",
-      "title": "New Local Track From API",
-      "artists": "New Local Artist",
-      "album": "New Local Album",
-      "is_local": true
-    },
-    {
-      "track_id": "local_track_existing",
+      "uri": "spotify:local:Local+Artist:Local+Album:Existing+Local+Track:446",
+      "track_id": null,
       "title": "Existing Local Track",
       "artists": "Local Artist",
       "album": "Local Album",
       "is_local": true
+    },
+    {
+      "uri": "spotify:local:New+Local+Artist:New+Local+Album:New+Local+Track+From+API:324",
+      "track_id": null,
+      "title": "New Local Track From API",
+      "artists": "New Local Artist",
+      "album": "New Local Album",
+      "is_local": true
     }
   ],
   "expected_deleted_tracks": [
-    "track_to_be_deleted"
+    "spotify:track:track_to_be_deleted"
   ]
 }

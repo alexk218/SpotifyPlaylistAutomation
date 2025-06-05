@@ -1,5 +1,5 @@
 {
-  "description": "Initial database state for track-playlist associations sync tests",
+  "description": "Initial database state for track-playlist associations sync tests - Updated for URI system",
   "master_playlist": {
     "playlist_id": "test_master_playlist",
     "name": "MASTER",
@@ -22,6 +22,7 @@
   ],
   "tracks": [
     {
+      "uri": "spotify:track:track_stays_in_playlist",
       "track_id": "track_stays_in_playlist",
       "title": "Track That Stays In Playlist",
       "artists": "Consistent Artist",
@@ -30,6 +31,7 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_to_be_removed_from_playlist",
       "track_id": "track_to_be_removed_from_playlist",
       "title": "Track To Be Removed From Playlist",
       "artists": "Removal Artist",
@@ -38,37 +40,51 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_to_be_added_to_playlist",
       "track_id": "track_to_be_added_to_playlist",
       "title": "Track To Be Added To Playlist",
       "artists": "Addition Artist",
       "album": "Addition Album",
       "added_to_master": "2025-03-15T14:30:00.000Z",
       "is_local": false
+    },
+    {
+      "uri": "spotify:local:Local+Artist:Local+Album:Local+Track+Test:247",
+      "track_id": null,
+      "title": "Local Track Test",
+      "artists": "Local Artist",
+      "album": "Local Album",
+      "added_to_master": "2025-04-10T16:45:00.000Z",
+      "is_local": true
     }
   ],
   "track_playlist_associations": [
     {
-      "track_id": "track_stays_in_playlist",
+      "uri": "spotify:track:track_stays_in_playlist",
       "playlist_id": "test_master_playlist"
     },
     {
-      "track_id": "track_to_be_removed_from_playlist",
+      "uri": "spotify:track:track_to_be_removed_from_playlist",
       "playlist_id": "test_master_playlist"
     },
     {
-      "track_id": "track_to_be_added_to_playlist",
+      "uri": "spotify:track:track_to_be_added_to_playlist",
       "playlist_id": "test_master_playlist"
     },
     {
-      "track_id": "track_stays_in_playlist",
+      "uri": "spotify:local:Local+Artist:Local+Album:Local+Track+Test:247",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "uri": "spotify:track:track_stays_in_playlist",
       "playlist_id": "playlist_with_changes"
     },
     {
-      "track_id": "track_to_be_removed_from_playlist",
+      "uri": "spotify:track:track_to_be_removed_from_playlist",
       "playlist_id": "playlist_with_changes"
     },
     {
-      "track_id": "track_stays_in_playlist",
+      "uri": "spotify:track:track_stays_in_playlist",
       "playlist_id": "playlist_without_changes"
     }
   ]

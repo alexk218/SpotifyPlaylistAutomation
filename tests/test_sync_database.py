@@ -244,17 +244,17 @@ class TestSyncDatabase:
         spotify_data = self.fixture_loader.get_spotify_associations_mock_data()
 
         with patch('helpers.sync_helper.fetch_playlists') as mock_fetch_playlists, \
-                patch('helpers.sync_helper.get_track_ids_for_playlist') as mock_get_tracks, \
+                patch('helpers.sync_helper.get_track_uris_for_playlist') as mock_get_track_uris, \
                 patch('helpers.sync_helper.authenticate_spotify') as mock_auth:
             # Configure mocks
             mock_fetch_playlists.return_value = spotify_data['changed_playlists'] + spotify_data['unchanged_playlists']
             mock_auth.return_value = MagicMock()
 
             # Mock get_track_ids_for_playlist to return different results based on playlist
-            def mock_get_tracks_side_effect(spotify_client, playlist_id, force_refresh=False):
+            def mock_get_track_uris_side_effect(spotify_client, playlist_id, force_refresh=False):
                 return spotify_data['playlist_track_associations'].get(playlist_id, [])
 
-            mock_get_tracks.side_effect = mock_get_tracks_side_effect
+            mock_get_track_uris.side_effect = mock_get_track_uris_side_effect
 
             # STEP 1: Analysis mode
             analysis_request = {
@@ -549,46 +549,6 @@ class TestSyncDatabase:
             assert data['success'] == True
             # Should show all existing tracks as to-be-deleted
             assert data['stats']['deleted'] > 0
-
-    def test_sync_database_with_local_tracks(self, client):
-        """Test sync handling local tracks correctly."""
-        # Setup database with mix of local and Spotify tracks
-        self.fixture_loader.setup_initial_database_state()
-
-        # Mock response with local tracks (track_id = None)
-        spotify_response_with_locals = [
-            ('4U4Sa6KyRGOzqbpBT8vuMl', 'Regular Track', 'Artist A', 'Album A',
-             self.fixture_loader._parse_datetime('2025-05-31T22:03:46.000Z')),
-            (None, 'Local Track', 'Local Artist', 'Local Album',
-             self.fixture_loader._parse_datetime('2025-05-10T06:28:30.000Z'))
-        ]
-
-        with patch('helpers.sync_helper.fetch_master_tracks') as mock_fetch, \
-                patch('helpers.sync_helper.authenticate_spotify') as mock_auth:
-            mock_fetch.return_value = spotify_response_with_locals
-            mock_auth.return_value = MagicMock()
-
-            request_data = {
-                'action': 'tracks',
-                'confirmed': False,
-                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
-            }
-
-            response = client.post('/api/sync/database',
-                                   json=request_data,
-                                   content_type='application/json')
-
-            assert response.status_code == 200
-            data = json.loads(response.data)
-            assert data['success'] == True
-
-            # Check that local tracks are handled (should have generated local IDs)
-            tracks_to_add = data['details']['items_to_add']
-            local_tracks = [t for t in tracks_to_add if t.get('is_local', False)]
-            assert len(local_tracks) > 0
-            # Local tracks should have generated IDs starting with 'local_'
-            for local_track in local_tracks:
-                assert local_track['id'].startswith('local_')
 
     def test_sync_database_large_dataset_pagination(self, client):
         """Test sync with large datasets that might require pagination."""

@@ -1,5 +1,5 @@
 {
-  "description": "Initial database state for playlist sync tests",
+  "description": "Initial database state for playlist sync tests - Updated for URI system",
   "playlists": [
     {
       "playlist_id": "playlist_to_be_updated",
@@ -22,6 +22,7 @@
   ],
   "tracks": [
     {
+      "uri": "spotify:track:track_in_updated_playlist",
       "track_id": "track_in_updated_playlist",
       "title": "Track In Updated Playlist",
       "artists": "Test Artist A",
@@ -30,6 +31,7 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_in_unchanged_playlist",
       "track_id": "track_in_unchanged_playlist",
       "title": "Track In Unchanged Playlist",
       "artists": "Test Artist B",
@@ -38,6 +40,7 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_in_deleted_playlist",
       "track_id": "track_in_deleted_playlist",
       "title": "Track In Deleted Playlist",
       "artists": "Test Artist C",
@@ -48,15 +51,15 @@
   ],
   "track_playlist_associations": [
     {
-      "track_id": "track_in_updated_playlist",
+      "uri": "spotify:track:track_in_updated_playlist",
       "playlist_id": "playlist_to_be_updated"
     },
     {
-      "track_id": "track_in_unchanged_playlist",
+      "uri": "spotify:track:track_in_unchanged_playlist",
       "playlist_id": "playlist_stays_unchanged"
     },
     {
-      "track_id": "track_in_deleted_playlist",
+      "uri": "spotify:track:track_in_deleted_playlist",
       "playlist_id": "playlist_to_be_deleted"
     }
   ]

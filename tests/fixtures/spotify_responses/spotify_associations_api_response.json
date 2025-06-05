@@ -1,5 +1,5 @@
 {
-  "description": "Mock data for association sync tests - includes changed playlists and their track associations",
+  "description": "Mock data for association sync tests - Updated for URI system",
   "changed_playlists": [
     {
       "name": "Playlist With Association Changes",
@@ -16,11 +16,17 @@
   ],
   "playlist_track_associations": {
     "playlist_with_changes": [
-      "track_stays_in_playlist",
-      "track_to_be_added_to_playlist"
+      "spotify:track:track_stays_in_playlist",
+      "spotify:track:track_to_be_added_to_playlist"
     ],
     "playlist_without_changes": [
-      "track_stays_in_playlist"
+      "spotify:track:track_stays_in_playlist"
+    ],
+    "test_master_playlist": [
+      "spotify:track:track_stays_in_playlist",
+      "spotify:track:track_to_be_removed_from_playlist",
+      "spotify:track:track_to_be_added_to_playlist",
+      "spotify:local:Local+Artist:Local+Album:Local+Track+Test:247"
     ]
   }
 }

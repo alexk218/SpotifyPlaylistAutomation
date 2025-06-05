@@ -8,6 +8,7 @@
   },
   "tracks": [
     {
+      "uri": "spotify:track:track_stays_unchanged",
       "track_id": "track_stays_unchanged",
       "title": "Track That Stays Unchanged",
       "artists": "Unchanged Artist",
@@ -16,6 +17,7 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_to_be_deleted",
       "track_id": "track_to_be_deleted",
       "title": "Track That Will Be Deleted",
       "artists": "Deleted Artist",
@@ -24,6 +26,7 @@
       "is_local": false
     },
     {
+      "uri": "spotify:track:track_to_be_updated",
       "track_id": "track_to_be_updated",
       "title": "Track With Old Title",
       "artists": "Old Artist Name",
@@ -32,7 +35,8 @@
       "is_local": false
     },
     {
-      "track_id": "local_track_existing",
+      "uri": "spotify:local:Local+Artist:Local+Album:Existing+Local+Track:446",
+      "track_id": null,
       "title": "Existing Local Track",
       "artists": "Local Artist",
       "album": "Local Album",
