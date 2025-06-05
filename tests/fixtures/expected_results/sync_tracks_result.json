@@ -35,5 +35,10 @@
       "album": "ALBUM UPDATED",
       "is_local": false
     }
+  ],
+  "expected_deleted_tracks": [
+    "7z5dZ9mvhklOsfWtZYOQ9J",
+    "7zLm8NfYfn4IRd3GF35N3O",
+    "local_018e875efa0d7fd2"
   ]
 }
