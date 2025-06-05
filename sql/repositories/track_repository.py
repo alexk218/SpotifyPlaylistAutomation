@@ -24,10 +24,11 @@ class TrackRepository(BaseRepository[Track]):
 
     def insert(self, track: Track) -> None:
         query = """
-                INSERT INTO Tracks (TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, AddedDate)
-                VALUES (?, ?, ?, ?, ?, ?, GETDATE()) \
+                INSERT INTO Tracks (Uri, TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, AddedDate)
+                VALUES (?, ?, ?, ?, ?, ?, ?, GETDATE()) \
                 """
         self.execute_non_query(query, (
+            track.uri,
             track.track_id,
             track.title,
             track.artists,
@@ -40,7 +41,8 @@ class TrackRepository(BaseRepository[Track]):
     def update(self, track: Track) -> bool:
         query = """
                 UPDATE Tracks
-                SET TrackTitle    = ?, \
+                SET Uri           = ?, \
+                    TrackTitle    = ?, \
                     Artists       = ?, \
                     Album         = ?, \
                     AddedToMaster = ?, \
@@ -48,6 +50,7 @@ class TrackRepository(BaseRepository[Track]):
                 WHERE TrackId = ? \
                 """
         rows_affected = self.execute_non_query(query, (
+            track.uri,
             track.title,
             track.artists,
             track.album,
@@ -64,16 +67,78 @@ class TrackRepository(BaseRepository[Track]):
             return False
 
     def delete_by_track_id(self, track_id: str) -> None:
-        """Delete all playlist associations for a track"""
-        query = "DELETE FROM Tracks WHERE TrackId = ?"
-        self.connection.execute(query, (track_id,))
-        self.connection.commit()
-
-    def delete(self, track_id: str) -> None:
         """Delete a track by its ID"""
         query = "DELETE FROM Tracks WHERE TrackId = ?"
         self.connection.execute(query, (track_id,))
         self.connection.commit()
+
+    def get_by_uri(self, uri: str) -> Optional[Track]:
+        """
+        Get a track by its Spotify URI.
+
+        Args:
+            uri: The Spotify URI to look up
+
+        Returns:
+            Track object or None if not found
+        """
+        query = "SELECT * FROM Tracks WHERE Uri = ?"
+        result = self.fetch_one(query, (uri,))
+        return self._map_to_model(result) if result else None
+
+    def delete_by_uri(self, uri: str) -> bool:
+        """
+        Delete a track by its Spotify URI.
+
+        Args:
+            uri: The Spotify URI of the track to delete
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        query = "DELETE FROM Tracks WHERE Uri = ?"
+        rows_affected = self.execute_non_query(query, (uri,))
+
+        if rows_affected > 0:
+            self.db_logger.info(f"Deleted track with URI: {uri}")
+            return True
+        else:
+            self.db_logger.warning(f"Track not found for deletion: {uri}")
+            return False
+
+    def search_uris(self, uris: List[str]) -> List[Track]:
+        """
+        Get tracks matching the provided list of Spotify URIs.
+
+        Args:
+            uris: List of Spotify URIs to search for
+
+        Returns:
+            List of Track objects matching the URIs
+        """
+        if not uris:
+            return []
+
+        # Convert list of URIs to a comma-separated string for SQL IN clause
+        uri_string = ','.join(f"'{uri}'" for uri in uris)
+
+        query = f"""
+            SELECT * FROM Tracks
+            WHERE Uri IN ({uri_string})
+        """
+
+        results = self.fetch_all(query)
+        return [self._map_to_model(row) for row in results]
+
+    def get_all_as_dict_by_uri(self) -> Dict[str, Track]:
+        """
+        Get all tracks as a dictionary indexed by URI.
+
+        Returns:
+            Dictionary of {uri: Track object}
+        """
+        tracks = self.get_all()
+        return {track.uri: track for track in tracks if track.uri}
 
     def get_by_id(self, track_id: str) -> Optional[Track]:
         """
@@ -226,6 +291,7 @@ class TrackRepository(BaseRepository[Track]):
 
     def _map_to_model(self, row: pyodbc.Row) -> Track:
         # Extract values from the row
+        uri = row.Uri if hasattr(row, 'Uri') else None
         track_id = row.TrackId
         title = row.TrackTitle
         artists = row.Artists
@@ -234,4 +300,4 @@ class TrackRepository(BaseRepository[Track]):
         is_local = bool(row.IsLocal) if hasattr(row, 'IsLocal') else False
 
         # Create and return a Track object
-        return Track(track_id, title, artists, album, added_to_master, is_local)
+        return Track(uri, track_id, title, artists, album, added_to_master, is_local)

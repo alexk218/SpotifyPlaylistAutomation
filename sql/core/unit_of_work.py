@@ -23,6 +23,7 @@ class UnitOfWork:
         self.track_repository = None
         self.playlist_repository = None
         self.track_playlist_repository = None
+        self.file_track_mapping_repository = None
         self.db_logger = setup_logger('unit_of_work', 'sql', 'unit_of_work.log')
         self._repositories_initialized = False
 
@@ -113,10 +114,12 @@ class UnitOfWork:
         from sql.repositories.track_repository import TrackRepository
         from sql.repositories.playlist_repository import PlaylistRepository
         from sql.repositories.track_playlist_repository import TrackPlaylistRepository
+        from sql.repositories.file_track_mapping_repository import FileTrackMappingRepository
 
         self.track_repository = TrackRepository(self.connection)
         self.playlist_repository = PlaylistRepository(self.connection)
         self.track_playlist_repository = TrackPlaylistRepository(self.connection)
+        self.file_track_mapping_repository = FileTrackMappingRepository(self.connection)
 
         self._repositories_initialized = True
         self.db_logger.debug("Repositories initialized")

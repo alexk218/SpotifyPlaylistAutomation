@@ -525,6 +525,7 @@ def direct_tracks_compare(master_tracks_dir, master_playlist_id=None):
         master_tracks_list = []
         for track in master_tracks:
             master_tracks_list.append({
+                'uri': track.uri,
                 'id': track.track_id,
                 'name': track.title,
                 'artists': track.artists,
