@@ -51,7 +51,7 @@ class TestSyncDatabase:
 
             # STEP 2: Execution with precomputed changes
             execution_request = {
-                'action': 'tracks',
+                'action': analysis_data['action'],
                 'force_refresh': True,
                 'confirmed': True,
                 'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
@@ -97,9 +97,9 @@ class TestSyncDatabase:
             assert data['stage'] == 'analysis'
             assert data['needs_confirmation'] == True
             assert 'details' in data
-            assert 'to_add' in data['details']
-            assert 'to_update' in data['details']
-            assert 'to_delete' in data['details']
+            assert 'items_to_add' in data['details']
+            assert 'items_to_update' in data['details']
+            assert 'items_to_delete' in data['details']
 
     # ========== PLAYLIST SYNC TESTS ==========
 
@@ -172,7 +172,7 @@ class TestSyncDatabase:
                 'action': 'playlists',
                 'force_refresh': True,
                 'confirmed': True,
-                'precomputed_changes_from_analysis': analysis_data
+                'precomputed_changes_from_analysis': analysis_data['details']
             }
 
             execution_response = client.post('/api/sync/database',
@@ -583,7 +583,7 @@ class TestSyncDatabase:
             assert data['success'] == True
 
             # Check that local tracks are handled (should have generated local IDs)
-            tracks_to_add = data['details']['to_add']
+            tracks_to_add = data['details']['items_to_add']
             local_tracks = [t for t in tracks_to_add if t.get('is_local', False)]
             assert len(local_tracks) > 0
             # Local tracks should have generated IDs starting with 'local_'
