@@ -20,7 +20,7 @@ class TestSyncDatabase:
     def test_sync_database_tracks_full_end_to_end_flow(self, client):
         """Test the complete track sync flow: analysis -> execution using real database operations."""
         # Setup initial database state from fixture
-        self.fixture_loader.setup_initial_database_state()
+        self.fixture_loader.setup_initial_database_state('tracks_initial.json')
 
         # Get mock Spotify API response from fixture
         spotify_api_response = self.fixture_loader.get_spotify_api_mock_data()
@@ -72,7 +72,7 @@ class TestSyncDatabase:
 
     def test_sync_database_tracks_analysis_mode(self, client):
         """Test track sync analysis mode."""
-        self.fixture_loader.setup_initial_database_state()
+        self.fixture_loader.setup_initial_database_state('tracks_initial.json')
         spotify_api_response = self.fixture_loader.get_spotify_api_mock_data()
 
         with patch('helpers.sync_helper.fetch_master_tracks') as mock_fetch, \
@@ -347,12 +347,14 @@ class TestSyncDatabase:
             assert 'playlist_changed_123' in added_track_playlists, "track_to_be_added should be in Changed Playlist"
 
             # Verify track_to_be_added is still in master playlist
-            assert os.getenv('MASTER_PLAYLIST_ID') in added_track_playlists, "track_to_be_added should still be in master"
+            assert os.getenv(
+                'MASTER_PLAYLIST_ID') in added_track_playlists, "track_to_be_added should still be in master"
 
             # Verify track_in_changed_playlist associations remain unchanged
             unchanged_track_playlists = uow.track_playlist_repository.get_playlist_ids_for_track(
                 'track_in_changed_playlist')
-            assert os.getenv('MASTER_PLAYLIST_ID') in unchanged_track_playlists, "track_in_changed_playlist should be in master"
+            assert os.getenv(
+                'MASTER_PLAYLIST_ID') in unchanged_track_playlists, "track_in_changed_playlist should be in master"
 
             # Count total associations to verify overall state
             all_associations = []
@@ -502,7 +504,7 @@ class TestSyncDatabase:
     def test_sync_database_clear(self, client):
         """Test database clear functionality."""
         # Setup some data first
-        self.fixture_loader.setup_initial_database_state()
+        self.fixture_loader.setup_initial_database_state('tracks_initial.json')
 
         # Verify data exists
         with UnitOfWork() as uow:

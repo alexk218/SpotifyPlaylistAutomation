@@ -1,19 +1,13 @@
 import os
-import sys
-import pytest
-from pathlib import Path
 import tempfile
-import json
 from unittest.mock import patch, MagicMock
+
+import pytest
 from dotenv import load_dotenv
 
 load_dotenv()
 
 SERVER_CONNECTION_STRING = os.getenv("SERVER_CONNECTION_STRING")
-
-# Add project root to path so imports work
-project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
 
 # Import the Flask app
 from tagify_integration import app
