@@ -84,7 +84,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'force_refresh': True,
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -251,7 +251,7 @@ class TestSyncDatabase:
                 'action': 'associations',
                 'force_refresh': True,
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -307,7 +307,7 @@ class TestSyncDatabase:
             'action': 'associations',
             'force_refresh': True,
             'confirmed': True,
-            'master_playlist_id': 'test_master_playlist',
+            'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
             'precomputed_changes_from_analysis': precomputed_changes
         }
 
@@ -347,12 +347,12 @@ class TestSyncDatabase:
             assert 'playlist_changed_123' in added_track_playlists, "track_to_be_added should be in Changed Playlist"
 
             # Verify track_to_be_added is still in master playlist
-            assert 'test_master_playlist_id' in added_track_playlists, "track_to_be_added should still be in master"
+            assert os.getenv('MASTER_PLAYLIST_ID') in added_track_playlists, "track_to_be_added should still be in master"
 
             # Verify track_in_changed_playlist associations remain unchanged
             unchanged_track_playlists = uow.track_playlist_repository.get_playlist_ids_for_track(
                 'track_in_changed_playlist')
-            assert 'test_master_playlist_id' in unchanged_track_playlists, "track_in_changed_playlist should be in master"
+            assert os.getenv('MASTER_PLAYLIST_ID') in unchanged_track_playlists, "track_in_changed_playlist should be in master"
 
             # Count total associations to verify overall state
             all_associations = []
@@ -428,7 +428,7 @@ class TestSyncDatabase:
                 'stage': 'tracks',
                 'confirmed': False,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
 
             assert response.status_code == 200
@@ -444,7 +444,7 @@ class TestSyncDatabase:
                 'stage': 'tracks',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': data
             })
 
@@ -460,7 +460,7 @@ class TestSyncDatabase:
                 'stage': 'associations',
                 'confirmed': False,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
 
             assert response.status_code == 200
@@ -476,7 +476,7 @@ class TestSyncDatabase:
                 'stage': 'associations',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': data
             })
 
@@ -605,7 +605,7 @@ class TestSyncDatabase:
             request_data = {
                 'action': 'tracks',
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -639,7 +639,7 @@ class TestSyncDatabase:
             request_data = {
                 'action': 'tracks',
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -709,7 +709,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'confirmed': False,  # Analysis first
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
             assert response.status_code == 200
             analysis_data = json.loads(response.data)
@@ -720,7 +720,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': analysis_data
             })
             assert response.status_code == 200
@@ -731,7 +731,7 @@ class TestSyncDatabase:
                 'action': 'associations',
                 'confirmed': False,  # Analysis first
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
             assert response.status_code == 200
             analysis_data = json.loads(response.data)
@@ -742,7 +742,7 @@ class TestSyncDatabase:
                 'action': 'associations',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': analysis_data
             })
             assert response.status_code == 200
