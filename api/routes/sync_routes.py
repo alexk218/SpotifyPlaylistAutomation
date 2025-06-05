@@ -1,3 +1,5 @@
+from typing import Any, Dict
+
 from flask import Blueprint, request, jsonify, current_app
 import traceback
 from api.services import sync_service
@@ -66,7 +68,7 @@ def sync_database():
     exclusion_config = sync_service.get_exclusion_config(request.json)
 
     try:
-        result = sync_service.orchestrate_db_sync(
+        result: Dict[str, Any] = sync_service.orchestrate_db_sync(
             action,
             master_playlist_id,
             force_refresh,

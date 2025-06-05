@@ -1,5 +1,6 @@
 import threading
 import traceback
+from typing import Optional, Dict, Any
 
 from dotenv import load_dotenv
 
@@ -167,8 +168,15 @@ def sync_unplaylisted_tracks(unsorted_playlist_id):
         raise RuntimeError(f"Error: {str(e)}")
 
 
-def orchestrate_db_sync(action, master_playlist_id, force_refresh, is_confirmed, precomputed_changes=None,
-                        exclusion_config=None, stage='start'):
+def orchestrate_db_sync(
+        action: str,
+        master_playlist_id: str,
+        force_refresh: bool,
+        is_confirmed: bool,
+        precomputed_changes: Optional[Dict[str, Any]] = None,
+        exclusion_config: Optional[Dict[str, Any]] = None,
+        stage: str = 'start'
+) -> Dict[str, Any]:
     """
     Handle database sync operations with consistent response structure.
 
@@ -182,7 +190,7 @@ def orchestrate_db_sync(action, master_playlist_id, force_refresh, is_confirmed,
         stage: Stage in the sync process for 'all' operations
 
     Returns:
-        Dictionary with standardized sync results
+        Dictionary with standardized sync results (SyncResponse.to_dict())
     """
     if action == 'clear':
         from sql.helpers.db_helper import clear_db
