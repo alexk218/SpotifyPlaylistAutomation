@@ -1,4 +1,5 @@
 import json
+import os
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -19,7 +20,7 @@ class TestSyncDatabase:
     def test_sync_database_tracks_full_end_to_end_flow(self, client):
         """Test the complete track sync flow: analysis -> execution using real database operations."""
         # Setup initial database state from fixture
-        self.fixture_loader.setup_initial_database_state()
+        self.fixture_loader.setup_initial_database_state('tracks_initial.json')
 
         # Get mock Spotify API response from fixture
         spotify_api_response = self.fixture_loader.get_spotify_api_mock_data()
@@ -35,7 +36,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'force_refresh': True,
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
             }
 
             analysis_response = client.post('/api/sync/database',
@@ -50,10 +51,10 @@ class TestSyncDatabase:
 
             # STEP 2: Execution with precomputed changes
             execution_request = {
-                'action': 'tracks',
+                'action': analysis_data['action'],
                 'force_refresh': True,
                 'confirmed': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': analysis_data
             }
 
@@ -67,11 +68,11 @@ class TestSyncDatabase:
             assert execution_data['stage'] == 'sync_complete'
 
             # Validate final database state
-            self.fixture_loader.validate_database_state()
+            self.fixture_loader.validate_database_state('sync_tracks_result.json')
 
     def test_sync_database_tracks_analysis_mode(self, client):
         """Test track sync analysis mode."""
-        self.fixture_loader.setup_initial_database_state()
+        self.fixture_loader.setup_initial_database_state('tracks_initial.json')
         spotify_api_response = self.fixture_loader.get_spotify_api_mock_data()
 
         with patch('helpers.sync_helper.fetch_master_tracks') as mock_fetch, \
@@ -83,7 +84,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'force_refresh': True,
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -96,9 +97,9 @@ class TestSyncDatabase:
             assert data['stage'] == 'analysis'
             assert data['needs_confirmation'] == True
             assert 'details' in data
-            assert 'to_add' in data['details']
-            assert 'to_update' in data['details']
-            assert 'to_delete' in data['details']
+            assert 'items_to_add' in data['details']
+            assert 'items_to_update' in data['details']
+            assert 'items_to_delete' in data['details']
 
     # ========== PLAYLIST SYNC TESTS ==========
 
@@ -139,90 +140,51 @@ class TestSyncDatabase:
             assert data['stats']['updated'] == expected_stats['updated']
             assert data['stats']['deleted'] == expected_stats['deleted']
 
-    def test_sync_database_playlists_execution(self, client):
-        """Test playlist sync execution with precomputed changes."""
+    def test_sync_database_playlists_full_end_to_end_flow(self, client):
+        """Test the complete playlist sync flow: analysis -> execution using real database operations."""
         self.fixture_loader.setup_initial_database_state('playlists_initial.json')
 
-        # Create precomputed changes based on fixture
-        precomputed_changes = {
-            'to_add': [
-                {
-                    'id': 'new_playlist_456',
-                    'name': 'New Playlist',
-                    'snapshot_id': 'snapshot_new_456'
-                }
-            ],
-            'to_update': [
-                {
-                    'id': '37i9dQZF1DX0XUsuxWHRQd',
-                    'name': 'RapCaviar Updated',
-                    'old_name': 'RapCaviar',
-                    'snapshot_id': 'new_snapshot_789',
-                    'old_snapshot_id': 'old_snapshot_789'
-                }
-            ],
-            'to_delete': [
-                {
-                    'id': 'playlist_to_be_deleted',
-                    'name': 'Old Playlist'
-                }
-            ]
-        }
+        spotify_playlists_response = self.fixture_loader.get_spotify_playlists_mock_data()
 
-        request_data = {
-            'action': 'playlists',
-            'force_refresh': True,
-            'confirmed': True,
-            'precomputed_changes_from_analysis': precomputed_changes
-        }
+        with patch('helpers.sync_helper.fetch_playlists') as mock_fetch, \
+                patch('helpers.sync_helper.authenticate_spotify') as mock_auth:
+            mock_fetch.return_value = spotify_playlists_response
+            mock_auth.return_value = MagicMock()
 
-        response = client.post('/api/sync/database',
-                               json=request_data,
-                               content_type='application/json')
+            # STEP 1: Analysis mode
+            analysis_request = {
+                'action': 'playlists',
+                'force_refresh': True,
+                'confirmed': False
+            }
 
-        assert response.status_code == 200
-        data = json.loads(response.data)
-        assert data['success'] == True
-        assert data['action'] == 'playlists'
-        assert data['stage'] == 'sync_complete'
+            analysis_response = client.post('/api/sync/database',
+                                            json=analysis_request,
+                                            content_type='application/json')
 
-        # Verify the changes were applied
-        assert data['stats']['added'] == 1
-        assert data['stats']['updated'] == 1  # Updated name
-        assert data['stats']['deleted'] == 1
+            assert analysis_response.status_code == 200
+            analysis_data = json.loads(analysis_response.data)
+            assert analysis_data['success'] == True
+            assert analysis_data['stage'] == 'analysis'
+            assert analysis_data['needs_confirmation'] == True
 
-        # Debug: Check actual database state before validation
-        with UnitOfWork() as uow:
-            all_playlists = uow.playlist_repository.get_all()
-            print("\nActual playlists in database after sync:")
-            for p in all_playlists:
-                print(f"  ID: {p.playlist_id}, Name: {p.name}")
-                print(f"      master_sync_snapshot_id: {p.master_sync_snapshot_id}")
-                print(f"      associations_snapshot_id: {p.associations_snapshot_id}")
+            execution_request = {
+                'action': 'playlists',
+                'force_refresh': True,
+                'confirmed': True,
+                'precomputed_changes_from_analysis': analysis_data['details']
+            }
 
-        # Instead of validating against fixture, validate against expected changes
-        with UnitOfWork() as uow:
-            all_playlists = uow.playlist_repository.get_all()
-            playlist_ids = {p.playlist_id for p in all_playlists}
-            playlist_names = {p.name for p in all_playlists}
+            execution_response = client.post('/api/sync/database',
+                                             json=execution_request,
+                                             content_type='application/json')
 
-            # Verify expected playlists exist
-            assert 'new_playlist_456' in playlist_ids, "New playlist should be added"
-            assert '37i9dQZF1DX0XUsuxWHRQd' in playlist_ids, "Updated playlist should still exist"
-            assert 'playlist_to_be_deleted' not in playlist_ids, "Deleted playlist should be gone"
+            assert execution_response.status_code == 200
+            execution_data = json.loads(execution_response.data)
+            assert execution_data['success'] == True
+            assert execution_data['stage'] == 'sync_complete'
 
-            # Verify expected names
-            assert 'New Playlist' in playlist_names, "New playlist name should exist"
-            assert 'RapCaviar Updated' in playlist_names, "Updated playlist name should exist"
-            assert 'Old Playlist' not in playlist_names, "Old playlist name should be gone"
-
-            # Verify snapshot IDs were updated correctly
-            for playlist in all_playlists:
-                if playlist.playlist_id == 'new_playlist_456':
-                    assert playlist.master_sync_snapshot_id == 'snapshot_new_456'
-                elif playlist.playlist_id == '37i9dQZF1DX0XUsuxWHRQd':
-                    assert playlist.master_sync_snapshot_id == 'new_snapshot_789'
-                    assert playlist.name == 'RapCaviar Updated'
+            self.fixture_loader.validate_database_state('playlist_sync_result.json')
 
     # ========== ASSOCIATIONS SYNC TESTS ==========
 
@@ -250,7 +212,7 @@ class TestSyncDatabase:
                 'action': 'associations',
                 'force_refresh': True,
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -273,94 +235,65 @@ class TestSyncDatabase:
             print("Actual stats structure:", data.get('stats', {}))
             assert 'stats' in data
 
-    def test_sync_database_associations_execution(self, client):
-        """Test associations sync execution with precomputed changes."""
+    def test_sync_database_associations_full_end_to_end_flow(self, client):
+        """Test the complete associations sync flow: analysis -> execution using real database operations."""
+        # Setup initial database state from fixture
         self.fixture_loader.setup_initial_database_state('associations_initial.json')
 
-        # Create precomputed changes based on fixture
-        precomputed_changes = {
-            'tracks_with_changes': [
-                {
-                    'track_id': 'track_to_be_removed',
-                    'track_info': 'Artist B - Track to be Removed',
-                    'add_to': [],
-                    'remove_from': ['Changed Playlist']
-                },
-                {
-                    'track_id': 'track_to_be_added',
-                    'track_info': 'Artist C - Track to be Added',
-                    'add_to': ['Changed Playlist'],
-                    'remove_from': []
-                }
-            ],
-            'changed_playlists': [
-                {
-                    'name': 'Changed Playlist',
-                    'id': 'playlist_changed_123',
-                    'snapshot_id': 'new_assoc_123'
-                }
-            ]
-        }
+        # Get mock Spotify API response from fixture
+        spotify_data = self.fixture_loader.get_spotify_associations_mock_data()
 
-        request_data = {
-            'action': 'associations',
-            'force_refresh': True,
-            'confirmed': True,
-            'master_playlist_id': 'test_master_playlist',
-            'precomputed_changes_from_analysis': precomputed_changes
-        }
+        with patch('helpers.sync_helper.fetch_playlists') as mock_fetch_playlists, \
+                patch('helpers.sync_helper.get_track_ids_for_playlist') as mock_get_tracks, \
+                patch('helpers.sync_helper.authenticate_spotify') as mock_auth:
+            # Configure mocks
+            mock_fetch_playlists.return_value = spotify_data['changed_playlists'] + spotify_data['unchanged_playlists']
+            mock_auth.return_value = MagicMock()
 
-        response = client.post('/api/sync/database',
-                               json=request_data,
-                               content_type='application/json')
+            # Mock get_track_ids_for_playlist to return different results based on playlist
+            def mock_get_tracks_side_effect(spotify_client, playlist_id, force_refresh=False):
+                return spotify_data['playlist_track_associations'].get(playlist_id, [])
 
-        assert response.status_code == 200
-        data = json.loads(response.data)
-        assert data['success'] == True
-        assert data['action'] == 'associations'
-        assert data['stage'] == 'sync_complete'
+            mock_get_tracks.side_effect = mock_get_tracks_side_effect
 
-        # Verify the associations were updated
-        assert data['stats']['associations_added'] == 1
-        assert data['stats']['associations_removed'] == 1
+            # STEP 1: Analysis mode
+            analysis_request = {
+                'action': 'associations',
+                'force_refresh': True,
+                'confirmed': False,
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
+            }
 
-        # Debug: Check actual associations in database
-        with UnitOfWork() as uow:
-            all_tracks = uow.track_repository.get_all()
-            print("\nActual associations after sync:")
-            for track in all_tracks:
-                playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_track(track.track_id)
-                for playlist_id in playlist_ids:
-                    playlist = uow.playlist_repository.get_by_id(playlist_id)
-                    playlist_name = playlist.name if playlist else f"ID:{playlist_id}"
-                    print(f"  {track.track_id} -> {playlist_name} ({playlist_id})")
+            analysis_response = client.post('/api/sync/database',
+                                            json=analysis_request,
+                                            content_type='application/json')
 
-        # Validate against actual expected behavior instead of fixture
-        with UnitOfWork() as uow:
-            # Verify track_to_be_removed is no longer in Changed Playlist
-            removed_track_playlists = uow.track_playlist_repository.get_playlist_ids_for_track('track_to_be_removed')
-            assert 'playlist_changed_123' not in removed_track_playlists, "track_to_be_removed should not be in Changed Playlist"
+            assert analysis_response.status_code == 200
+            analysis_data = json.loads(analysis_response.data)
+            assert analysis_data['success'] == True
+            assert analysis_data['stage'] == 'analysis'
+            assert analysis_data['needs_confirmation'] == True
 
-            # Verify track_to_be_added is now in Changed Playlist
-            added_track_playlists = uow.track_playlist_repository.get_playlist_ids_for_track('track_to_be_added')
-            assert 'playlist_changed_123' in added_track_playlists, "track_to_be_added should be in Changed Playlist"
+            # STEP 2: Execution with precomputed changes
+            execution_request = {
+                'action': 'associations',
+                'force_refresh': True,
+                'confirmed': True,
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
+                'precomputed_changes_from_analysis': analysis_data
+            }
 
-            # Verify track_to_be_added is still in master playlist
-            assert 'test_master_playlist' in added_track_playlists, "track_to_be_added should still be in master"
+            execution_response = client.post('/api/sync/database',
+                                             json=execution_request,
+                                             content_type='application/json')
 
-            # Verify track_in_changed_playlist associations remain unchanged
-            unchanged_track_playlists = uow.track_playlist_repository.get_playlist_ids_for_track(
-                'track_in_changed_playlist')
-            assert 'test_master_playlist' in unchanged_track_playlists, "track_in_changed_playlist should be in master"
+            assert execution_response.status_code == 200
+            execution_data = json.loads(execution_response.data)
+            assert execution_data['success'] == True
+            assert execution_data['stage'] == 'sync_complete'
 
-            # Count total associations to verify overall state
-            all_associations = []
-            for track in uow.track_repository.get_all():
-                playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_track(track.track_id)
-                all_associations.extend([(track.track_id, pid) for pid in playlist_ids])
-
-            print(f"Total associations: {len(all_associations)}")
-            assert len(all_associations) == 4, f"Expected 4 associations, got {len(all_associations)}"
+            # Validate final database state using fixture validation
+            self.fixture_loader.validate_database_state('associations_sync_result.json')
 
     # ========== SEQUENTIAL 'ALL' SYNC TESTS ==========
 
@@ -427,7 +360,7 @@ class TestSyncDatabase:
                 'stage': 'tracks',
                 'confirmed': False,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
 
             assert response.status_code == 200
@@ -443,7 +376,7 @@ class TestSyncDatabase:
                 'stage': 'tracks',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': data
             })
 
@@ -459,7 +392,7 @@ class TestSyncDatabase:
                 'stage': 'associations',
                 'confirmed': False,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
 
             assert response.status_code == 200
@@ -475,7 +408,7 @@ class TestSyncDatabase:
                 'stage': 'associations',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': data
             })
 
@@ -501,7 +434,7 @@ class TestSyncDatabase:
     def test_sync_database_clear(self, client):
         """Test database clear functionality."""
         # Setup some data first
-        self.fixture_loader.setup_initial_database_state()
+        self.fixture_loader.setup_initial_database_state('tracks_initial.json')
 
         # Verify data exists
         with UnitOfWork() as uow:
@@ -604,7 +537,7 @@ class TestSyncDatabase:
             request_data = {
                 'action': 'tracks',
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -638,7 +571,7 @@ class TestSyncDatabase:
             request_data = {
                 'action': 'tracks',
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             }
 
             response = client.post('/api/sync/database',
@@ -650,7 +583,7 @@ class TestSyncDatabase:
             assert data['success'] == True
 
             # Check that local tracks are handled (should have generated local IDs)
-            tracks_to_add = data['details']['to_add']
+            tracks_to_add = data['details']['items_to_add']
             local_tracks = [t for t in tracks_to_add if t.get('is_local', False)]
             assert len(local_tracks) > 0
             # Local tracks should have generated IDs starting with 'local_'
@@ -708,7 +641,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'confirmed': False,  # Analysis first
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
             assert response.status_code == 200
             analysis_data = json.loads(response.data)
@@ -719,7 +652,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': analysis_data
             })
             assert response.status_code == 200
@@ -730,7 +663,7 @@ class TestSyncDatabase:
                 'action': 'associations',
                 'confirmed': False,  # Analysis first
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID')
             })
             assert response.status_code == 200
             analysis_data = json.loads(response.data)
@@ -741,7 +674,7 @@ class TestSyncDatabase:
                 'action': 'associations',
                 'confirmed': True,
                 'force_refresh': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': analysis_data
             })
             assert response.status_code == 200

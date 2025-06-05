@@ -7,38 +7,46 @@
   },
   "expected_changes": [
     {
-      "track_id": "track_to_be_removed",
-      "track_info": "Artist B - Track to be Removed",
+      "track_id": "track_to_be_removed_from_playlist",
+      "track_info": "Removal Artist - Track To Be Removed From Playlist",
       "add_to": [],
       "remove_from": [
-        "Changed Playlist"
+        "Playlist With Association Changes"
       ]
     },
     {
-      "track_id": "track_to_be_added",
-      "track_info": "Artist C - Track to be Added",
+      "track_id": "track_to_be_added_to_playlist",
+      "track_info": "Addition Artist - Track To Be Added To Playlist",
       "add_to": [
-        "Changed Playlist"
+        "Playlist With Association Changes"
       ],
       "remove_from": []
     }
   ],
   "expected_final_associations": [
     {
-      "track_id": "track_in_changed_playlist",
+      "track_id": "track_stays_in_playlist",
       "playlist_id": "test_master_playlist"
     },
     {
-      "track_id": "track_in_changed_playlist",
-      "playlist_id": "playlist_changed_123"
-    },
-    {
-      "track_id": "track_to_be_removed",
+      "track_id": "track_to_be_removed_from_playlist",
       "playlist_id": "test_master_playlist"
     },
     {
-      "track_id": "track_to_be_added",
+      "track_id": "track_to_be_added_to_playlist",
       "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "track_stays_in_playlist",
+      "playlist_id": "playlist_with_changes"
+    },
+    {
+      "track_id": "track_to_be_added_to_playlist",
+      "playlist_id": "playlist_with_changes"
+    },
+    {
+      "track_id": "track_stays_in_playlist",
+      "playlist_id": "playlist_without_changes"
     }
   ]
 }

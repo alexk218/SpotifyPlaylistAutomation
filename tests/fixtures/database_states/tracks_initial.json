@@ -8,42 +8,34 @@
   },
   "tracks": [
     {
-      "track_id": "4U4Sa6KyRGOzqbpBT8vuMl",
-      "title": "Sunset Falling Down",
-      "artists": "Tal Fussman",
-      "album": "NO DISCO",
+      "track_id": "track_stays_unchanged",
+      "title": "Track That Stays Unchanged",
+      "artists": "Unchanged Artist",
+      "album": "Unchanged Album",
       "added_to_master": "2025-05-31T22:03:46.000Z",
       "is_local": false
     },
     {
-      "track_id": "7z5dZ9mvhklOsfWtZYOQ9J",
-      "title": "Meditations on Loop",
-      "artists": "Anden",
-      "album": "Tais Hauton",
+      "track_id": "track_to_be_deleted",
+      "title": "Track That Will Be Deleted",
+      "artists": "Deleted Artist",
+      "album": "Deleted Album",
       "added_to_master": "2025-01-02T21:39:19.000Z",
       "is_local": false
     },
     {
-      "track_id": "7zLm8NfYfn4IRd3GF35N3O",
-      "title": "Filtered African Blues - FNX Omar Remix",
-      "artists": "Oscar P, FNX OMAR",
-      "album": "Filtered African Blues",
+      "track_id": "track_to_be_updated",
+      "title": "Track With Old Title",
+      "artists": "Old Artist Name",
+      "album": "Old Album Name",
       "added_to_master": "2024-09-30T19:16:32.000Z",
       "is_local": false
     },
     {
-      "track_id": "7zNX28H2cf2OKdQn5G5HbP",
-      "title": "Ultima Hora - Mama's Basement Cut",
-      "artists": "Hillel Shabtai",
-      "album": "Ultima Hora",
-      "added_to_master": "2025-01-02T21:40:25.000Z",
-      "is_local": false
-    },
-    {
-      "track_id": "local_018e875efa0d7fd2",
-      "title": "Around (Thomas Lerian 'Don't This' Edit)",
-      "artists": "",
-      "album": "",
+      "track_id": "local_track_existing",
+      "title": "Existing Local Track",
+      "artists": "Local Artist",
+      "album": "Local Album",
       "added_to_master": "2025-05-10T06:28:30.000Z",
       "is_local": true
     }

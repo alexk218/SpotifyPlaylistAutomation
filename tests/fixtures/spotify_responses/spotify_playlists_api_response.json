@@ -2,19 +2,19 @@
   "description": "Spotify API response for playlists - data returned by fetch_playlists",
   "playlists": [
     {
-      "name": "Today's Top Hits",
-      "playlist_id": "37i9dQZF1DXcBWIGoYBM5M",
+      "name": "Playlist With Updated Name",
+      "playlist_id": "playlist_to_be_updated",
       "snapshot_id": "new_snapshot_123"
     },
     {
-      "name": "RapCaviar Updated",
-      "playlist_id": "37i9dQZF1DX0XUsuxWHRQd",
-      "snapshot_id": "new_snapshot_789"
+      "name": "Unchanged Playlist",
+      "playlist_id": "playlist_stays_unchanged",
+      "snapshot_id": "current_snapshot_789"
     },
     {
-      "name": "New Playlist",
-      "playlist_id": "new_playlist_456",
-      "snapshot_id": "snapshot_new_456"
+      "name": "New Playlist From API",
+      "playlist_id": "playlist_added_from_api",
+      "snapshot_id": "new_api_snapshot_456"
     }
   ]
 }
