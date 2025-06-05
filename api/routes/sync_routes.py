@@ -66,7 +66,7 @@ def sync_database():
     exclusion_config = sync_service.get_exclusion_config(request.json)
 
     try:
-        result = sync_service.handle_db_sync(
+        result = sync_service.orchestrate_db_sync(
             action,
             master_playlist_id,
             force_refresh,

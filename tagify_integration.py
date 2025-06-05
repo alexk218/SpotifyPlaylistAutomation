@@ -1026,7 +1026,7 @@ def api_sync_database():
             playlist_changes_from_analysis = data.get('precomputed_changes_from_analysis')
             added, updated, unchanged, deleted = sync_playlists_to_db(
                 force_full_refresh=force_refresh,
-                auto_confirm=True,
+                skip_confirmation=True,
                 precomputed_changes=playlist_changes_from_analysis,
                 exclusion_config=exclusion_config
             )
@@ -1163,7 +1163,7 @@ def api_sync_database():
 
                     added, updated, unchanged, deleted = sync_playlists_to_db(
                         force_full_refresh=force_refresh,
-                        auto_confirm=True,
+                        skip_confirmation=True,
                         precomputed_changes=precomputed_changes,
                         exclusion_config=exclusion_config
                     )
