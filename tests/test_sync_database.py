@@ -1,4 +1,5 @@
 import json
+import os
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -35,7 +36,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'force_refresh': True,
                 'confirmed': False,
-                'master_playlist_id': 'test_master_playlist'
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
             }
 
             analysis_response = client.post('/api/sync/database',
@@ -53,7 +54,7 @@ class TestSyncDatabase:
                 'action': 'tracks',
                 'force_refresh': True,
                 'confirmed': True,
-                'master_playlist_id': 'test_master_playlist',
+                'master_playlist_id': os.getenv('MASTER_PLAYLIST_ID'),
                 'precomputed_changes_from_analysis': analysis_data
             }
 
@@ -346,12 +347,12 @@ class TestSyncDatabase:
             assert 'playlist_changed_123' in added_track_playlists, "track_to_be_added should be in Changed Playlist"
 
             # Verify track_to_be_added is still in master playlist
-            assert 'test_master_playlist' in added_track_playlists, "track_to_be_added should still be in master"
+            assert 'test_master_playlist_id' in added_track_playlists, "track_to_be_added should still be in master"
 
             # Verify track_in_changed_playlist associations remain unchanged
             unchanged_track_playlists = uow.track_playlist_repository.get_playlist_ids_for_track(
                 'track_in_changed_playlist')
-            assert 'test_master_playlist' in unchanged_track_playlists, "track_in_changed_playlist should be in master"
+            assert 'test_master_playlist_id' in unchanged_track_playlists, "track_in_changed_playlist should be in master"
 
             # Count total associations to verify overall state
             all_associations = []

@@ -24,7 +24,7 @@ from tagify_integration import app
 def mock_env_variables():
     with patch.dict(os.environ, {
         "MASTER_TRACKS_DIRECTORY_SSD": "/mock/tracks/dir",
-        "MASTER_PLAYLIST_ID": "mock_playlist_id",
+        "MASTER_PLAYLIST_ID": "test_master_playlist_id",
     }):
         yield
 
@@ -67,7 +67,6 @@ def clean_database_after_test():
         print(f"Warning: Could not clean database after test: {e}")
 
 
-# Mock unit of work
 @pytest.fixture
 def mock_unit_of_work():
     with patch('tagify_integration.UnitOfWork') as mock:
