@@ -26,7 +26,7 @@
   "expected_final_associations": [
     {
       "track_id": "track_in_changed_playlist",
-      "playlist_id": "test_master_playlist"
+      "playlist_id": "test_master_playlist_id"
     },
     {
       "track_id": "track_in_changed_playlist",
@@ -34,11 +34,11 @@
     },
     {
       "track_id": "track_to_be_removed",
-      "playlist_id": "test_master_playlist"
+      "playlist_id": "test_master_playlist_id"
     },
     {
       "track_id": "track_to_be_added",
-      "playlist_id": "test_master_playlist"
+      "playlist_id": "test_master_playlist_id"
     }
   ]
 }

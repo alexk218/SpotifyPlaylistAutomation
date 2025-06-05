@@ -1,7 +1,7 @@
 {
   "description": "Initial database state for sync tests",
   "master_playlist": {
-    "playlist_id": "test_master_playlist",
+    "playlist_id": "test_master_playlist_id",
     "name": "MASTER",
     "master_sync_snapshot_id": "",
     "associations_snapshot_id": ""
