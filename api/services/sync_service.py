@@ -208,21 +208,10 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 "needs_confirmation": added_count > 0 or updated_count > 0 or deleted_count > 0
             }
 
-        if 'details' in precomputed_changes:
-            # Extract the properly structured changes from the analysis details
-            playlist_changes_from_analysis = {
-                'to_add': precomputed_changes['details'].get('to_add', []),
-                'to_update': precomputed_changes['details'].get('to_update', []),
-                'to_delete': precomputed_changes['details'].get('to_delete', []),
-                'unchanged': precomputed_changes['stats'].get('unchanged', 0)
-            }
-        else:
-            playlist_changes_from_analysis = precomputed_changes
-
         added, updated, unchanged, deleted = sync_playlists_to_db(
             force_full_refresh=force_refresh,
             auto_confirm=True,
-            precomputed_changes=playlist_changes_from_analysis,
+            precomputed_changes=precomputed_changes,
             exclusion_config=exclusion_config
         )
         return {
@@ -306,23 +295,11 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 "needs_confirmation": len(tracks_to_add) > 0 or len(tracks_to_update) > 0 or len(tracks_to_delete) > 0
             }
 
-        # Otherwise, proceed with execution
-        if 'details' in precomputed_changes:
-            # Extract the properly structured changes from the analysis details
-            track_changes_from_analysis = {
-                'tracks_to_add': precomputed_changes['details'].get('all_items_to_add', []),
-                'tracks_to_update': precomputed_changes['details'].get('all_items_to_update', []),
-                'tracks_to_delete': precomputed_changes['details'].get('all_items_to_delete', []),
-                'unchanged_tracks': precomputed_changes['stats'].get('unchanged', 0)
-            }
-        else:
-            track_changes_from_analysis = precomputed_changes
-
         added, updated, unchanged, deleted = sync_tracks_to_db(
             master_playlist_id,
             force_full_refresh=force_refresh,
             auto_confirm=True,
-            precomputed_changes=track_changes_from_analysis
+            precomputed_changes=precomputed_changes
         )
         return {
             "success": True,
@@ -359,30 +336,18 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                     "associations_to_add": associations_changes['associations_to_add'],
                     "associations_to_remove": associations_changes['associations_to_remove'],
                     "samples": associations_changes['samples'],
-                    "all_changes": associations_changes.get('all_changes', associations_changes['samples'])
+                    "all_changes": associations_changes.get('all_changes', associations_changes['samples']),
+                    "changed_playlists": associations_changes.get('changed_playlists', [])
                 },
                 "needs_confirmation": associations_changes['associations_to_add'] > 0 or
                                       associations_changes['associations_to_remove'] > 0
             }
 
-        # Otherwise, proceed with execution
-        if 'details' in precomputed_changes:
-            # Extract the properly structured changes from the analysis details
-            associations_changes_from_analysis = {
-                'tracks_with_changes': precomputed_changes['details'].get('tracks_with_changes', []),
-                'changed_playlists': precomputed_changes['details'].get('changed_playlists', []),
-                'associations_to_add': precomputed_changes['details'].get('associations_to_add', 0),
-                'associations_to_remove': precomputed_changes['details'].get('associations_to_remove', 0),
-                'stats': precomputed_changes.get('stats', {})
-            }
-        else:
-            associations_changes_from_analysis = precomputed_changes
-
         stats = sync_track_playlist_associations_to_db(
             master_playlist_id,
             force_full_refresh=force_refresh,
             auto_confirm=True,
-            precomputed_changes=associations_changes_from_analysis,
+            precomputed_changes=precomputed_changes,
             exclusion_config=exclusion_config
         )
         return {
@@ -429,21 +394,10 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 }
             else:
                 # Execute playlists sync
-                if 'details' in precomputed_changes:
-                    # Extract the properly structured changes from the analysis details
-                    playlist_changes_from_analysis = {
-                        'to_add': precomputed_changes['details'].get('to_add', []),
-                        'to_update': precomputed_changes['details'].get('to_update', []),
-                        'to_delete': precomputed_changes['details'].get('to_delete', []),
-                        'unchanged': precomputed_changes['stats'].get('unchanged', 0)
-                    }
-                else:
-                    playlist_changes_from_analysis = precomputed_changes
-
                 added, updated, unchanged, deleted = sync_playlists_to_db(
                     force_full_refresh=force_refresh,
                     auto_confirm=True,
-                    precomputed_changes=playlist_changes_from_analysis,
+                    precomputed_changes=precomputed_changes,
                     exclusion_config=exclusion_config
                 )
 
@@ -533,22 +487,11 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                 }
             else:
                 # Execute tracks sync
-                if 'details' in precomputed_changes:
-                    # Extract the properly structured changes from the analysis details
-                    track_changes_from_analysis = {
-                        'tracks_to_add': precomputed_changes['details'].get('all_items_to_add', []),
-                        'tracks_to_update': precomputed_changes['details'].get('all_items_to_update', []),
-                        'tracks_to_delete': precomputed_changes['details'].get('all_items_to_delete', []),
-                        'unchanged_tracks': precomputed_changes['stats'].get('unchanged', 0)
-                    }
-                else:
-                    track_changes_from_analysis = precomputed_changes
-
                 added, updated, unchanged, deleted = sync_tracks_to_db(
                     master_playlist_id,
                     force_full_refresh=force_refresh,
                     auto_confirm=True,
-                    precomputed_changes=track_changes_from_analysis
+                    precomputed_changes=precomputed_changes
                 )
 
                 return {
@@ -593,24 +536,11 @@ def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, prec
                     "needs_confirmation": True
                 }
             else:
-                # Execute associations sync
-                if 'details' in precomputed_changes:
-                    # Extract the properly structured changes from the analysis details
-                    associations_changes_from_analysis = {
-                        'tracks_with_changes': precomputed_changes['details'].get('tracks_with_changes', []),
-                        'changed_playlists': precomputed_changes['details'].get('changed_playlists', []),
-                        'associations_to_add': precomputed_changes['details'].get('associations_to_add', 0),
-                        'associations_to_remove': precomputed_changes['details'].get('associations_to_remove', 0),
-                        'stats': precomputed_changes.get('stats', {})
-                    }
-                else:
-                    associations_changes_from_analysis = precomputed_changes
-
                 stats = sync_track_playlist_associations_to_db(
                     master_playlist_id,
                     force_full_refresh=force_refresh,
                     auto_confirm=True,
-                    precomputed_changes=associations_changes_from_analysis,
+                    precomputed_changes=precomputed_changes,
                     exclusion_config=exclusion_config
                 )
 
