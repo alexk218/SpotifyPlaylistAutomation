@@ -957,6 +957,9 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
     sync_logger.info(f"Starting incremental master tracks sync for playlist {master_playlist_id}")
     print("Starting incremental master tracks sync analysis...")
 
+    master_tracks_db = get_db_tracks()
+    sync_logger.info(f"Found {len(master_tracks_db)} existing tracks in database")
+
     tracks_to_add = []
     tracks_to_update = []
     tracks_to_delete = []
@@ -974,10 +977,6 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                          f"{len(tracks_to_delete)} to delete, "
                          f"{len(unchanged_tracks) if isinstance(unchanged_tracks, list) else unchanged_tracks} unchanged")
     else:
-        # Get existing tracks from database
-        master_tracks_db = get_db_tracks()
-        sync_logger.info(f"Found {len(master_tracks_db)} existing tracks in database")
-
         # Fetch all tracks from the MASTER playlist
         spotify_client = authenticate_spotify()
         master_tracks_api = fetch_master_tracks(spotify_client, master_playlist_id, force_refresh=force_full_refresh)
