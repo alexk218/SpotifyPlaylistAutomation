@@ -1,0 +1,64 @@
+{
+  "description": "Expected results for playlist operations tests",
+  "expected_analysis_stats": {
+    "total_playlists": 4,
+    "non_empty_playlists": 3,
+    "empty_playlists": 1
+  },
+  "expected_playlists": [
+    {
+      "name": "Test Playlist 1",
+      "id": "test_playlist_1",
+      "track_count": 3,
+      "expected_local_track_count": 3
+    },
+    {
+      "name": "Test Playlist 2",
+      "id": "test_playlist_2",
+      "track_count": 3,
+      "expected_local_track_count": 3
+    },
+    {
+      "name": "Electronic Mix",
+      "id": "electronic_playlist",
+      "track_count": 2,
+      "expected_local_track_count": 2
+    },
+    {
+      "name": "Empty Playlist",
+      "id": "empty_playlist",
+      "track_count": 0,
+      "expected_local_track_count": 0
+    }
+  ],
+  "expected_generation_stats": {
+    "successful_playlists": 3,
+    "failed_playlists": 0,
+    "empty_playlists": 1
+  },
+  "expected_m3u_files": [
+    {
+      "filename": "Test Playlist 1.m3u",
+      "expected_tracks": 3,
+      "location": "root"
+    },
+    {
+      "filename": "Test Playlist 2.m3u",
+      "expected_tracks": 3,
+      "location": "root"
+    },
+    {
+      "filename": "Electronic Mix.m3u",
+      "expected_tracks": 2,
+      "location": "root"
+    }
+  ],
+  "expected_regeneration_results": {
+    "single_playlist_tracks": 3,
+    "file_size_minimum": 100,
+    "success_message_contains": [
+      "Successfully regenerated",
+      "tracks"
+    ]
+  }
+}

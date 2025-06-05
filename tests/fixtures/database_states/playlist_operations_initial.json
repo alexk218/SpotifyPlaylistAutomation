@@ -1,0 +1,131 @@
+{
+  "description": "Initial database state for playlist operations tests",
+  "master_playlist": {
+    "playlist_id": "test_master_playlist",
+    "name": "MASTER",
+    "master_sync_snapshot_id": "",
+    "associations_snapshot_id": ""
+  },
+  "playlists": [
+    {
+      "playlist_id": "test_playlist_1",
+      "name": "Test Playlist 1",
+      "master_sync_snapshot_id": "snapshot_001",
+      "associations_snapshot_id": "assoc_001"
+    },
+    {
+      "playlist_id": "test_playlist_2",
+      "name": "Test Playlist 2",
+      "master_sync_snapshot_id": "snapshot_002",
+      "associations_snapshot_id": "assoc_002"
+    },
+    {
+      "playlist_id": "electronic_playlist",
+      "name": "Electronic Mix",
+      "master_sync_snapshot_id": "snapshot_003",
+      "associations_snapshot_id": "assoc_003"
+    },
+    {
+      "playlist_id": "empty_playlist",
+      "name": "Empty Playlist",
+      "master_sync_snapshot_id": "snapshot_004",
+      "associations_snapshot_id": "assoc_004"
+    }
+  ],
+  "tracks": [
+    {
+      "track_id": "spotify_track_1",
+      "title": "Track 1",
+      "artists": "Artist 1",
+      "album": "Album 1",
+      "added_to_master": "2025-05-31T22:03:46.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "spotify_track_2",
+      "title": "Track 2",
+      "artists": "Artist 2",
+      "album": "Album 2",
+      "added_to_master": "2025-05-30T18:15:30.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "spotify_track_3",
+      "title": "Track 3",
+      "artists": "Artist 3",
+      "album": "Album 3",
+      "added_to_master": "2025-05-29T14:22:15.000Z",
+      "is_local": false
+    },
+    {
+      "track_id": "local_track_1",
+      "title": "Local Track 1",
+      "artists": "Local Artist 1",
+      "album": "Local Album 1",
+      "added_to_master": "2025-05-28T10:30:00.000Z",
+      "is_local": true
+    },
+    {
+      "track_id": "local_track_2",
+      "title": "Local Track 2",
+      "artists": "Local Artist 2",
+      "album": "Local Album 2",
+      "added_to_master": "2025-05-27T16:45:00.000Z",
+      "is_local": true
+    }
+  ],
+  "track_playlist_associations": [
+    {
+      "track_id": "spotify_track_1",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "spotify_track_2",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "spotify_track_3",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "local_track_1",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "local_track_2",
+      "playlist_id": "test_master_playlist"
+    },
+    {
+      "track_id": "spotify_track_1",
+      "playlist_id": "test_playlist_1"
+    },
+    {
+      "track_id": "spotify_track_2",
+      "playlist_id": "test_playlist_1"
+    },
+    {
+      "track_id": "local_track_1",
+      "playlist_id": "test_playlist_1"
+    },
+    {
+      "track_id": "spotify_track_2",
+      "playlist_id": "test_playlist_2"
+    },
+    {
+      "track_id": "spotify_track_3",
+      "playlist_id": "test_playlist_2"
+    },
+    {
+      "track_id": "local_track_2",
+      "playlist_id": "test_playlist_2"
+    },
+    {
+      "track_id": "spotify_track_3",
+      "playlist_id": "electronic_playlist"
+    },
+    {
+      "track_id": "local_track_1",
+      "playlist_id": "electronic_playlist"
+    }
+  ]
+}
