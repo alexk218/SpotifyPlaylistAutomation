@@ -1,11 +1,11 @@
 import json
-import os
 from datetime import datetime
 from pathlib import Path
+
 from sql.core.unit_of_work import UnitOfWork
-from sql.models.track import Track
-from sql.models.playlist import Playlist
 from sql.dto.playlist_info import PlaylistInfo
+from sql.models.playlist import Playlist
+from sql.models.track import Track
 
 
 class DatabaseFixtureLoader:
@@ -85,11 +85,10 @@ class DatabaseFixtureLoader:
         """Get mock Spotify API data in the format expected by fetch_master_tracks."""
         fixture_data = self.load_fixture('spotify_responses', fixture_name)
 
-        # Return data in the format that fetch_master_tracks expects:
         # List of tuples: (track_id, track_title, artists, album, added_at)
         return [
             (
-                track['track_id'],  # This will be None for local tracks
+                track['track_id'],
                 track['title'],
                 track['artists'],
                 track['album'],
@@ -158,7 +157,8 @@ class DatabaseFixtureLoader:
             if 'expected_final_associations' in expected:
                 self._validate_associations_state(uow, expected)
 
-    def _validate_tracks_state(self, uow, expected):
+    @staticmethod
+    def _validate_tracks_state(uow, expected):
         """Validate track data in database."""
         all_tracks = uow.track_repository.get_all()
         actual_track_ids = {track.track_id for track in all_tracks}
@@ -210,7 +210,8 @@ class DatabaseFixtureLoader:
             assert track.album == expected_track['album']
             assert track.is_local == expected_track['is_local']
 
-    def _validate_playlists_state(self, uow, expected):
+    @staticmethod
+    def _validate_playlists_state(uow, expected):
         """Validate playlist data in database."""
         all_playlists = uow.playlist_repository.get_all()
         actual_playlist_ids = {p.playlist_id for p in all_playlists}
@@ -238,7 +239,8 @@ class DatabaseFixtureLoader:
             if 'associations_snapshot_id' in expected_playlist:
                 assert playlist.associations_snapshot_id == expected_playlist['associations_snapshot_id']
 
-    def _validate_associations_state(self, uow, expected):
+    @staticmethod
+    def _validate_associations_state(uow, expected):
         """Validate track-playlist associations in database."""
         # Get all current associations
         all_associations = []
@@ -264,7 +266,8 @@ class DatabaseFixtureLoader:
         assert actual_set == expected_set, \
             f"Associations don't match. Expected: {expected_set}, Got: {actual_set}"
 
-    def _parse_datetime(self, date_string):
+    @staticmethod
+    def _parse_datetime(date_string):
         """Parse datetime string from fixture."""
         if not date_string:
             return None

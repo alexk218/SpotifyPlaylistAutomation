@@ -1,7 +1,7 @@
 {
   "description": "Initial database state for track-playlist associations sync tests",
   "master_playlist": {
-    "playlist_id": "test_master_playlist",
+    "playlist_id": "test_master_playlist_id",
     "name": "MASTER",
     "master_sync_snapshot_id": "",
     "associations_snapshot_id": ""
@@ -49,11 +49,11 @@
   "track_playlist_associations": [
     {
       "track_id": "track_in_changed_playlist",
-      "playlist_id": "test_master_playlist"
+      "playlist_id": "test_master_playlist_id"
     },
     {
       "track_id": "track_to_be_removed",
-      "playlist_id": "test_master_playlist"
+      "playlist_id": "test_master_playlist_id"
     },
     {
       "track_id": "track_to_be_removed",
@@ -61,7 +61,7 @@
     },
     {
       "track_id": "track_to_be_added",
-      "playlist_id": "test_master_playlist"
+      "playlist_id": "test_master_playlist_id"
     }
   ]
 }

@@ -2,9 +2,9 @@
   "description": "Expected results after syncing tracks",
   "expected_stats": {
     "added": 2,
-    "updated": 0,
+    "updated": 1,
     "unchanged": 1,
-    "deleted": 4
+    "deleted": 3
   },
   "expected_final_tracks": [
     {
@@ -27,12 +27,13 @@
       "artists": "MeShow.Rec",
       "album": "Local File",
       "is_local": true
+    },
+    {
+      "track_id": "update_track_id",
+      "title": "TRACK UPDATED",
+      "artists": "ARTISTS UPDATED",
+      "album": "ALBUM UPDATED",
+      "is_local": false
     }
-  ],
-  "expected_deleted_tracks": [
-    "7z5dZ9mvhklOsfWtZYOQ9J",
-    "7zLm8NfYfn4IRd3GF35N3O",
-    "7zNX28H2cf2OKdQn5G5HbP",
-    "local_018e875efa0d7fd2"
   ]
 }
