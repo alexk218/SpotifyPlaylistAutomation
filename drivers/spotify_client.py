@@ -105,7 +105,7 @@ def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) 
     return my_playlists
 
 
-def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=False) -> List[
+def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
     Tuple[str, str, str, str, str, datetime]]:
     """
     Fetch all unique tracks from 'MASTER' playlist.
@@ -113,7 +113,6 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=F
     Args:
         spotify_client: Authenticated Spotify client
         master_playlist_id: ID of the master playlist
-        force_refresh: Whether to force a refresh from the API
 
     Returns:
         List of tuples containing (Uri, TrackId, TrackTitle, Artists, Album, AddedAt)
@@ -146,9 +145,7 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str, force_refresh=F
 
                     spotify_uri = track.get('uri', '')
 
-                    # Check if this is a local file
                     is_local = track.get('is_local', False)
-
                     if is_local:
                         # This is a local file - URI contains the metadata
                         track_id = None  # No track ID for local files

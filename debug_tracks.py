@@ -9,7 +9,7 @@ MASTER_PLAYLIST_ID = os.getenv('MASTER_PLAYLIST_ID')
 
 def find_problematic_tracks():
     spotify_client = authenticate_spotify()
-    tracks = fetch_master_tracks(spotify_client, MASTER_PLAYLIST_ID, force_refresh=True)
+    tracks = fetch_master_tracks(spotify_client, MASTER_PLAYLIST_ID)
 
     print(f"Total tracks: {len(tracks)}")
 
