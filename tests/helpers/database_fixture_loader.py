@@ -156,20 +156,12 @@ class DatabaseFixtureLoader:
                 )
                 uow.track_repository.insert(track)
 
-            # Add track-playlist associations - support both URI and track_id
+            # Add track-playlist associations
             for assoc in combined_data['track_playlist_associations']:
-                if 'uri' in assoc:
-                    # New URI-based association
-                    uow.track_playlist_repository.insert_by_uri(
-                        assoc['uri'],
-                        assoc['playlist_id']
-                    )
-                else:
-                    # Legacy track_id-based association
-                    uow.track_playlist_repository.insert(
-                        assoc['track_id'],
-                        assoc['playlist_id']
-                    )
+                uow.track_playlist_repository.insert_by_uri(
+                    assoc['uri'],
+                    assoc['playlist_id']
+                )
 
     def get_spotify_api_mock_data(self, fixture_name='master_playlist_api_response.json'):
         """Get mock Spotify API data in the format expected by fetch_master_tracks."""
@@ -376,13 +368,7 @@ class DatabaseFixtureLoader:
         all_tracks = uow.track_repository.get_all()
 
         for track in all_tracks:
-            # Use URI-based lookup if available, fallback to track_id
-            if hasattr(uow.track_playlist_repository, 'get_playlist_ids_for_uri') and track.uri:
-                playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_uri(track.uri)
-                identifier = track.uri
-            else:
-                playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_track(track.track_id)
-                identifier = track.track_id
+            playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_uri(track.uri)
 
             for playlist_id in playlist_ids:
                 all_associations.append({

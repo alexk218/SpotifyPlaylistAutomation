@@ -81,54 +81,67 @@
   ],
   "track_playlist_associations": [
     {
+      "uri": "spotify:track:spotify_track_1",
       "track_id": "spotify_track_1",
       "playlist_id": "test_master_playlist"
     },
     {
+      "uri": "spotify:track:spotify_track_2",
       "track_id": "spotify_track_2",
       "playlist_id": "test_master_playlist"
     },
     {
+      "uri": "spotify:track:spotify_track_3",
       "track_id": "spotify_track_3",
       "playlist_id": "test_master_playlist"
     },
     {
+      "uri": "spotify:local:Local+Artist+1:Local+Album+1:local_track_1:427",
       "track_id": "local_track_1",
       "playlist_id": "test_master_playlist"
     },
     {
+      "uri": "spotify:local:Local+Artist+2:Local+Album+2:local_track_2:354",
       "track_id": "local_track_2",
       "playlist_id": "test_master_playlist"
     },
     {
+      "uri": "spotify:track:spotify_track_1",
       "track_id": "spotify_track_1",
       "playlist_id": "test_playlist_1"
     },
     {
+      "uri": "spotify:track:spotify_track_2",
       "track_id": "spotify_track_2",
       "playlist_id": "test_playlist_1"
     },
     {
+      "uri": "spotify:local:Local+Artist+1:Local+Album+1:local_track_1:427",
       "track_id": "local_track_1",
       "playlist_id": "test_playlist_1"
     },
     {
+      "uri": "spotify:track:spotify_track_2",
       "track_id": "spotify_track_2",
       "playlist_id": "test_playlist_2"
     },
     {
+      "uri": "spotify:track:spotify_track_3",
       "track_id": "spotify_track_3",
       "playlist_id": "test_playlist_2"
     },
     {
+      "uri": "spotify:local:Local+Artist+2:Local+Album+2:local_track_2:354",
       "track_id": "local_track_2",
       "playlist_id": "test_playlist_2"
     },
     {
+      "uri": "spotify:track:spotify_track_3",
       "track_id": "spotify_track_3",
       "playlist_id": "electronic_playlist"
     },
     {
+      "uri": "spotify:local:Local+Artist+1:Local+Album+1:local_track_1:427",
       "track_id": "local_track_1",
       "playlist_id": "electronic_playlist"
     }
