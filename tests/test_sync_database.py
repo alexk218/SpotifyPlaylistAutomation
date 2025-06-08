@@ -196,13 +196,13 @@ class TestSyncDatabase:
         spotify_data = self.fixture_loader.get_spotify_associations_mock_data()
 
         with patch('helpers.sync_helper.fetch_playlists') as mock_fetch_playlists, \
-                patch('helpers.sync_helper.get_track_ids_for_playlist') as mock_get_tracks, \
+                patch('helpers.sync_helper.get_track_uris_for_playlist') as mock_get_tracks, \
                 patch('helpers.sync_helper.authenticate_spotify') as mock_auth:
             # Configure mocks
             mock_fetch_playlists.return_value = spotify_data['changed_playlists'] + spotify_data['unchanged_playlists']
             mock_auth.return_value = MagicMock()
 
-            # Mock get_track_ids_for_playlist to return different results based on playlist
+            # Mock get_track_uris_for_playlist to return different results based on playlist
             def mock_get_tracks_side_effect(spotify_client, playlist_id, force_refresh=False):
                 return spotify_data['playlist_track_associations'].get(playlist_id, [])
 
@@ -250,7 +250,7 @@ class TestSyncDatabase:
             mock_fetch_playlists.return_value = spotify_data['changed_playlists'] + spotify_data['unchanged_playlists']
             mock_auth.return_value = MagicMock()
 
-            # Mock get_track_ids_for_playlist to return different results based on playlist
+            # Mock get_track_uris_for_playlist to return different results based on playlist
             def mock_get_track_uris_side_effect(spotify_client, playlist_id, force_refresh=False):
                 return spotify_data['playlist_track_associations'].get(playlist_id, [])
 
@@ -304,7 +304,7 @@ class TestSyncDatabase:
         # Mock all Spotify API responses
         with patch('helpers.sync_helper.fetch_playlists') as mock_fetch_playlists, \
                 patch('helpers.sync_helper.fetch_master_tracks') as mock_fetch_tracks, \
-                patch('helpers.sync_helper.get_track_ids_for_playlist') as mock_get_tracks, \
+                patch('helpers.sync_helper.get_track_uris_for_playlist') as mock_get_tracks, \
                 patch('helpers.sync_helper.authenticate_spotify') as mock_auth:
             mock_auth.return_value = MagicMock()
             mock_fetch_playlists.return_value = self.fixture_loader.get_spotify_playlists_mock_data()
@@ -569,7 +569,7 @@ class TestSyncDatabase:
         # Mock comprehensive Spotify responses
         with patch('helpers.sync_helper.fetch_playlists') as mock_fetch_playlists, \
                 patch('helpers.sync_helper.fetch_master_tracks') as mock_fetch_tracks, \
-                patch('helpers.sync_helper.get_track_ids_for_playlist') as mock_get_tracks, \
+                patch('helpers.sync_helper.get_track_uris_for_playlist') as mock_get_tracks, \
                 patch('helpers.sync_helper.authenticate_spotify') as mock_auth:
             mock_auth.return_value = MagicMock()
             mock_fetch_playlists.return_value = self.fixture_loader.get_spotify_playlists_mock_data()

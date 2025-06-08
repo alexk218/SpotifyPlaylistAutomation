@@ -433,33 +433,13 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         for track_data in master_tracks_api:
             uri, track_id, track_title, artist_names, album_name, added_at = track_data
 
-            # Check if this is a local file (track_id is None)
             is_local = track_id is None
-            spotify_uri = None
 
-            if is_local:
-                # For local files, create Spotify URI from metadata
-                spotify_uri = SpotifyUriHelper.create_local_uri(
-                    artist=artist_names or '',
-                    album=album_name or '',
-                    title=track_title or '',
-                    duration=None  # We don't have duration from fetch_master_tracks
-                )
-
-                sync_logger.info(f"Processing local file: '{track_title}' by '{artist_names}'")
-                sync_logger.info(f"Generated URI: {spotify_uri}")
-                print(f"Processing local file: '{track_title}' by '{artist_names}'")
-                print(f"Generated URI: {spotify_uri}")
-            else:
-                # For regular tracks, create URI from track_id
-                spotify_uri = SpotifyUriHelper.create_track_uri(track_id)
-
-            # Add to master track URIs
-            master_track_uris.add(spotify_uri)
+            master_track_uris.add(uri)
 
             # Check if track exists in database
-            if spotify_uri in master_tracks_db:
-                existing_track = master_tracks_db[spotify_uri]
+            if uri in master_tracks_db:
+                existing_track = master_tracks_db[uri]
 
                 # Check if track details have changed
                 if (existing_track.title != track_title or
@@ -468,7 +448,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
                     # Mark for update
                     tracks_to_update.append({
-                        'uri': spotify_uri,
+                        'uri': uri,
                         'track_id': track_id,  # Keep for backward compatibility
                         'title': track_title,
                         'artists': artist_names,
@@ -479,11 +459,11 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                         'old_album': existing_track.album
                     })
                 else:
-                    unchanged_tracks.append(spotify_uri)
+                    unchanged_tracks.append(uri)
             else:
                 # Mark for addition
                 tracks_to_add.append({
-                    'uri': spotify_uri,
+                    'uri': uri,
                     'track_id': track_id,  # Keep for backward compatibility
                     'title': track_title,
                     'artists': artist_names,
@@ -494,10 +474,10 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
         # Find tracks that are in the database but not in the master playlist
         tracks_to_delete = []
-        for spotify_uri, track in master_tracks_db.items():
-            if spotify_uri not in master_track_uris:
+        for uri, track in master_tracks_db.items():
+            if uri not in master_track_uris:
                 tracks_to_delete.append({
-                    'uri': spotify_uri,
+                    'uri': uri,
                     'track_id': track.track_id,  # May be None for local files
                     'title': track.title,
                     'artists': track.artists,
@@ -551,30 +531,30 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
     with UnitOfWork() as uow:
         # Delete tracks first
         for track_data in tracks_to_delete:
-            spotify_uri = track_data['uri']
+            uri = track_data['uri']
 
             # First remove all playlist associations for this track
             try:
-                playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_uri(spotify_uri)
+                playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_uri(uri)
                 for playlist_id in playlist_ids:
-                    uow.track_playlist_repository.delete_by_uri(spotify_uri, playlist_id)
-                sync_logger.info(f"Removed playlist associations for track: {track_data['title']} (URI: {spotify_uri})")
+                    uow.track_playlist_repository.delete_by_uri(uri, playlist_id)
+                sync_logger.info(f"Removed playlist associations for track: {track_data['title']} (URI: {uri})")
             except Exception as e:
-                sync_logger.error(f"Error removing playlist associations for track {spotify_uri}: {e}")
-                print(f"Warning: Error removing playlist associations for track {spotify_uri}")
+                sync_logger.error(f"Error removing playlist associations for track {uri}: {e}")
+                print(f"Warning: Error removing playlist associations for track {uri}")
 
             # Then delete the track itself
             try:
-                uow.track_repository.delete_by_uri(spotify_uri)
+                uow.track_repository.delete_by_uri(uri)
                 deleted_count += 1
-                sync_logger.info(f"Deleted track: {track_data['title']} (URI: {spotify_uri})")
+                sync_logger.info(f"Deleted track: {track_data['title']} (URI: {uri})")
             except Exception as e:
-                sync_logger.error(f"Error deleting track {spotify_uri}: {e}")
-                print(f"Warning: Error deleting track {spotify_uri}")
+                sync_logger.error(f"Error deleting track {uri}: {e}")
+                print(f"Warning: Error deleting track {uri}")
 
         # Add new tracks
         for track_data in tracks_to_add:
-            spotify_uri = track_data['uri']
+            uri = track_data['uri']
             track_id = track_data['id']  # May be None for local files
             track_title = track_data['title']
             artist_names = track_data['artists']
@@ -604,17 +584,17 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                                         added_at = datetime.strptime(track_data['added_at'], '%Y-%m-%d %H:%M:%S')
                                     except ValueError:
                                         sync_logger.warning(
-                                            f"Could not parse date: {track_data['added_at']} for track {spotify_uri}")
+                                            f"Could not parse date: {track_data['added_at']} for track {uri}")
                                         added_at = None
 
             # For newly added tracks with no added_at, use current time
             if added_at is None:
                 added_at = datetime.now()
-                sync_logger.debug(f"Using current time for AddedToMaster: {added_at} for track {spotify_uri}")
+                sync_logger.debug(f"Using current time for AddedToMaster: {added_at} for track {uri}")
 
             # Create new track with URI as primary identifier
             new_track = Track(
-                uri=spotify_uri,  # Primary identifier
+                uri=uri,  # Primary identifier
                 track_id=track_id,  # May be None for local files, keep for compatibility
                 title=track_title,
                 artists=artist_names,
@@ -624,11 +604,11 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             )
             uow.track_repository.insert(new_track)
             added_count += 1
-            sync_logger.info(f"Added new track: {track_title} (URI: {spotify_uri})")
+            sync_logger.info(f"Added new track: {track_title} (URI: {uri})")
 
         # Update existing tracks
         for track_data in tracks_to_update:
-            spotify_uri = track_data['uri']
+            uri = track_data['uri']
             track_id = track_data['id']
             track_title = track_data['title']
             artist_names = track_data['artists']
@@ -636,7 +616,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             is_local = track_data['is_local']
 
             # Get the existing track by URI
-            existing_track = master_tracks_db[spotify_uri]
+            existing_track = master_tracks_db[uri]
 
             # Update the track
             existing_track.title = track_title
@@ -647,7 +627,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
 
             uow.track_repository.update(existing_track)
             updated_count += 1
-            sync_logger.info(f"Updated track: {track_title} (URI: {spotify_uri})")
+            sync_logger.info(f"Updated track: {track_title} (URI: {uri})")
 
     # Log final results
     print(f"\nTrack sync complete: {added_count} added, {updated_count} updated, "
