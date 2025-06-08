@@ -900,8 +900,7 @@ def api_analyze_tracks():
 
         # Get analysis without executing
         tracks_to_add, tracks_to_update, unchanged_tracks = analyze_tracks_changes(
-            master_playlist_id,
-            force_full_refresh=force_refresh
+            master_playlist_id
         )
 
         # Include ALL tracks for display
@@ -1190,7 +1189,7 @@ def api_sync_database():
                 if not is_confirmed:
                     # Analyze tracks
                     tracks_to_add, tracks_to_update, tracks_unchanged = analyze_tracks_changes(
-                        master_playlist_id, force_full_refresh=force_refresh
+                        master_playlist_id
                     )
 
                     # Format tracks for display - ALL tracks, not just samples
