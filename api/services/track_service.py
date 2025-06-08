@@ -2,13 +2,18 @@ import os
 import re
 import subprocess
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any, Tuple
 
 import Levenshtein
 from mutagen.id3 import ID3, ID3NoHeaderError
 from mutagen.mp3 import MP3
 from sql.core.unit_of_work import UnitOfWork
 from helpers.file_helper import embed_track_id
+from utils.logger import setup_logger
+
+mapping_logger = setup_logger('file_mapping', 'sql', 'file_mapping.log')
+
+SUPPORTED_AUDIO_EXTENSIONS = {'.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.wma'}
 
 
 def search_tracks(master_tracks_dir, query):
@@ -284,6 +289,477 @@ def fuzzy_match_track(file_name, current_track_id=None):
         "original_title": original_title,
         "matches": top_matches
     }
+
+
+def orchestrate_file_mapping(master_tracks_dir: str, confirmed: bool, precomputed_changes: Dict[str, Any],
+                             confidence_threshold: float, user_selections: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Handle file mapping operations with consistent response structure.
+
+    Args:
+        master_tracks_dir: Directory containing audio files
+        confirmed: Whether the operation is confirmed
+        precomputed_changes: Optional precomputed analysis results
+        confidence_threshold: Minimum confidence for auto-matching
+        user_selections: List of user-selected file/track mappings
+
+    Returns:
+        Dictionary with operation results
+    """
+    if not confirmed:
+        # Analysis phase - return files that need mapping
+        analysis_result = analyze_file_mappings(master_tracks_dir, confidence_threshold)
+
+        return {
+            "success": True,
+            "stage": "analysis",
+            "message": f"Found {analysis_result['files_without_mappings']} files without mappings. "
+                       f"{len(analysis_result['auto_matched_files'])} can be auto-matched, "
+                       f"{len(analysis_result['files_requiring_user_input'])} require user selection.",
+            "needs_confirmation": analysis_result['needs_confirmation'],
+            "requires_user_selection": analysis_result['requires_user_selection'],
+            "details": analysis_result
+        }
+    else:
+        # Execution phase - create the mappings
+        creation_result = create_file_mappings_batch(master_tracks_dir, user_selections, precomputed_changes)
+
+        return {
+            "success": True,
+            "stage": "mapping_complete",
+            "message": f"File mapping completed: {creation_result['successful_mappings']} successful, "
+                       f"{creation_result['failed_mappings']} failed.",
+            "successful_mappings": creation_result['successful_mappings'],
+            "failed_mappings": creation_result['failed_mappings'],
+            "results": creation_result['results'],
+            "total_processed": creation_result['total_processed']
+        }
+
+
+def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 0.75) -> Dict[str, Any]:
+    """
+    Analyze which files need mapping to Spotify tracks.
+
+    Args:
+        master_tracks_dir: Directory containing audio files
+        confidence_threshold: Minimum confidence for auto-matching
+
+    Returns:
+        Dictionary with analysis results
+    """
+    mapping_logger.info(f"Starting file mapping analysis for directory: {master_tracks_dir}")
+
+    total_files = 0
+    files_with_existing_mappings = 0
+    files_without_mappings = []
+    auto_matched_files = []
+    files_requiring_user_input = []
+
+    # Get all tracks from database
+    with UnitOfWork() as uow:
+        all_tracks = uow.track_repository.get_all()
+        mapping_logger.info(f"Found {len(all_tracks)} tracks in database")
+
+        # Separate local tracks and regular tracks for different matching strategies
+        local_tracks = [track for track in all_tracks if track.is_local_file()]
+        regular_tracks = [track for track in all_tracks if not track.is_local_file()]
+
+        mapping_logger.info(f"Local tracks: {len(local_tracks)}, Regular tracks: {len(regular_tracks)}")
+
+    # Scan all audio files in the directory
+    mapping_logger.info("Scanning audio files...")
+    for root, _, files in os.walk(master_tracks_dir):
+        for file in files:
+            # Check if it's a supported audio file
+            if not _is_supported_audio_file(file):
+                continue
+
+            total_files += 1
+            file_path = os.path.join(root, file)
+            filename_no_ext = os.path.splitext(file)[0]
+
+            # Check if file already has a mapping
+            with UnitOfWork() as uow:
+                existing_mapping = uow.file_track_mapping_repository.get_uri_by_file_path(file_path)
+
+            if existing_mapping:
+                files_with_existing_mappings += 1
+                mapping_logger.debug(f"File already mapped: {file} -> {existing_mapping}")
+                continue
+
+            # File needs mapping - determine best match
+            best_match = _find_best_match_for_file(file, filename_no_ext, local_tracks, regular_tracks)
+
+            if best_match:
+                if best_match['confidence'] >= confidence_threshold:
+                    # Auto-match high confidence files
+                    auto_matched_files.append({
+                        'file_path': file_path,
+                        'filename': file,
+                        'uri': best_match['uri'],
+                        'confidence': best_match['confidence'],
+                        'match_type': best_match['match_type'],
+                        'track_info': best_match['track_info']
+                    })
+                    mapping_logger.info(
+                        f"Auto-matched: {file} -> {best_match['track_info']} (confidence: {best_match['confidence']:.2f})")
+                else:
+                    # Requires user input
+                    files_requiring_user_input.append({
+                        'file_path': file_path,
+                        'filename': file,
+                        'potential_matches': best_match.get('all_matches', [best_match]),
+                        'top_match': best_match
+                    })
+            else:
+                # No matches found
+                files_requiring_user_input.append({
+                    'file_path': file_path,
+                    'filename': file,
+                    'potential_matches': [],
+                    'top_match': None
+                })
+
+            files_without_mappings.append(file)
+
+    # Log summary
+    mapping_logger.info(f"Analysis complete:")
+    mapping_logger.info(f"  Total files: {total_files}")
+    mapping_logger.info(f"  Files with existing mappings: {files_with_existing_mappings}")
+    mapping_logger.info(f"  Files without mappings: {len(files_without_mappings)}")
+    mapping_logger.info(f"  Auto-matched files: {len(auto_matched_files)}")
+    mapping_logger.info(f"  Files requiring user input: {len(files_requiring_user_input)}")
+
+    return {
+        "total_files": total_files,
+        "files_with_existing_mappings": files_with_existing_mappings,
+        "files_without_mappings": len(files_without_mappings),
+        "auto_matched_files": auto_matched_files,
+        "files_requiring_user_input": files_requiring_user_input,
+        "needs_confirmation": len(auto_matched_files) > 0 or len(files_requiring_user_input) > 0,
+        "requires_user_selection": len(files_requiring_user_input) > 0
+    }
+
+
+def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dict[str, Any]],
+                               precomputed_changes: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    Create file mappings in the database based on user selections and auto-matches.
+
+    Args:
+        master_tracks_dir: Directory containing audio files
+        user_selections: List of user-selected file/track URI pairs
+        precomputed_changes: Optional precomputed analysis results
+
+    Returns:
+        Dictionary with creation results
+    """
+    mapping_logger.info("Starting batch file mapping creation")
+
+    successful_mappings = 0
+    failed_mappings = 0
+    results = []
+
+    # Process auto-matched files from precomputed changes if available
+    auto_matched_files = []
+    if precomputed_changes and 'auto_matched_files' in precomputed_changes:
+        auto_matched_files = precomputed_changes['auto_matched_files']
+        mapping_logger.info(f"Processing {len(auto_matched_files)} auto-matched files from analysis")
+
+    # Combine auto-matches and user selections
+    all_mappings = []
+
+    # Add auto-matched files
+    for auto_match in auto_matched_files:
+        all_mappings.append({
+            'file_path': auto_match['file_path'],
+            'filename': auto_match['filename'],
+            'uri': auto_match['uri'],
+            'confidence': auto_match['confidence'],
+            'source': 'auto_match'
+        })
+
+    # Add user selections
+    for selection in user_selections:
+        file_path = selection.get('file_path')
+        if not file_path:
+            # Try to construct file path from filename if not provided
+            filename = selection.get('filename')
+            if filename:
+                file_path = _find_file_path_in_directory(filename, master_tracks_dir)
+
+        if file_path and selection.get('uri'):
+            all_mappings.append({
+                'file_path': file_path,
+                'filename': selection.get('filename', os.path.basename(file_path)),
+                'uri': selection['uri'],
+                'confidence': selection.get('confidence', 0.0),
+                'source': 'user_selection'
+            })
+
+    mapping_logger.info(f"Processing {len(all_mappings)} total mappings")
+
+    # Create mappings in database
+    with UnitOfWork() as uow:
+        for mapping in all_mappings:
+            try:
+                file_path = mapping['file_path']
+                uri = mapping['uri']
+                filename = mapping['filename']
+
+                # Verify file exists
+                if not os.path.exists(file_path):
+                    failed_mappings += 1
+                    results.append({
+                        'filename': filename,
+                        'uri': uri,
+                        'success': False,
+                        'reason': 'File not found'
+                    })
+                    mapping_logger.error(f"File not found: {file_path}")
+                    continue
+
+                # Verify URI exists in tracks table
+                track = uow.track_repository.get_by_uri(uri)
+                if not track:
+                    failed_mappings += 1
+                    results.append({
+                        'filename': filename,
+                        'uri': uri,
+                        'success': False,
+                        'reason': 'Track URI not found in database'
+                    })
+                    mapping_logger.error(f"Track URI not found in database: {uri}")
+                    continue
+
+                # Check if mapping already exists
+                existing_uri = uow.file_track_mapping_repository.get_uri_by_file_path(file_path)
+                if existing_uri:
+                    if existing_uri == uri:
+                        # Same mapping already exists - consider it successful
+                        successful_mappings += 1
+                        results.append({
+                            'filename': filename,
+                            'uri': uri,
+                            'success': True,
+                            'reason': 'Mapping already exists'
+                        })
+                        mapping_logger.debug(f"Mapping already exists: {filename} -> {uri}")
+                        continue
+                    else:
+                        # Different mapping exists - this is a conflict
+                        failed_mappings += 1
+                        results.append({
+                            'filename': filename,
+                            'uri': uri,
+                            'success': False,
+                            'reason': f'File already mapped to different track: {existing_uri}'
+                        })
+                        mapping_logger.warning(f"Mapping conflict for {filename}: existing={existing_uri}, new={uri}")
+                        continue
+
+                # Create the mapping
+                uow.file_track_mapping_repository.add_mapping_by_uri(file_path, uri)
+                successful_mappings += 1
+                results.append({
+                    'filename': filename,
+                    'uri': uri,
+                    'success': True,
+                    'confidence': mapping.get('confidence', 0.0),
+                    'source': mapping['source']
+                })
+
+                mapping_logger.info(f"Created mapping: {filename} -> {uri} (source: {mapping['source']})")
+
+            except Exception as e:
+                failed_mappings += 1
+                results.append({
+                    'filename': mapping.get('filename', 'unknown'),
+                    'uri': mapping.get('uri', 'unknown'),
+                    'success': False,
+                    'reason': f'Database error: {str(e)}'
+                })
+                mapping_logger.error(f"Failed to create mapping for {mapping.get('filename')}: {e}")
+
+    mapping_logger.info(f"Batch mapping creation complete: {successful_mappings} successful, {failed_mappings} failed")
+
+    return {
+        'successful_mappings': successful_mappings,
+        'failed_mappings': failed_mappings,
+        'results': results,
+        'total_processed': len(all_mappings)
+    }
+
+
+def _is_supported_audio_file(filename: str) -> bool:
+    """Check if file is a supported audio format."""
+    return os.path.splitext(filename)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS
+
+
+def _find_best_match_for_file(filename: str, filename_no_ext: str, local_tracks: List, regular_tracks: List) -> dict[
+                                                                                                                    str, Any] | None:
+    """
+    Find the best match for a file among local and regular tracks.
+
+    Returns:
+        Dictionary with match information or None if no good match found
+    """
+    # First try exact matching with local tracks
+    local_match = _find_exact_local_match(filename, filename_no_ext, local_tracks)
+    if local_match:
+        return local_match
+
+    # Then try fuzzy matching with regular tracks
+    fuzzy_match = _find_fuzzy_match(filename_no_ext, regular_tracks)
+    if fuzzy_match:
+        return fuzzy_match
+
+    return None
+
+
+def _find_exact_local_match(filename: str, filename_no_ext: str, local_tracks: List) -> Dict[str, Any]:
+    """Find exact matches with local tracks."""
+    for track in local_tracks:
+        # Try matching with track title
+        if track.title and (track.title == filename or track.title == filename_no_ext):
+            return {
+                'uri': track.uri,
+                'confidence': 1.0,
+                'match_type': 'exact_local',
+                'track_info': f"{track.artists} - {track.title}",
+                'artists': track.artists,
+                'title': track.title,
+                'album': track.album or 'Local Files'
+            }
+
+        # Also try matching with filename variations (normalize spaces, special chars)
+        normalized_filename = _normalize_for_matching(filename_no_ext)
+        normalized_title = _normalize_for_matching(track.title or '')
+
+        if normalized_title and normalized_filename == normalized_title:
+            return {
+                'uri': track.uri,
+                'confidence': 0.95,  # Slightly lower for normalized match
+                'match_type': 'normalized_local',
+                'track_info': f"{track.artists} - {track.title}",
+                'artists': track.artists,
+                'title': track.title,
+                'album': track.album or 'Local Files'
+            }
+
+    return None
+
+
+def _find_fuzzy_match(filename_no_ext: str, regular_tracks: List, max_matches: int = 8) -> Dict[str, Any]:
+    """Find fuzzy matches with regular Spotify tracks."""
+    # Extract artist and title from filename
+    artist, title = _extract_artist_title_from_filename(filename_no_ext)
+
+    matches = []
+
+    for track in regular_tracks:
+        confidence = _calculate_track_confidence(artist, title, track)
+
+        if confidence >= 0.4:  # Lower threshold for collecting potential matches
+            matches.append({
+                'uri': track.uri,
+                'confidence': confidence,
+                'match_type': 'fuzzy',
+                'track_info': f"{track.artists} - {track.title}",
+                'artists': track.artists,
+                'title': track.title,
+                'album': track.album
+            })
+
+    if not matches:
+        return None
+
+    # Sort by confidence and take top matches
+    matches.sort(key=lambda x: x['confidence'], reverse=True)
+    top_matches = matches[:max_matches]
+
+    best_match = matches[0]
+    best_match['all_matches'] = top_matches
+
+    return best_match
+
+
+def _extract_artist_title_from_filename(filename: str) -> Tuple[str, str]:
+    """Extract artist and title from filename using common patterns."""
+    # Try standard "Artist - Title" format first
+    if " - " in filename:
+        parts = filename.split(" - ", 1)
+        return parts[0].strip(), parts[1].strip()
+
+    # If no separator, treat whole filename as title
+    return "", filename.strip()
+
+
+def _calculate_track_confidence(local_artist: str, local_title: str, track) -> float:
+    """Calculate confidence score for track match."""
+    # Normalize strings for comparison
+    normalized_local_artist = local_artist.lower().replace('&', 'and') if local_artist else ""
+    normalized_local_title = local_title.lower()
+
+    db_artists = track.artists.lower().replace('&', 'and')
+    db_title = track.title.lower()
+
+    # Calculate artist similarity
+    artist_ratio = 0.0
+    if normalized_local_artist:
+        # Split database artists and find best match
+        db_artist_list = [a.strip() for a in db_artists.split(',')]
+        expanded_artists = []
+        for db_artist in db_artist_list:
+            if ' and ' in db_artist:
+                expanded_artists.extend([a.strip() for a in db_artist.split(' and ')])
+            else:
+                expanded_artists.append(db_artist)
+
+        artist_ratios = [Levenshtein.ratio(normalized_local_artist, db_artist) for db_artist in expanded_artists]
+        artist_ratio = max(artist_ratios) if artist_ratios else 0
+
+        # Perfect match bonus
+        if any(normalized_local_artist == db_artist for db_artist in expanded_artists):
+            artist_ratio = 1.0
+
+    # Calculate title similarity
+    clean_local_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_local_title).strip()
+    clean_db_title = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
+
+    title_ratio = Levenshtein.ratio(clean_local_title, clean_db_title)
+
+    # Perfect match bonus
+    if clean_local_title == clean_db_title:
+        title_ratio = 1.0
+
+    # Calculate weighted overall ratio
+    if normalized_local_artist:
+        overall_ratio = (artist_ratio * 0.6 + title_ratio * 0.4)
+    else:
+        overall_ratio = title_ratio * 0.9
+
+    return overall_ratio
+
+
+def _normalize_for_matching(text: str) -> str:
+    """Normalize text for matching by removing special characters and extra spaces."""
+    if not text:
+        return ""
+
+    # Remove special characters and normalize spaces
+    normalized = re.sub(r'[^\w\s]', '', text.lower())
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+
+    return normalized
+
+
+def _find_file_path_in_directory(filename: str, directory: str) -> str:
+    """Find the full path of a file in the directory tree."""
+    for root, _, files in os.walk(directory):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
 
 
 def update_track_id(file_path, new_track_id):

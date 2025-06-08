@@ -48,6 +48,41 @@ def fuzzy_match_track():
         }), 500
 
 
+@bp.route('/mapping', methods=['POST'])
+def manage_file_mappings():
+    """Manage file-to-track mappings (analysis and creation)."""
+    master_tracks_dir = request.json.get('masterTracksDir') or current_app.config['MASTER_TRACKS_DIRECTORY_SSD']
+    confirmed = request.json.get('confirmed', False)
+    precomputed_changes = request.json.get('precomputed_changes_from_analysis')
+    confidence_threshold = request.json.get('confidence_threshold', 0.75)
+    user_selections = request.json.get('user_selections', [])
+
+    if not master_tracks_dir:
+        return jsonify({
+            "success": False,
+            "message": "Master tracks directory not specified"
+        }), 400
+
+    try:
+        result = track_service.orchestrate_file_mapping(
+            master_tracks_dir,
+            confirmed,
+            precomputed_changes,
+            confidence_threshold,
+            user_selections
+        )
+        return jsonify(result)
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error managing file mappings: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
 @bp.route('/metadata', methods=['PUT'])
 def update_track_id():
     """Update the track ID in a file's metadata."""

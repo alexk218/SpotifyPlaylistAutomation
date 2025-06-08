@@ -25,7 +25,7 @@ class FileTrackMappingRepository:
             os.path.normpath(file_path),
             os.path.basename(file_path),
             file_hash,
-            spotify_uri,  # Store URI instead of TrackId
+            spotify_uri,
             file_stats.st_size,
             datetime.fromtimestamp(file_stats.st_mtime)
         ))
