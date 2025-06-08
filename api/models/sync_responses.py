@@ -1,6 +1,3 @@
-"""
-Standardized response models for sync operations.
-"""
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 
@@ -87,11 +84,7 @@ class SyncResponse:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        result = asdict(self)
-        # Convert details to dict properly
-        result['details'] = asdict(self.details)
-        result['stats'] = asdict(self.stats)
-        return result
+        return asdict(self)
 
 
 def create_analysis_response(
@@ -255,6 +248,7 @@ def format_playlist_item(playlist_data: Dict[str, Any]) -> Dict[str, Any]:
 def format_track_item(track_data: Dict[str, Any]) -> Dict[str, Any]:
     """Format track data for consistent API responses."""
     return {
+        "uri": track_data.get('uri'),
         "id": track_data.get('id'),
         "artists": track_data.get('artists', 'Unknown Artist'),
         "title": track_data.get('title', 'Unknown Title'),
@@ -271,6 +265,7 @@ def format_track_item(track_data: Dict[str, Any]) -> Dict[str, Any]:
 def format_association_item(association_data: Dict[str, Any]) -> Dict[str, Any]:
     """Format association data for consistent API responses."""
     return {
+        "uri": association_data.get('uri'),
         "track_id": association_data.get('track_id'),
         "track_info": association_data.get('track_info'),
         "title": association_data.get('title'),

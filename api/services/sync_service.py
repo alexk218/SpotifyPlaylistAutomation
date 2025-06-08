@@ -241,9 +241,9 @@ def handle_playlists_sync(force_refresh, is_confirmed, precomputed_changes, excl
         )
 
         details = PlaylistSyncDetails(
-            items_to_add=formatted_to_add[:20],  # Preview only
-            items_to_update=formatted_to_update[:20],
-            items_to_delete=formatted_to_delete[:20],
+            items_to_add=formatted_to_add,
+            items_to_update=formatted_to_update,
+            items_to_delete=formatted_to_delete,
             total_items_to_add=added_count,
             total_items_to_update=updated_count,
             total_items_to_delete=deleted_count
@@ -290,9 +290,9 @@ def handle_tracks_sync(master_playlist_id, force_refresh, is_confirmed, precompu
         )
 
         details = TrackSyncDetails(
-            items_to_add=formatted_to_add[:20],  # Preview only
-            items_to_update=formatted_to_update[:20],
-            items_to_delete=formatted_to_delete[:20],
+            items_to_add=formatted_to_add,
+            items_to_update=formatted_to_update,
+            items_to_delete=formatted_to_delete,
             total_items_to_add=len(tracks_to_add),
             total_items_to_update=len(tracks_to_update),
             total_items_to_delete=len(tracks_to_delete)
@@ -343,7 +343,7 @@ def handle_associations_sync(master_playlist_id, force_refresh, is_confirmed, pr
             items_to_add=[],  # Associations don't have simple "items to add"
             items_to_update=[],
             items_to_delete=[],
-            tracks_with_changes=formatted_changes[:20],  # Preview only
+            tracks_with_changes=formatted_changes,
             changed_playlists=associations_changes.get('changed_playlists', []),
             associations_to_add=associations_changes['associations_to_add'],
             associations_to_remove=associations_changes['associations_to_remove'],
