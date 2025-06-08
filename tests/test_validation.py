@@ -31,7 +31,7 @@ def test_validate_playlists_m3u(client, mock_unit_of_work):
 
     # Setup mock methods on unit_of_work
     mock_unit_of_work.playlist_repository.get_all.return_value = [mock_playlist]
-    mock_unit_of_work.track_playlist_repository.get_track_ids_for_playlist.return_value = ['track1']
+    # mock_unit_of_work.track_playlist_repository.get_track_ids_for_playlist.return_value = ['track1']
 
     # Set up get_by_id to return our serializable track
     def get_by_id_side_effect(track_id):

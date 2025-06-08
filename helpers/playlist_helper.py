@@ -65,7 +65,6 @@ def load_exclusion_config(config_override=None):
         return config_override
 
     # Load default config from file
-    project_root = Path(__file__).resolve().parent.parent
     config_path = project_root / 'exclusion_config.json'
 
     try:

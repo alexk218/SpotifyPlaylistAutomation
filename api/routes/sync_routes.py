@@ -77,7 +77,7 @@ def sync_database():
             exclusion_config,
             stage
         )
-        return jsonify(result)
+        return jsonify(result) # returns SyncResponse.to_dict()
     except Exception as e:
         error_str = traceback.format_exc()
         print(f"Error in sync_database: {e}")

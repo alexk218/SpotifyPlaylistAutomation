@@ -2,6 +2,7 @@
   "description": "Spotify API response for MASTER playlist - API data returned and formatted by fetch_master_tracks",
   "api_tracks": [
     {
+      "uri": "spotify:track:track_stays_unchanged",
       "track_id": "track_stays_unchanged",
       "title": "Track That Stays Unchanged",
       "artists": "Unchanged Artist",
@@ -9,6 +10,7 @@
       "added_at": "2025-05-31T22:03:46Z"
     },
     {
+      "uri": "spotify:track:track_to_be_updated",
       "track_id": "track_to_be_updated",
       "title": "Track With Updated Title",
       "artists": "Updated Artist Name",
@@ -16,6 +18,7 @@
       "added_at": "2024-09-30T19:16:32Z"
     },
     {
+      "uri": "spotify:track:track_added_from_api",
       "track_id": "track_added_from_api",
       "title": "New Track From API",
       "artists": "New API Artist",
@@ -23,7 +26,8 @@
       "added_at": "2025-06-01T10:00:00Z"
     },
     {
-      "track_id": "local_track_existing",
+      "uri": "spotify:local:Local+Artist:Local+Album:Existing+Local+Track:446",
+      "track_id": null,
       "title": "Existing Local Track",
       "artists": "Local Artist",
       "album": "Local Album",
@@ -31,6 +35,7 @@
       "is_local": true
     },
     {
+      "uri": "spotify:local:New+Local+Artist:New+Local+Album:New+Local+Track+From+API:324",
       "track_id": null,
       "title": "New Local Track From API",
       "artists": "New Local Artist",

@@ -165,3 +165,15 @@ def get_db_tracks() -> Dict[str, Track]:
     with UnitOfWork() as uow:
         tracks = uow.track_repository.get_all()
         return {track.track_id: track for track in tracks}
+
+
+def get_db_tracks_by_uri() -> Dict[str, Track]:
+    """
+    Get all tracks from the database indexed by URI.
+
+    Returns:
+        Dictionary of uri to Track objects
+    """
+    with UnitOfWork() as uow:
+        tracks = uow.track_repository.get_all()
+        return {track.uri: track for track in tracks if track.uri}

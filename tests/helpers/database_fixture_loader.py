@@ -56,15 +56,16 @@ class DatabaseFixtureLoader:
             print(f"Loading fixture: {filename}")
             fixture_data = self.load_fixture('database_states', filename)
 
-            # Combine tracks (avoid duplicates by track_id)
+            # Combine tracks (avoid duplicates by URI, with fallback to track_id)
             if 'tracks' in fixture_data:
-                existing_track_ids = {track['track_id'] for track in combined_data['tracks']}
+                existing_uris = {track.get('uri', track.get('track_id')) for track in combined_data['tracks']}
                 for track in fixture_data['tracks']:
-                    if track['track_id'] not in existing_track_ids:
+                    track_identifier = track.get('uri', track.get('track_id'))
+                    if track_identifier not in existing_uris:
                         combined_data['tracks'].append(track)
-                        existing_track_ids.add(track['track_id'])
+                        existing_uris.add(track_identifier)
                     else:
-                        print(f"Skipping duplicate track: {track['track_id']}")
+                        print(f"Skipping duplicate track: {track_identifier}")
 
             # Combine playlists (avoid duplicates by playlist_id)
             if 'playlists' in fixture_data:
@@ -84,15 +85,20 @@ class DatabaseFixtureLoader:
 
             # Combine associations (avoid duplicates)
             if 'track_playlist_associations' in fixture_data:
-                existing_associations = {(assoc['track_id'], assoc['playlist_id'])
-                                         for assoc in combined_data['track_playlist_associations']}
+                existing_associations = set()
+                for assoc in combined_data['track_playlist_associations']:
+                    # Support both URI and track_id based associations
+                    key = (assoc.get('uri', assoc.get('track_id')), assoc['playlist_id'])
+                    existing_associations.add(key)
+
                 for assoc in fixture_data['track_playlist_associations']:
-                    key = (assoc['track_id'], assoc['playlist_id'])
+                    key = (assoc.get('uri', assoc.get('track_id')), assoc['playlist_id'])
                     if key not in existing_associations:
                         combined_data['track_playlist_associations'].append(assoc)
                         existing_associations.add(key)
                     else:
-                        print(f"Skipping duplicate association: {assoc['track_id']} -> {assoc['playlist_id']}")
+                        identifier = assoc.get('uri', assoc.get('track_id'))
+                        print(f"Skipping duplicate association: {identifier} -> {assoc['playlist_id']}")
 
         # Store the combined data for validation later
         self._initial_state = combined_data
@@ -137,10 +143,11 @@ class DatabaseFixtureLoader:
                 )
                 uow.playlist_repository.insert(playlist)
 
-            # Add tracks
+            # Add tracks - URI-based system
             for track_data in combined_data['tracks']:
                 track = Track(
-                    track_id=track_data['track_id'],
+                    uri=track_data.get('uri'),  # Primary identifier (may be None for old fixtures)
+                    track_id=track_data.get('track_id'),  # Legacy identifier (may be None for local files)
                     title=track_data['title'],
                     artists=track_data['artists'],
                     album=track_data['album'],
@@ -151,8 +158,8 @@ class DatabaseFixtureLoader:
 
             # Add track-playlist associations
             for assoc in combined_data['track_playlist_associations']:
-                uow.track_playlist_repository.insert(
-                    assoc['track_id'],
+                uow.track_playlist_repository.insert_by_uri(
+                    assoc['uri'],
                     assoc['playlist_id']
                 )
 
@@ -163,6 +170,7 @@ class DatabaseFixtureLoader:
         # List of tuples: (track_id, track_title, artists, album, added_at)
         return [
             (
+                track['uri'],
                 track['track_id'],
                 track['title'],
                 track['artists'],
@@ -234,40 +242,54 @@ class DatabaseFixtureLoader:
 
     @staticmethod
     def _validate_tracks_state(uow, expected, initial_state):
-        """Validate track data in database."""
+        """Validate track data in database using URI-based system."""
         all_tracks = uow.track_repository.get_all()
-        actual_track_ids = {track.track_id for track in all_tracks}
-        expected_track_ids = {track['track_id'] for track in expected['expected_final_tracks']}
+
+        # Build sets for comparison - prefer URI, fallback to track_id
+        actual_identifiers = set()
+        for track in all_tracks:
+            identifier = track.uri if track.uri else track.track_id
+            actual_identifiers.add(identifier)
+
+        expected_identifiers = set()
+        for track in expected['expected_final_tracks']:
+            identifier = track.get('uri', track.get('track_id'))
+            expected_identifiers.add(identifier)
 
         assert len(all_tracks) == len(expected['expected_final_tracks']), \
             f"Expected {len(expected['expected_final_tracks'])} tracks, got {len(all_tracks)}"
 
-        # Handle local vs Spotify tracks separately
-        actual_local_tracks = {tid for tid in actual_track_ids if tid.startswith('local_')}
-        expected_local_tracks = {tid for tid in expected_track_ids if tid.startswith('local_')}
-        actual_spotify_tracks = {tid for tid in actual_track_ids if not tid.startswith('local_')}
-        expected_spotify_tracks = {tid for tid in expected_track_ids if not tid.startswith('local_')}
+        # Separate local vs regular tracks for validation
+        actual_local_identifiers = {id for id in actual_identifiers if
+                                    id and (id.startswith('local_') or id.startswith('spotify:local:'))}
+        expected_local_identifiers = {id for id in expected_identifiers if
+                                      id and (id.startswith('local_') or id.startswith('spotify:local:'))}
+        actual_regular_identifiers = actual_identifiers - actual_local_identifiers
+        expected_regular_identifiers = expected_identifiers - expected_local_identifiers
 
-        # Validate Spotify tracks match exactly
-        assert actual_spotify_tracks == expected_spotify_tracks, \
-            f"Spotify Track IDs don't match. Expected: {expected_spotify_tracks}, Got: {actual_spotify_tracks}"
+        # Validate regular tracks match exactly
+        assert actual_regular_identifiers == expected_regular_identifiers, \
+            f"Regular track identifiers don't match. Expected: {expected_regular_identifiers}, Got: {actual_regular_identifiers}"
 
-        # Validate local track count matches (IDs will be different due to hashing)
-        assert len(actual_local_tracks) == len(expected_local_tracks), \
-            f"Local track count doesn't match. Expected: {len(expected_local_tracks)}, Got: {len(actual_local_tracks)}"
+        # Validate local track count matches (URIs might be different)
+        assert len(actual_local_identifiers) == len(expected_local_identifiers), \
+            f"Local track count doesn't match. Expected: {len(expected_local_identifiers)}, Got: {len(actual_local_identifiers)}"
 
-        # MANDATORY validation of deleted tracks - fail if key is missing
+        # MANDATORY validation of deleted tracks
         assert 'expected_deleted_tracks' in expected, \
             "Test fixture must include 'expected_deleted_tracks' key for proper deletion validation"
 
-        # Get initial track IDs to determine what should have been deleted
         assert initial_state is not None, \
             "Initial state must be provided to validate deletions properly"
 
-        initial_track_ids = {track['track_id'] for track in initial_state['tracks']}
+        # Get initial identifiers
+        initial_identifiers = set()
+        for track in initial_state['tracks']:
+            identifier = track.get('uri', track.get('track_id'))
+            initial_identifiers.add(identifier)
 
         # Calculate which tracks were actually deleted
-        actually_deleted_tracks = initial_track_ids - actual_track_ids
+        actually_deleted_tracks = initial_identifiers - actual_identifiers
         expected_deleted_tracks_set = set(expected['expected_deleted_tracks'])
 
         # Validate that expected deletions match actual deletions exactly
@@ -277,33 +299,21 @@ class DatabaseFixtureLoader:
             f"Missing from expected: {actually_deleted_tracks - expected_deleted_tracks_set}, " \
             f"Extra in expected: {expected_deleted_tracks_set - actually_deleted_tracks}"
 
-        # Validate deleted tracks are gone (redundant but explicit)
-        for deleted_id in expected['expected_deleted_tracks']:
-            assert deleted_id not in actual_track_ids, \
-                f"Track {deleted_id} should have been deleted but was found in database"
-
-        # Validate track details
-        expected_by_type = {}
+        # Validate track details using URI as primary key
+        expected_by_identifier = {}
         for expected_track in expected['expected_final_tracks']:
-            if expected_track['track_id'].startswith('local_'):
-                key = f"{expected_track['artists']}|{expected_track['title']}"
-                expected_by_type[key] = expected_track
-            else:
-                expected_by_type[expected_track['track_id']] = expected_track
+            identifier = expected_track.get('uri', expected_track.get('track_id'))
+            expected_by_identifier[identifier] = expected_track
 
         for track in all_tracks:
-            if track.track_id.startswith('local_'):
-                key = f"{track.artists}|{track.title}"
-                assert key in expected_by_type, f"Unexpected local track: {track.artists} - {track.title}"
-                expected_track = expected_by_type[key]
-            else:
-                assert track.track_id in expected_by_type, f"Unexpected Spotify track: {track.track_id}"
-                expected_track = expected_by_type[track.track_id]
+            identifier = track.uri if track.uri else track.track_id
+            assert identifier in expected_by_identifier, f"Unexpected track: {identifier}"
+            expected_track = expected_by_identifier[identifier]
 
             assert track.title == expected_track['title']
             assert track.artists == expected_track['artists']
             assert track.album == expected_track['album']
-            assert track.is_local == expected_track['is_local']
+            assert track.is_local == expected_track.get('is_local', False)
 
     @staticmethod
     def _validate_playlists_state(uow, expected, initial_state):
@@ -340,11 +350,6 @@ class DatabaseFixtureLoader:
                     f"Missing from expected: {actually_deleted_playlists - expected_deleted_playlists_set}, " \
                     f"Extra in expected: {expected_deleted_playlists_set - actually_deleted_playlists}"
 
-                # Validate deleted playlists are gone (redundant but explicit)
-                for deleted_id in expected['expected_deleted_playlists']:
-                    assert deleted_id not in actual_playlist_ids, \
-                        f"Playlist {deleted_id} should have been deleted but was found in database"
-
         # Validate playlist details
         expected_by_id = {p['playlist_id']: p for p in expected['expected_final_playlists']}
 
@@ -357,16 +362,18 @@ class DatabaseFixtureLoader:
 
     @staticmethod
     def _validate_associations_state(uow, expected, initial_state):
-        """Validate track-playlist associations in database."""
+        """Validate track-playlist associations in database using URI-based system."""
         # Get all current associations
         all_associations = []
         all_tracks = uow.track_repository.get_all()
 
         for track in all_tracks:
-            playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_track(track.track_id)
+            playlist_ids = uow.track_playlist_repository.get_playlist_ids_for_uri(track.uri)
+
             for playlist_id in playlist_ids:
                 all_associations.append({
-                    'track_id': track.track_id,
+                    'uri': track.uri,
+                    'track_id': track.track_id,  # Keep for backward compatibility
                     'playlist_id': playlist_id
                 })
 
@@ -375,9 +382,16 @@ class DatabaseFixtureLoader:
         assert len(all_associations) == len(expected_associations), \
             f"Expected {len(expected_associations)} associations, got {len(all_associations)}"
 
-        # Convert to sets for comparison
-        actual_set = {(a['track_id'], a['playlist_id']) for a in all_associations}
-        expected_set = {(a['track_id'], a['playlist_id']) for a in expected_associations}
+        # Convert to sets for comparison - use URI if available, fallback to track_id
+        actual_set = set()
+        for a in all_associations:
+            identifier = a.get('uri', a.get('track_id'))
+            actual_set.add((identifier, a['playlist_id']))
+
+        expected_set = set()
+        for a in expected_associations:
+            identifier = a.get('uri', a.get('track_id'))
+            expected_set.add((identifier, a['playlist_id']))
 
         assert actual_set == expected_set, \
             f"Associations don't match. Expected: {expected_set}, Got: {actual_set}"
@@ -387,7 +401,8 @@ class DatabaseFixtureLoader:
             # Get initial associations
             initial_associations = set()
             for assoc in initial_state.get('track_playlist_associations', []):
-                initial_associations.add((assoc['track_id'], assoc['playlist_id']))
+                identifier = assoc.get('uri', assoc.get('track_id'))
+                initial_associations.add((identifier, assoc['playlist_id']))
 
             # Calculate what changed
             actually_added_associations = actual_set - initial_associations
@@ -395,15 +410,21 @@ class DatabaseFixtureLoader:
 
             # Validate association changes if provided in expected results
             if 'expected_added_associations' in expected:
-                expected_added_set = {(a['track_id'], a['playlist_id']) for a in
-                                      expected['expected_added_associations']}
+                expected_added_set = set()
+                for a in expected['expected_added_associations']:
+                    identifier = a.get('uri', a.get('track_id'))
+                    expected_added_set.add((identifier, a['playlist_id']))
+
                 assert actually_added_associations == expected_added_set, \
                     f"Association additions mismatch. Actually added: {actually_added_associations}, " \
                     f"Expected to be added: {expected_added_set}"
 
             if 'expected_removed_associations' in expected:
-                expected_removed_set = {(a['track_id'], a['playlist_id']) for a in
-                                        expected['expected_removed_associations']}
+                expected_removed_set = set()
+                for a in expected['expected_removed_associations']:
+                    identifier = a.get('uri', a.get('track_id'))
+                    expected_removed_set.add((identifier, a['playlist_id']))
+
                 assert actually_removed_associations == expected_removed_set, \
                     f"Association removals mismatch. Actually removed: {actually_removed_associations}, " \
                     f"Expected to be removed: {expected_removed_set}"

@@ -1,5 +1,5 @@
 {
-  "description": "Expected results after syncing playlists",
+  "description": "Expected results after syncing playlists - Updated for URI system",
   "expected_stats": {
     "added": 1,
     "updated": 1,

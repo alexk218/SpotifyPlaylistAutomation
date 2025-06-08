@@ -63,7 +63,7 @@ def sync_master_playlist(master_playlist_id, request_json=None):
             db_playlists_dict = {p.playlist_id: p for p in db_playlists}
 
         # Fetch current playlists from Spotify to get current snapshot_ids
-        spotify_playlists = fetch_playlists(spotify_client, force_refresh=True, exclusion_config=exclusion_config)
+        spotify_playlists = fetch_playlists(spotify_client, exclusion_config=exclusion_config)
 
         # Filter out MASTER playlist
         spotify_playlists = [p for p in spotify_playlists if p.playlist_id != master_playlist_id]
@@ -241,9 +241,9 @@ def handle_playlists_sync(force_refresh, is_confirmed, precomputed_changes, excl
         )
 
         details = PlaylistSyncDetails(
-            items_to_add=formatted_to_add[:20],  # Preview only
-            items_to_update=formatted_to_update[:20],
-            items_to_delete=formatted_to_delete[:20],
+            items_to_add=formatted_to_add,
+            items_to_update=formatted_to_update,
+            items_to_delete=formatted_to_delete,
             total_items_to_add=added_count,
             total_items_to_update=updated_count,
             total_items_to_delete=deleted_count
@@ -275,7 +275,7 @@ def handle_tracks_sync(master_playlist_id, force_refresh, is_confirmed, precompu
     """Handle track sync operations."""
     if not is_confirmed:
         tracks_to_add, tracks_to_update, unchanged_tracks, tracks_to_delete = analyze_tracks_changes(
-            master_playlist_id, force_full_refresh=force_refresh
+            master_playlist_id
         )
 
         formatted_to_add = [format_track_item(track) for track in tracks_to_add]
@@ -290,9 +290,9 @@ def handle_tracks_sync(master_playlist_id, force_refresh, is_confirmed, precompu
         )
 
         details = TrackSyncDetails(
-            items_to_add=formatted_to_add[:20],  # Preview only
-            items_to_update=formatted_to_update[:20],
-            items_to_delete=formatted_to_delete[:20],
+            items_to_add=formatted_to_add,
+            items_to_update=formatted_to_update,
+            items_to_delete=formatted_to_delete,
             total_items_to_add=len(tracks_to_add),
             total_items_to_update=len(tracks_to_update),
             total_items_to_delete=len(tracks_to_delete)
@@ -343,7 +343,7 @@ def handle_associations_sync(master_playlist_id, force_refresh, is_confirmed, pr
             items_to_add=[],  # Associations don't have simple "items to add"
             items_to_update=[],
             items_to_delete=[],
-            tracks_with_changes=formatted_changes[:20],  # Preview only
+            tracks_with_changes=formatted_changes,
             changed_playlists=associations_changes.get('changed_playlists', []),
             associations_to_add=associations_changes['associations_to_add'],
             associations_to_remove=associations_changes['associations_to_remove'],
@@ -464,411 +464,3 @@ def handle_sequential_sync(stage, master_playlist_id, force_refresh, is_confirme
 
     else:
         raise ValueError(f"Unknown stage: {stage}")
-
-
-'''
-def handle_db_sync(action, master_playlist_id, force_refresh, is_confirmed, precomputed_changes=None,
-                   exclusion_config=None, stage='start'):
-    """
-    Handle database sync operations.
-
-    Args:
-        action: Type of sync operation ('playlists', 'tracks', 'associations', 'all', 'clear')
-        master_playlist_id: ID of the master playlist
-        force_refresh: Whether to force a full refresh (use snapshot_id to optimize API calls...)
-        is_confirmed: Whether the operation is confirmed (if confirmed - perform sync operation, otherwise just analyze)
-        precomputed_changes: Optional dictionary with precomputed changes (obtained from analysis)
-        exclusion_config: Optional dictionary with exclusion configs (which Spotify playlists to exclude)
-        stage: when syncing 'all' - specifies which stage in the sync process (playlists/tracks/associations)
-
-    Returns:
-        Dictionary with sync results
-    """
-    if action == 'clear':
-        from sql.helpers.db_helper import clear_db
-        clear_db()
-        return {"success": True, "message": "Database cleared successfully"}
-
-    elif action == 'playlists':
-        # If not confirmed, return the analysis result
-        if not is_confirmed:
-            added_count, updated_count, unchanged_count, deleted_count, changes_details = analyze_playlists_changes(
-                force_full_refresh=force_refresh, exclusion_config=exclusion_config
-            )
-
-            return {
-                "success": True,
-                "action": "playlists",
-                "stage": "analysis",
-                "message": f"Analysis complete: {added_count} to add, {updated_count} to update, {deleted_count} to delete, {unchanged_count} unchanged",
-                "stats": {
-                    "added": added_count,
-                    "updated": updated_count,
-                    "unchanged": unchanged_count,
-                    "deleted": deleted_count
-                },
-                "details": changes_details,
-                "needs_confirmation": added_count > 0 or updated_count > 0 or deleted_count > 0
-            }
-
-        added, updated, unchanged, deleted = sync_playlists_to_db(
-            force_full_refresh=force_refresh,
-            auto_confirm=True,
-            precomputed_changes=precomputed_changes,
-            exclusion_config=exclusion_config
-        )
-        return {
-            "success": True,
-            "action": "playlists",
-            "stage": "sync_complete",
-            "message": f"Playlists synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
-            "stats": {
-                "added": added,
-                "updated": updated,
-                "unchanged": unchanged,
-                "deleted": deleted
-            }
-        }
-
-    elif action == 'tracks':
-        # If not confirmed, return the analysis result
-        if not is_confirmed:
-            tracks_to_add, tracks_to_update, unchanged_tracks, tracks_to_delete = analyze_tracks_changes(
-                master_playlist_id, force_full_refresh=force_refresh
-            )
-
-            # Format tracks for display - ALL tracks, not just samples
-            all_tracks_to_add = []
-            for track in tracks_to_add:
-                all_tracks_to_add.append({
-                    "id": track.get('id'),
-                    "artists": track['artists'],
-                    "title": track['title'],
-                    "album": track.get('album', 'Unknown Album'),
-                    "is_local": track.get('is_local', False),
-                    "added_at": track.get('added_at')
-                })
-
-            all_tracks_to_update = []
-            for track in tracks_to_update:
-                all_tracks_to_update.append({
-                    "id": track.get('id'),
-                    "old_artists": track['old_artists'],
-                    "old_title": track['old_title'],
-                    "old_album": track.get('old_album', 'Unknown Album'),
-                    "artists": track['artists'],
-                    "title": track['title'],
-                    "album": track.get('album', 'Unknown Album'),
-                    "is_local": track.get('is_local', False),
-                    "changes": track['changes'],
-                })
-
-            all_tracks_to_delete = []
-            for track in tracks_to_delete:
-                all_tracks_to_delete.append({
-                    "id": track.get('id'),
-                    "artists": track['artists'],
-                    "title": track['title'],
-                    "album": track.get('album', 'Unknown Album'),
-                    "is_local": track.get('is_local', False)
-                })
-
-            return {
-                "success": True,
-                "action": "tracks",
-                "stage": "analysis",
-                "message": f"Analysis complete: {len(tracks_to_add)} to add, {len(tracks_to_update)} to update, {len(tracks_to_delete)} to delete, {len(unchanged_tracks)} unchanged",
-                "stats": {
-                    "added": len(tracks_to_add),
-                    "updated": len(tracks_to_update),
-                    "deleted": len(tracks_to_delete),
-                    "unchanged": len(unchanged_tracks)
-                },
-                "details": {
-                    "tracks_to_add": all_tracks_to_add,
-                    "to_add": all_tracks_to_add[:20],  # First 20 for immediate display
-                    "to_add_total": len(tracks_to_add),
-                    "tracks_to_update": all_tracks_to_update,
-                    "to_update": all_tracks_to_update[:20],
-                    "to_update_total": len(tracks_to_update),
-                    "tracks_to_delete": all_tracks_to_delete,
-                    "to_delete": all_tracks_to_delete[:20],
-                    "to_delete_total": len(tracks_to_delete)
-                },
-                "needs_confirmation": len(tracks_to_add) > 0 or len(tracks_to_update) > 0 or len(tracks_to_delete) > 0
-            }
-
-        added, updated, unchanged, deleted = sync_tracks_to_db(
-            master_playlist_id,
-            force_full_refresh=force_refresh,
-            auto_confirm=True,
-            precomputed_changes=precomputed_changes
-        )
-        return {
-            "success": True,
-            "action": "tracks",
-            "stage": "sync_complete",
-            "message": f"Tracks synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
-            "stats": {
-                "added": added,
-                "updated": updated,
-                "unchanged": unchanged,
-                "deleted": deleted
-            }
-        }
-
-    elif action == 'associations':
-        # If not confirmed, return the analysis result
-        if not is_confirmed:
-            associations_changes = analyze_track_playlist_associations(
-                master_playlist_id,
-                force_full_refresh=force_refresh,
-                exclusion_config=exclusion_config
-            )
-
-            return {
-                "success": True,
-                "action": "associations",
-                "stage": "analysis",
-                "message": f"Analysis complete: {associations_changes['associations_to_add']} to add, "
-                           f"{associations_changes['associations_to_remove']} to remove, "
-                           f"affecting {len(associations_changes['tracks_with_changes'])} tracks",
-                "stats": associations_changes['stats'],
-                "details": {
-                    "tracks_with_changes": associations_changes['tracks_with_changes'],
-                    "associations_to_add": associations_changes['associations_to_add'],
-                    "associations_to_remove": associations_changes['associations_to_remove'],
-                    "samples": associations_changes['samples'],
-                    "all_changes": associations_changes.get('all_changes', associations_changes['samples']),
-                    "changed_playlists": associations_changes.get('changed_playlists', [])
-                },
-                "needs_confirmation": associations_changes['associations_to_add'] > 0 or
-                                      associations_changes['associations_to_remove'] > 0
-            }
-
-        stats = sync_track_playlist_associations_to_db(
-            master_playlist_id,
-            force_full_refresh=force_refresh,
-            auto_confirm=True,
-            precomputed_changes=precomputed_changes,
-            exclusion_config=exclusion_config
-        )
-        return {
-            "success": True,
-            "action": "associations",
-            "stage": "sync_complete",
-            "message": f"Associations synced: {stats['associations_added']} added, {stats['associations_removed']} removed",
-            "stats": stats
-        }
-
-    elif action == 'all':
-        # For 'all', process sequentially, handling one stage at a time
-        if stage == 'start':
-            return {
-                "success": True,
-                "action": "all",
-                "stage": "start",
-                "next_stage": "playlists",
-                "message": "Starting sequential sync process..."
-            }
-
-        elif stage == 'playlists':
-            if not is_confirmed:
-                # Analyze playlists
-                playlists_added, playlists_updated, playlists_unchanged, playlists_deleted, playlists_details = analyze_playlists_changes(
-                    force_full_refresh=force_refresh, exclusion_config=exclusion_config
-                )
-
-                return {
-                    "success": True,
-                    "action": "all",
-                    "stage": "playlists",
-                    "message": f"Analysis complete: {playlists_added} to add, {playlists_updated} to update, "
-                               f"{playlists_deleted} to delete, {playlists_unchanged} unchanged",
-                    "stats": {
-                        "added": playlists_added,
-                        "updated": playlists_updated,
-                        "unchanged": playlists_unchanged,
-                        "deleted": playlists_deleted
-                    },
-                    "details": playlists_details,
-                    "next_stage": "tracks",
-                    "needs_confirmation": True  # Always show confirmation, even if no changes
-                }
-            else:
-                # Execute playlists sync
-                added, updated, unchanged, deleted = sync_playlists_to_db(
-                    force_full_refresh=force_refresh,
-                    auto_confirm=True,
-                    precomputed_changes=precomputed_changes,
-                    exclusion_config=exclusion_config
-                )
-
-                return {
-                    "success": True,
-                    "action": "all",
-                    "stage": "sync_complete",  # Match old route behavior
-                    "message": f"Playlists synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
-                    "stats": {
-                        "added": added,
-                        "updated": updated,
-                        "unchanged": unchanged,
-                        "deleted": deleted
-                    },
-                    "next_stage": "tracks"
-                }
-
-        elif stage == 'tracks':
-            if not is_confirmed:
-                # Analyze tracks - make sure to capture ALL changes including deletions
-                tracks_to_add, tracks_to_update, tracks_unchanged, tracks_to_delete = analyze_tracks_changes(
-                    master_playlist_id, force_full_refresh=force_refresh
-                )
-
-                # Format tracks for display
-                all_tracks_to_add = []
-                for track in tracks_to_add:
-                    all_tracks_to_add.append({
-                        "id": track.get('id'),
-                        "artists": track['artists'],
-                        "title": track['title'],
-                        "album": track.get('album', 'Unknown Album'),
-                        "is_local": track.get('is_local', False),
-                        "added_at": track.get('added_at')
-                    })
-
-                all_tracks_to_update = []
-                for track in tracks_to_update:
-                    all_tracks_to_update.append({
-                        "id": track.get('id'),
-                        "old_artists": track['old_artists'],
-                        "old_title": track['old_title'],
-                        "old_album": track.get('old_album', 'Unknown Album'),
-                        "artists": track['artists'],
-                        "title": track['title'],
-                        "album": track.get('album', 'Unknown Album'),
-                        "is_local": track.get('is_local', False),
-                        "changes": track['changes'],
-                    })
-
-                # Format tracks to delete
-                all_tracks_to_delete = []
-                for track in tracks_to_delete:
-                    all_tracks_to_delete.append({
-                        "id": track.get('id'),
-                        "artists": track['artists'],
-                        "title": track['title'],
-                        "album": track.get('album', 'Unknown Album'),
-                        "is_local": track.get('is_local', False)
-                    })
-
-                return {
-                    "success": True,
-                    "action": "all",
-                    "stage": "tracks",
-                    "message": f"Analysis complete: {len(tracks_to_add)} to add, {len(tracks_to_update)} to update, "
-                               f"{len(tracks_to_delete)} to delete, {len(tracks_unchanged)} unchanged",
-                    "stats": {
-                        "added": len(tracks_to_add),
-                        "updated": len(tracks_to_update),
-                        "deleted": len(tracks_to_delete),
-                        "unchanged": len(tracks_unchanged)
-                    },
-                    "details": {
-                        "all_items_to_add": all_tracks_to_add,
-                        "to_add": all_tracks_to_add[:20],
-                        "to_add_total": len(tracks_to_add),
-                        "all_items_to_update": all_tracks_to_update,
-                        "to_update": all_tracks_to_update[:20],
-                        "to_update_total": len(tracks_to_update),
-                        "all_items_to_delete": all_tracks_to_delete,
-                        "to_delete": all_tracks_to_delete[:20],
-                        "to_delete_total": len(tracks_to_delete)
-                    },
-                    "next_stage": "associations",
-                    "needs_confirmation": True  # Always show confirmation
-                }
-            else:
-                # Execute tracks sync
-                added, updated, unchanged, deleted = sync_tracks_to_db(
-                    master_playlist_id,
-                    force_full_refresh=force_refresh,
-                    auto_confirm=True,
-                    precomputed_changes=precomputed_changes
-                )
-
-                return {
-                    "success": True,
-                    "action": "all",
-                    "stage": "sync_complete",
-                    "message": f"Tracks synced: {added} added, {updated} updated, {unchanged} unchanged, {deleted} deleted",
-                    "stats": {
-                        "added": added,
-                        "updated": updated,
-                        "unchanged": unchanged,
-                        "deleted": deleted
-                    },
-                    "next_stage": "associations"
-                }
-
-        elif stage == 'associations':
-            if not is_confirmed:
-                # Analyze associations
-                associations_changes = analyze_track_playlist_associations(
-                    master_playlist_id,
-                    force_full_refresh=force_refresh,
-                    exclusion_config=exclusion_config
-                )
-
-                return {
-                    "success": True,
-                    "action": "all",
-                    "stage": "associations",
-                    "message": f"Analysis complete: {associations_changes['associations_to_add']} to add, "
-                               f"{associations_changes['associations_to_remove']} to remove, "
-                               f"affecting {len(associations_changes['tracks_with_changes'])} tracks",
-                    "stats": associations_changes['stats'],
-                    "details": {
-                        "tracks_with_changes": associations_changes['tracks_with_changes'],
-                        "associations_to_add": associations_changes['associations_to_add'],
-                        "associations_to_remove": associations_changes['associations_to_remove'],
-                        "all_changes": associations_changes.get('tracks_with_changes', []),
-                        "changed_playlists": associations_changes.get('changed_playlists', [])
-                    },
-                    "next_stage": "complete",
-                    "needs_confirmation": True
-                }
-            else:
-                stats = sync_track_playlist_associations_to_db(
-                    master_playlist_id,
-                    force_full_refresh=force_refresh,
-                    auto_confirm=True,
-                    precomputed_changes=precomputed_changes,
-                    exclusion_config=exclusion_config
-                )
-
-                return {
-                    "success": True,
-                    "action": "all",
-                    "stage": "sync_complete",
-                    "message": f"Associations synced: {stats['associations_added']} added, {stats['associations_removed']} removed",
-                    "stats": stats,
-                    "next_stage": "complete"
-                }
-
-        elif stage == 'complete':
-            return {
-                "success": True,
-                "action": "all",
-                "stage": "complete",
-                "message": "Sequential database sync completed successfully"
-            }
-
-        else:
-            # Handle unknown stage
-            raise ValueError(f"Unknown stage: {stage}")
-
-    else:
-        # Invalid action
-        raise ValueError(f"Invalid action: {action}")
-'''
