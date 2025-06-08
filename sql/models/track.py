@@ -2,6 +2,8 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
+import hashlib
+
 from helpers.spotify_uri_helper import SpotifyUriHelper
 
 
@@ -49,7 +51,6 @@ class Track:
             normalized_artist = ''.join(c for c in (uri_info.artist or '') if c.isalnum() or c in ' &-_')
 
             # Generate ID using same logic as your existing generate_local_track_id function
-            import hashlib
             id_string = f"{normalized_artist}_{normalized_title}".lower()
             return f"local_{hashlib.md5(id_string.encode()).hexdigest()[:16]}"
         except Exception:

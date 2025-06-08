@@ -20,13 +20,9 @@ class TrackPlaylistRepository(BaseRepository):
         super().__init__(connection)
         self.table_name = "TrackPlaylists"
 
-    def insert(self, track_id: str, playlist_id: str) -> None:
+    def insert(self, track_id: str, playlist_id: str, uri: str) -> None:
         """
         Associate a track with a playlist.
-
-        Args:
-            track_id: The track ID
-            playlist_id: The playlist ID
 
         Raises:
             Exception: If insert fails
@@ -37,11 +33,11 @@ class TrackPlaylistRepository(BaseRepository):
             return
 
         query = """
-            INSERT INTO TrackPlaylists (TrackId, PlaylistId)
-            VALUES (?, ?)
+            INSERT INTO TrackPlaylists (TrackId, PlaylistId, Uri)
+            VALUES (?, ?, ?)
         """
-        self.execute_non_query(query, (track_id, playlist_id))
-        self.db_logger.info(f"Associated track {track_id} with playlist {playlist_id}")
+        self.execute_non_query(query, (track_id, playlist_id, uri))
+        self.db_logger.info(f"Associated track URI: {uri} with playlist {playlist_id}")
 
     def delete(self, track_id: str, playlist_id: str) -> bool:
         """
@@ -101,23 +97,6 @@ class TrackPlaylistRepository(BaseRepository):
         """
         results = self.fetch_all(query, (track_id,))
         return [row.PlaylistId for row in results]
-
-    def get_track_ids_for_playlist(self, playlist_id: str) -> List[str]:
-        """
-        Get all track IDs associated with a playlist.
-
-        Args:
-            playlist_id: The playlist ID
-
-        Returns:
-            List of track IDs
-        """
-        query = """
-            SELECT TrackId FROM TrackPlaylists
-            WHERE PlaylistId = ?
-        """
-        results = self.fetch_all(query, (playlist_id,))
-        return [row.TrackId for row in results]
 
     def get_track_counts_by_playlist(self) -> List[Tuple[str, str, int]]:
         """
