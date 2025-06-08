@@ -63,7 +63,7 @@ def sync_master_playlist(master_playlist_id, request_json=None):
             db_playlists_dict = {p.playlist_id: p for p in db_playlists}
 
         # Fetch current playlists from Spotify to get current snapshot_ids
-        spotify_playlists = fetch_playlists(spotify_client, force_refresh=True, exclusion_config=exclusion_config)
+        spotify_playlists = fetch_playlists(spotify_client, exclusion_config=exclusion_config)
 
         # Filter out MASTER playlist
         spotify_playlists = [p for p in spotify_playlists if p.playlist_id != master_playlist_id]
@@ -275,7 +275,7 @@ def handle_tracks_sync(master_playlist_id, force_refresh, is_confirmed, precompu
     """Handle track sync operations."""
     if not is_confirmed:
         tracks_to_add, tracks_to_update, unchanged_tracks, tracks_to_delete = analyze_tracks_changes(
-            master_playlist_id, force_full_refresh=force_refresh
+            master_playlist_id
         )
 
         formatted_to_add = [format_track_item(track) for track in tracks_to_add]

@@ -42,14 +42,13 @@ def authenticate_spotify():
     return sp
 
 
-def fetch_playlists(spotify_client, force_refresh=False, exclusion_config=None) -> List[PlaylistInfo]:
+def fetch_playlists(spotify_client, exclusion_config=None) -> List[PlaylistInfo]:
     """
     Fetch all user's private playlists (self-created), excluding forbidden playlists.
     Uses cache if available and not forcing refresh.
 
     Args:
         spotify_client: Authenticated Spotify client
-        force_refresh: Whether to force a refresh from the API
         exclusion_config: Optional dictionary with exclusion configuration
 
     Returns:
