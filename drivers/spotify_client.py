@@ -475,18 +475,18 @@ def sync_to_master_playlist(spotify_client, master_playlist_id, changed_playlist
     print(f"Starting MASTER sync for {len(changed_playlists_only)} changed playlists...")
 
     # Get current tracks in master playlist
-    master_track_ids = get_track_ids_for_playlist(spotify_client, master_playlist_id, force_refresh=True)
-    master_track_ids_set = set(master_track_ids)
+    master_track_uris = get_track_uris_for_playlist(spotify_client, master_playlist_id, force_refresh=True)
+    master_track_uris_set = set(master_track_uris)
 
     # Collect all track IDs from changed playlists only
     tracks_to_add = set()
 
     for playlist_info in changed_playlists_only:
         print(f"Processing changed playlist: {playlist_info.name}")
-        playlist_track_ids = get_track_ids_for_playlist(spotify_client, playlist_info.playlist_id, force_refresh=True)
+        playlist_track_uris = get_track_uris_for_playlist(spotify_client, playlist_info.playlist_id, force_refresh=True)
 
         # Add tracks that aren't already in master
-        new_tracks = set(playlist_track_ids) - master_track_ids_set
+        new_tracks = set(playlist_track_uris) - master_track_uris_set
         tracks_to_add.update(new_tracks)
 
         print(f"  Found {len(new_tracks)} new tracks to add from this playlist")
