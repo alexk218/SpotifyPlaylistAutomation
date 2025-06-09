@@ -339,13 +339,6 @@ def orchestrate_file_mapping(master_tracks_dir: str, confirmed: bool, precompute
 def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 0.75) -> Dict[str, Any]:
     """
     Analyze which files need mapping to Spotify tracks.
-
-    Args:
-        master_tracks_dir: Directory containing audio files
-        confidence_threshold: Minimum confidence for auto-matching
-
-    Returns:
-        Dictionary with analysis results
     """
     mapping_logger.info(f"Starting file mapping analysis for directory: {master_tracks_dir}")
 
@@ -392,30 +385,47 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
 
             if best_match:
                 if best_match['confidence'] >= confidence_threshold:
-                    # Auto-match high confidence files
+                    # Auto-match high confidence files - CONVERT TO BASIC TYPES
                     auto_matched_files.append({
                         'file_path': file_path,
-                        'filename': file,
-                        'uri': best_match['uri'],
-                        'confidence': best_match['confidence'],
-                        'match_type': best_match['match_type'],
-                        'track_info': best_match['track_info']
+                        'file_name': file,
+                        'uri': str(best_match['uri']),
+                        'confidence': float(best_match['confidence']),
+                        'match_type': str(best_match['match_type']),
+                        'track_info': str(best_match['track_info'])
                     })
                     mapping_logger.info(
                         f"Auto-matched: {file} -> {best_match['track_info']} (confidence: {best_match['confidence']:.2f})")
+                    print(
+                        f"Auto-matched: {file} -> {best_match['track_info']} (confidence: {best_match['confidence']:.2f})")
                 else:
-                    # Requires user input
+                    # Requires user input - CONVERT TO BASIC TYPES
+                    potential_matches = []
+                    if 'all_matches' in best_match:
+                        for match in best_match['all_matches']:
+                            potential_matches.append({
+                                'uri': str(match.get('uri', '')),
+                                'confidence': float(match.get('confidence', 0)),
+                                'track_info': str(match.get('track_info', '')),
+                                'match_type': str(match.get('match_type', ''))
+                            })
+
                     files_requiring_user_input.append({
                         'file_path': file_path,
-                        'filename': file,
-                        'potential_matches': best_match.get('all_matches', [best_match]),
-                        'top_match': best_match
+                        'file_name': file,  # Changed from 'filename' to 'file_name'
+                        'potential_matches': potential_matches,
+                        'top_match': {
+                            'uri': str(best_match.get('uri', '')),
+                            'confidence': float(best_match.get('confidence', 0)),
+                            'track_info': str(best_match.get('track_info', '')),
+                            'match_type': str(best_match.get('match_type', ''))
+                        } if best_match else None
                     })
             else:
                 # No matches found
                 files_requiring_user_input.append({
                     'file_path': file_path,
-                    'filename': file,
+                    'file_name': file,
                     'potential_matches': [],
                     'top_match': None
                 })
@@ -423,20 +433,19 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             files_without_mappings.append(file)
 
     # Log summary
-    mapping_logger.info(f"Analysis complete:")
-    mapping_logger.info(f"  Total files: {total_files}")
-    mapping_logger.info(f"  Files with existing mappings: {files_with_existing_mappings}")
-    mapping_logger.info(f"  Files without mappings: {len(files_without_mappings)}")
-    mapping_logger.info(f"  Auto-matched files: {len(auto_matched_files)}")
-    mapping_logger.info(f"  Files requiring user input: {len(files_requiring_user_input)}")
+    print(f"Analysis complete:")
+    print(f"  Total files: {total_files}")
+    print(f"  Files with existing mappings: {files_with_existing_mappings}")
+    print(f"  Files without mappings: {len(files_without_mappings)}")
+    print(f"  Auto-matched files: {len(auto_matched_files)}")
+    print(f"  Files requiring user input: {len(files_requiring_user_input)}")
 
     return {
         "total_files": total_files,
-        "files_with_existing_mappings": files_with_existing_mappings,
-        "files_without_mappings": len(files_without_mappings),
-        "auto_matched_files": auto_matched_files,
+        "files_without_mappings": len(files_requiring_user_input),
         "files_requiring_user_input": files_requiring_user_input,
-        "needs_confirmation": len(auto_matched_files) > 0 or len(files_requiring_user_input) > 0,
+        "auto_matched_files": auto_matched_files,
+        "needs_confirmation": len(files_requiring_user_input) > 0,
         "requires_user_selection": len(files_requiring_user_input) > 0
     }
 
@@ -473,7 +482,7 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
     for auto_match in auto_matched_files:
         all_mappings.append({
             'file_path': auto_match['file_path'],
-            'filename': auto_match['filename'],
+            'filename': auto_match.get('file_name', auto_match.get('filename', '')),
             'uri': auto_match['uri'],
             'confidence': auto_match['confidence'],
             'source': 'auto_match'
@@ -484,14 +493,14 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
         file_path = selection.get('file_path')
         if not file_path:
             # Try to construct file path from filename if not provided
-            filename = selection.get('filename')
+            filename = selection.get('file_name', selection.get('filename', ''))
             if filename:
                 file_path = _find_file_path_in_directory(filename, master_tracks_dir)
 
         if file_path and selection.get('uri'):
             all_mappings.append({
                 'file_path': file_path,
-                'filename': selection.get('filename', os.path.basename(file_path)),
+                'filename': selection.get('file_name', selection.get('filename', os.path.basename(file_path))),
                 'uri': selection['uri'],
                 'confidence': selection.get('confidence', 0.0),
                 'source': 'user_selection'

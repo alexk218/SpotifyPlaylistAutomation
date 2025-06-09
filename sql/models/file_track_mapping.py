@@ -37,6 +37,11 @@ class FileTrackMapping:
         self.created_at = created_at or datetime.now()
         self.is_active = is_active
 
+    @property
+    def file_name(self) -> str:
+        """Get the filename from the file path."""
+        return os.path.basename(self.file_path) if self.file_path else ""
+
     def calculate_file_hash(self) -> Optional[str]:
         """
         Calculate and return the SHA256 hash of the file.

@@ -16,14 +16,13 @@ class FileTrackMappingRepository:
 
         query = """
             INSERT INTO FileTrackMappings 
-            (FilePath, FileName, FileHash, Uri, FileSize, LastModified)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (FilePath, FileHash, Uri, FileSize, LastModified, CreatedAt, IsActive)
+            VALUES (?, ?, ?, ?, ?, GETDATE(), 1)
         """
 
         cursor = self.connection.cursor()
         cursor.execute(query, (
             os.path.normpath(file_path),
-            os.path.basename(file_path),
             file_hash,
             spotify_uri,
             file_stats.st_size,
