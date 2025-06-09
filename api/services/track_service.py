@@ -1,14 +1,15 @@
 import os
 import re
 import subprocess
+import time
 from datetime import datetime
 from typing import List, Dict, Any, Tuple
 
 import Levenshtein
 from mutagen.id3 import ID3, ID3NoHeaderError
-from mutagen.mp3 import MP3
-from sql.core.unit_of_work import UnitOfWork
+
 from helpers.file_helper import embed_track_id
+from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
 mapping_logger = setup_logger('file_mapping', 'sql', 'file_mapping.log')
@@ -340,105 +341,143 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     """
     Analyze which files need mapping to Spotify tracks.
     """
-    mapping_logger.info(f"Starting file mapping analysis for directory: {master_tracks_dir}")
+    mapping_logger.info(f"Starting OPTIMIZED file mapping analysis for directory: {master_tracks_dir}")
+    start_time = time.time()
 
-    total_files = 0
-    files_with_existing_mappings = 0
-    files_without_mappings = []
-    auto_matched_files = []
-    files_requiring_user_input = []
-
-    # Get all tracks from database
     with UnitOfWork() as uow:
+        # Get all tracks from database
         all_tracks = uow.track_repository.get_all()
         mapping_logger.info(f"Found {len(all_tracks)} tracks in database")
 
-        # Separate local tracks and regular tracks for different matching strategies
+        # Get all existing file mappings
+        existing_mappings = {}
+        try:
+            # Assuming you have a method to get all mappings at once
+            all_mappings = uow.file_track_mapping_repository.get_all()
+            existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings}
+            mapping_logger.info(f"Found {len(existing_mappings)} existing mappings")
+        except Exception as e:
+            mapping_logger.warning(f"Could not batch load mappings, falling back to individual queries: {e}")
+
         local_tracks = [track for track in all_tracks if track.is_local_file()]
         regular_tracks = [track for track in all_tracks if not track.is_local_file()]
 
-        mapping_logger.info(f"Local tracks: {len(local_tracks)}, Regular tracks: {len(regular_tracks)}")
-
-    # Scan all audio files in the directory
     mapping_logger.info("Scanning audio files...")
+    all_audio_files = []
+
+    # Collect all audio files
     for root, _, files in os.walk(master_tracks_dir):
         for file in files:
-            # Check if it's a supported audio file
-            if not _is_supported_audio_file(file):
-                continue
+            if _is_supported_audio_file(file):
+                file_path = os.path.join(root, file)
+                all_audio_files.append((file_path, file))
 
-            total_files += 1
-            file_path = os.path.join(root, file)
-            filename_no_ext = os.path.splitext(file)[0]
+    total_files = len(all_audio_files)
+    mapping_logger.info(f"Found {total_files} audio files")
 
-            # Check if file already has a mapping
-            with UnitOfWork() as uow:
-                existing_mapping = uow.file_track_mapping_repository.get_uri_by_file_path(file_path)
+    # Filter out files with existing mappings early
+    files_needing_mapping = []
+    files_with_existing_mappings = 0
 
-            if existing_mapping:
-                files_with_existing_mappings += 1
-                mapping_logger.debug(f"File already mapped: {file} -> {existing_mapping}")
-                continue
+    for file_path, file in all_audio_files:
+        # Use our batch-loaded mappings instead of individual queries
+        if file_path in existing_mappings:
+            files_with_existing_mappings += 1
+            mapping_logger.debug(f"File already mapped: {file} -> {existing_mappings[file_path]}")
+        else:
+            files_needing_mapping.append((file_path, file))
 
-            # File needs mapping - determine best match
-            best_match = _find_best_match_for_file(file, filename_no_ext, local_tracks, regular_tracks)
+    mapping_logger.info(f"Files with existing mappings: {files_with_existing_mappings}")
+    mapping_logger.info(f"Files needing mapping: {len(files_needing_mapping)}")
 
-            if best_match:
-                if best_match['confidence'] >= confidence_threshold:
-                    # Auto-match high confidence files - CONVERT TO BASIC TYPES
-                    auto_matched_files.append({
-                        'file_path': file_path,
-                        'file_name': file,
-                        'uri': str(best_match['uri']),
-                        'confidence': float(best_match['confidence']),
-                        'match_type': str(best_match['match_type']),
-                        'track_info': str(best_match['track_info'])
-                    })
-                    mapping_logger.info(
-                        f"Auto-matched: {file} -> {best_match['track_info']} (confidence: {best_match['confidence']:.2f})")
-                    print(
-                        f"Auto-matched: {file} -> {best_match['track_info']} (confidence: {best_match['confidence']:.2f})")
-                else:
-                    # Requires user input - CONVERT TO BASIC TYPES
-                    potential_matches = []
-                    if 'all_matches' in best_match:
-                        for match in best_match['all_matches']:
-                            potential_matches.append({
-                                'uri': str(match.get('uri', '')),
-                                'confidence': float(match.get('confidence', 0)),
-                                'track_info': str(match.get('track_info', '')),
-                                'match_type': str(match.get('match_type', ''))
-                            })
+    # Early exit if no files need mapping
+    if not files_needing_mapping:
+        mapping_logger.info("All files already have mappings, exiting early")
+        return {
+            "total_files": total_files,
+            "files_without_mappings": 0,
+            "files_requiring_user_input": [],
+            "auto_matched_files": [],
+            "needs_confirmation": False,
+            "requires_user_selection": False
+        }
 
-                    files_requiring_user_input.append({
-                        'file_path': file_path,
-                        'file_name': file,  # Changed from 'filename' to 'file_name'
-                        'potential_matches': potential_matches,
-                        'top_match': {
-                            'uri': str(best_match.get('uri', '')),
-                            'confidence': float(best_match.get('confidence', 0)),
-                            'track_info': str(best_match.get('track_info', '')),
-                            'match_type': str(best_match.get('match_type', ''))
-                        } if best_match else None
-                    })
+    # Process only files that actually need mapping
+    auto_matched_files = []
+    files_requiring_user_input = []
+    files_without_mappings = []
+
+    # Progress tracking for long operations
+    processed_count = 0
+
+    for file_path, file in files_needing_mapping:
+        processed_count += 1
+        if processed_count % 100 == 0:  # Log progress every 100 files
+            mapping_logger.info(f"Processed {processed_count}/{len(files_needing_mapping)} files needing mapping")
+            print(f"Processed {processed_count}/{len(files_needing_mapping)} files needing mapping")
+
+        filename_no_ext = os.path.splitext(file)[0]
+
+        # Find best match
+        best_match = _find_best_match_for_file(file, filename_no_ext, local_tracks, regular_tracks)
+
+        if best_match:
+            if best_match['confidence'] >= confidence_threshold:
+                # Auto-match high confidence files
+                auto_matched_files.append({
+                    'file_path': file_path,
+                    'file_name': file,
+                    'uri': str(best_match['uri']),
+                    'confidence': float(best_match['confidence']),
+                    'match_type': str(best_match['match_type']),
+                    'track_info': str(best_match['track_info'])
+                })
             else:
-                # No matches found
+                # Requires user input
+                potential_matches = []
+                if 'all_matches' in best_match:
+                    for match in best_match['all_matches']:
+                        potential_matches.append({
+                            'uri': str(match.get('uri', '')),
+                            'confidence': float(match.get('confidence', 0)),
+                            'track_info': str(match.get('track_info', '')),
+                            'match_type': str(match.get('match_type', ''))
+                        })
+
                 files_requiring_user_input.append({
                     'file_path': file_path,
                     'file_name': file,
-                    'potential_matches': [],
-                    'top_match': None
+                    'potential_matches': potential_matches,
+                    'top_match': {
+                        'uri': str(best_match.get('uri', '')),
+                        'confidence': float(best_match.get('confidence', 0)),
+                        'track_info': str(best_match.get('track_info', '')),
+                        'match_type': str(best_match.get('match_type', ''))
+                    } if best_match else None
                 })
+        else:
+            # No matches found
+            files_requiring_user_input.append({
+                'file_path': file_path,
+                'file_name': file,
+                'potential_matches': [],
+                'top_match': None
+            })
 
-            files_without_mappings.append(file)
+        files_without_mappings.append(file)
 
-    # Log summary
-    print(f"Analysis complete:")
+    elapsed_time = time.time() - start_time
+
+    print(f"Analysis complete in {elapsed_time:.2f} seconds:")
     print(f"  Total files: {total_files}")
-    print(f"  Files with existing mappings: {files_with_existing_mappings}")
+    print(
+        f"  Files with existing mappings: {files_with_existing_mappings} ({files_with_existing_mappings / total_files * 100:.1f}%)")
     print(f"  Files without mappings: {len(files_without_mappings)}")
     print(f"  Auto-matched files: {len(auto_matched_files)}")
     print(f"  Files requiring user input: {len(files_requiring_user_input)}")
+    print(f"  Performance: {total_files / elapsed_time:.1f} files/second")
+
+    mapping_logger.info(f"Analysis completed in {elapsed_time:.2f} seconds")
 
     return {
         "total_files": total_files,
@@ -551,7 +590,10 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
                             'filename': filename,
                             'uri': uri,
                             'success': True,
-                            'reason': 'Mapping already exists'
+                            'reason': 'Mapping already exists',
+                            'confidence': mapping.get('confidence', 0.0),
+                            'source': mapping['source'],
+                            'track_info': f"{track.artists} - {track.title}"
                         })
                         mapping_logger.debug(f"Mapping already exists: {filename} -> {uri}")
                         continue
@@ -575,7 +617,8 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
                     'uri': uri,
                     'success': True,
                     'confidence': mapping.get('confidence', 0.0),
-                    'source': mapping['source']
+                    'source': mapping['source'],
+                    'track_info': f"{track.artists} - {track.title}"
                 })
 
                 mapping_logger.info(f"Created mapping: {filename} -> {uri} (source: {mapping['source']})")
