@@ -9,10 +9,19 @@ bp = Blueprint('tracks', __name__, url_prefix='/api/tracks')
 def search_tracks():
     """Search for tracks that match the query."""
     query = request.args.get('query', '')
-    master_tracks_dir = request.args.get('masterTracksDir') or current_app.config['MASTER_TRACKS_DIRECTORY_SSD']
+    limit = int(request.args.get('limit', 20))
+    # include_local = request.args.get('include_local', 'true').lower() == 'true'
+    search_type = request.args.get('type', 'general')  # 'general' or 'matching'
 
     try:
-        results = track_service.search_tracks(master_tracks_dir, query)
+        if search_type == 'matching':
+            # Search Tracks db for file-track matching
+            results = track_service.search_tracks_db_for_matching(query, limit)
+        else:
+            # For general file system search
+            master_tracks_dir = request.args.get('masterTracksDir') or current_app.config['MASTER_TRACKS_DIRECTORY_SSD']
+            results = track_service.search_tracks_file_system(master_tracks_dir, query)
+
         return jsonify({"success": True, "results": results})
     except Exception as e:
         error_str = traceback.format_exc()

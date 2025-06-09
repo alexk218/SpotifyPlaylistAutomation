@@ -17,9 +17,9 @@ mapping_logger = setup_logger('file_mapping', 'sql', 'file_mapping.log')
 SUPPORTED_AUDIO_EXTENSIONS = {'.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.wma'}
 
 
-def search_tracks(master_tracks_dir, query):
+def search_tracks_file_system(master_tracks_dir, query):
     """
-    Search for tracks that match the query.
+    Search for tracks in file system that match the query.
 
     Args:
         master_tracks_dir: Directory containing master tracks
@@ -81,6 +81,105 @@ def search_tracks(master_tracks_dir, query):
     results.sort(key=lambda x: (x['track_id'] is None, x['file'].lower().find(query)))
 
     return results
+
+
+def search_tracks_db_for_matching(query: str, limit: int = 20) -> List[Dict]:
+    """
+    Advanced search specifically for file-track matching with fuzzy matching and ranking.
+    """
+    if not query or not query.strip():
+        return []
+
+    with UnitOfWork() as uow:
+        all_tracks = uow.track_repository.get_all()
+
+    query_lower = query.lower().strip()
+    results = []
+
+    # Split query into potential artist and title parts
+    query_parts = query_lower.split(' - ') if ' - ' in query_lower else [query_lower]
+
+    for track in all_tracks:
+        scores = []
+        match_details = []
+
+        # Clean track data
+        track_title = track.title.lower() if track.title else ""
+        track_artists = track.artists.lower() if track.artists else ""
+        track_combined = f"{track_artists} {track_title}".strip()
+
+        # 1. Exact substring matches (highest priority)
+        if query_lower in track_title:
+            scores.append(0.95)
+            match_details.append("title_exact")
+        if query_lower in track_artists:
+            scores.append(0.95)
+            match_details.append("artist_exact")
+        if query_lower in track_combined:
+            scores.append(0.90)
+            match_details.append("combined_exact")
+
+        # 2. Word-level matching
+        query_words = set(query_lower.split())
+        title_words = set(track_title.split())
+        artist_words = set(track_artists.split())
+
+        title_word_overlap = len(query_words.intersection(title_words)) / max(len(query_words), 1)
+        artist_word_overlap = len(query_words.intersection(artist_words)) / max(len(query_words), 1)
+
+        if title_word_overlap > 0.5:
+            scores.append(0.8 * title_word_overlap)
+            match_details.append(f"title_words_{title_word_overlap:.2f}")
+        if artist_word_overlap > 0.5:
+            scores.append(0.8 * artist_word_overlap)
+            match_details.append(f"artist_words_{artist_word_overlap:.2f}")
+
+        # 3. Fuzzy matching with Levenshtein
+        title_ratio = Levenshtein.ratio(query_lower, track_title)
+        artist_ratio = Levenshtein.ratio(query_lower, track_artists)
+        combined_ratio = Levenshtein.ratio(query_lower, track_combined)
+
+        scores.extend([title_ratio * 0.7, artist_ratio * 0.7, combined_ratio * 0.6])
+
+        # 4. Handle remix/edit patterns specifically
+        remix_patterns = [
+            r'\((.*?)\s*(remix|interpretation|edit|mix|version)\)',
+            r'-\s*(.*?)\s*(remix|interpretation|edit|mix|version)',
+        ]
+
+        for pattern in remix_patterns:
+            query_match = re.search(pattern, query_lower)
+            title_match = re.search(pattern, track_title)
+
+            if query_match and title_match:
+                # Both have remix patterns, compare them
+                query_remix = query_match.group(1).strip()
+                title_remix = title_match.group(1).strip()
+                remix_ratio = Levenshtein.ratio(query_remix, title_remix)
+                if remix_ratio > 0.7:
+                    scores.append(0.85)
+                    match_details.append(f"remix_match_{remix_ratio:.2f}")
+
+        # Get the best score
+        max_score = max(scores) if scores else 0
+
+        # Only include results above minimum threshold
+        if max_score > 0.1:
+            results.append({
+                'track_id': track.track_id,
+                'uri': track.uri,
+                'artist': track.artists,
+                'title': track.title,
+                'album': track.album or 'Unknown Album',
+                'is_local': track.is_local,
+                'confidence': max_score,
+                'match_details': match_details[:3],  # Limit details
+                'ratio': max_score  # For compatibility with existing UI
+            })
+
+    # Sort by confidence and limit results
+    results.sort(key=lambda x: x['confidence'], reverse=True)
+    return results[:limit]
 
 
 def fuzzy_match_track(file_name, current_track_id=None):
