@@ -14,7 +14,7 @@ class Playlist:
         Args:
             playlist_id: Unique Spotify identifier for the playlist
             name: Name of the playlist
-            snapshot_id: Spotify snapshot ID for tracking changes
+            master_sync_snapshot_id: Spotify snapshot ID since last time syncing to MASTER playlist
             associations_snapshot_id: Snapshot ID since last time associations were synced
         """
         self.playlist_id = playlist_id

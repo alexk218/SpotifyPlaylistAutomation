@@ -1,9 +1,7 @@
 import hashlib
 import os
 from datetime import datetime
-from typing import Optional, Dict
-
-from helpers.spotify_uri_helper import SpotifyUriHelper
+from typing import Optional
 
 
 class FileTrackMapping:
@@ -123,27 +121,6 @@ class FileTrackMapping:
         if self.is_track_mapping():
             return self.uri.split(':')[2]
         return None
-
-    def get_local_metadata(self) -> Optional[Dict[str, str]]:
-        """
-        Extract metadata from local file URI.
-
-        Returns:
-            Dictionary with artist, album, title, duration if local file, None otherwise
-        """
-        if not self.is_local_file_mapping():
-            return None
-
-        try:
-            uri_info = SpotifyUriHelper.parse_uri(self.uri)
-            return {
-                'artist': uri_info.artist or '',
-                'album': uri_info.album or '',
-                'title': uri_info.title or '',
-                'duration': uri_info.duration
-            }
-        except Exception:
-            return None
 
     def __str__(self) -> str:
         """String representation of the mapping."""
