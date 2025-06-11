@@ -261,7 +261,7 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
         filename_no_ext = os.path.splitext(file)[0]
 
         # Find best match
-        best_match = _find_best_match_for_file(file, filename_no_ext, local_tracks, regular_tracks)
+        best_match = _find_best_match_for_file(file, local_tracks, regular_tracks, confidence_threshold)
 
         if best_match:
             if best_match['confidence'] >= confidence_threshold:
@@ -490,7 +490,7 @@ def _is_supported_audio_file(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS
 
 
-def _find_best_match_for_file(filename: str, filename_no_ext: str, local_tracks: List, regular_tracks: List) -> \
+def _find_best_match_for_file(filename: str, local_tracks: List, regular_tracks: List, confidence_threshold: float) -> \
         Optional[Dict[str, Any]]:
     """
     Find the best match for a file among local and regular tracks.
@@ -503,7 +503,7 @@ def _find_best_match_for_file(filename: str, filename_no_ext: str, local_tracks:
     match = find_best_match(
         filename=filename,
         tracks=all_tracks,
-        threshold=0.75
+        threshold=confidence_threshold
     )
 
     if match:
