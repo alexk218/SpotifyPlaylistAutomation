@@ -1,14 +1,13 @@
 import os
-import re
 import subprocess
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional
 
-import Levenshtein
 from mutagen.id3 import ID3, ID3NoHeaderError
 
 from helpers.file_helper import embed_track_id
+from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -84,102 +83,11 @@ def search_tracks_file_system(master_tracks_dir, query):
 
 
 def search_tracks_db_for_matching(query: str, limit: int = 20) -> List[Dict]:
-    """
-    Advanced search specifically for file-track matching with fuzzy matching and ranking.
-    """
-    if not query or not query.strip():
-        return []
-
+    """Advanced search specifically for file-track matching with fuzzy matching and ranking."""
     with UnitOfWork() as uow:
         all_tracks = uow.track_repository.get_all()
 
-    query_lower = query.lower().strip()
-    results = []
-
-    # Split query into potential artist and title parts
-    query_parts = query_lower.split(' - ') if ' - ' in query_lower else [query_lower]
-
-    for track in all_tracks:
-        scores = []
-        match_details = []
-
-        # Clean track data
-        track_title = track.title.lower() if track.title else ""
-        track_artists = track.artists.lower() if track.artists else ""
-        track_combined = f"{track_artists} {track_title}".strip()
-
-        # 1. Exact substring matches (highest priority)
-        if query_lower in track_title:
-            scores.append(0.95)
-            match_details.append("title_exact")
-        if query_lower in track_artists:
-            scores.append(0.95)
-            match_details.append("artist_exact")
-        if query_lower in track_combined:
-            scores.append(0.90)
-            match_details.append("combined_exact")
-
-        # 2. Word-level matching
-        query_words = set(query_lower.split())
-        title_words = set(track_title.split())
-        artist_words = set(track_artists.split())
-
-        title_word_overlap = len(query_words.intersection(title_words)) / max(len(query_words), 1)
-        artist_word_overlap = len(query_words.intersection(artist_words)) / max(len(query_words), 1)
-
-        if title_word_overlap > 0.5:
-            scores.append(0.8 * title_word_overlap)
-            match_details.append(f"title_words_{title_word_overlap:.2f}")
-        if artist_word_overlap > 0.5:
-            scores.append(0.8 * artist_word_overlap)
-            match_details.append(f"artist_words_{artist_word_overlap:.2f}")
-
-        # 3. Fuzzy matching with Levenshtein
-        title_ratio = Levenshtein.ratio(query_lower, track_title)
-        artist_ratio = Levenshtein.ratio(query_lower, track_artists)
-        combined_ratio = Levenshtein.ratio(query_lower, track_combined)
-
-        scores.extend([title_ratio * 0.7, artist_ratio * 0.7, combined_ratio * 0.6])
-
-        # 4. Handle remix/edit patterns specifically
-        remix_patterns = [
-            r'\((.*?)\s*(remix|interpretation|edit|mix|version)\)',
-            r'-\s*(.*?)\s*(remix|interpretation|edit|mix|version)',
-        ]
-
-        for pattern in remix_patterns:
-            query_match = re.search(pattern, query_lower)
-            title_match = re.search(pattern, track_title)
-
-            if query_match and title_match:
-                # Both have remix patterns, compare them
-                query_remix = query_match.group(1).strip()
-                title_remix = title_match.group(1).strip()
-                remix_ratio = Levenshtein.ratio(query_remix, title_remix)
-                if remix_ratio > 0.7:
-                    scores.append(0.85)
-                    match_details.append(f"remix_match_{remix_ratio:.2f}")
-
-        # Get the best score
-        max_score = max(scores) if scores else 0
-
-        # Only include results above minimum threshold
-        if max_score > 0.1:
-            results.append({
-                'track_id': track.track_id,
-                'uri': track.uri,
-                'artist': track.artists,
-                'title': track.title,
-                'album': track.album or 'Unknown Album',
-                'is_local': track.is_local,
-                'confidence': max_score,
-                'match_details': match_details[:3],  # Limit details
-                'ratio': max_score  # For compatibility with existing UI
-            })
-
-    # Sort by confidence and limit results
-    results.sort(key=lambda x: x['confidence'], reverse=True)
-    return results[:limit]
+    return search_tracks(query, all_tracks, limit)
 
 
 def fuzzy_match_track(file_name, current_track_id=None):
@@ -201,193 +109,28 @@ def fuzzy_match_track(file_name, current_track_id=None):
             print(f"Database error: {e}")
             raise ValueError(f"Database error: {str(e)}")
 
-    # DIRECT MATCH FOR LOCAL FILES - First try an exact file name match
-    exact_file_matches = []
-    for track in tracks_db:
-        if track.is_local:
-            # Compare the file name directly
-            if track.title == file_name or track.title == os.path.splitext(file_name)[0]:
-                # Exact file name match - give this highest priority
-                exact_file_matches.append({
-                    'track_id': track.track_id,
-                    'ratio': 1.0,  # Perfect match
-                    'artist': track.artists or "",
-                    'title': track.title,
-                    'album': track.album or "Local Files",
-                    'is_local': True,
-                    'match_type': 'exact_file'
-                })
+    # Use consolidated fuzzy matching
+    matches = find_fuzzy_matches(
+        filename=file_name,
+        tracks=tracks_db,
+        threshold=0.45,  # Lower threshold for showing more options
+        max_matches=8,
+        exclude_track_id=current_track_id
+    )
 
-    # If we found exact matches, return them immediately
-    if exact_file_matches:
-        return {
-            "file_name": file_name,
-            "original_artist": "",
-            "original_title": os.path.splitext(file_name)[0],
-            "matches": exact_file_matches
-        }
-
-    # Extract artist and title from filename
-    try:
-        name_part = os.path.splitext(file_name)[0]
-
-        # Try standard "Artist - Title" format first
-        if " - " in name_part:
-            artist, track_title = name_part.split(" - ", 1)
-        else:
-            # Handle files without the separator
-            artist = ""
-            track_title = name_part
-    except ValueError:
+    # Extract artist and title for display
+    filename_no_ext = os.path.splitext(file_name)[0]
+    if " - " in filename_no_ext:
+        artist, track_title = filename_no_ext.split(" - ", 1)
+    else:
         artist = ""
-        track_title = name_part
+        track_title = filename_no_ext
 
-    # Normalize for comparison
-    normalized_artist = artist.lower().replace('&', 'and')
-    normalized_title = track_title.lower()
-
-    # Original artist and title for display
-    original_artist = artist
-    original_title = track_title
-
-    # Handle remix information
-    remix_info = ""
-    if "remix" in normalized_title.lower():
-        remix_parts = normalized_title.lower().split("remix")
-        normalized_title = remix_parts[0].strip()
-        remix_info = "remix" + remix_parts[1] if len(remix_parts) > 1 else "remix"
-
-    # Calculate matches
-    matches = []
-
-    # First, check for matching local files
-    local_tracks = [track for track in tracks_db if track.is_local]
-
-    # Try to match against local files first
-    for track in local_tracks:
-        # For local files, just compare titles since they might not have proper artist-title format
-        db_title = track.title.lower()
-
-        # Normalize both titles
-        clean_normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()
-        db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
-
-        # Calculate similarity
-        similarity = Levenshtein.ratio(clean_normalized_title, db_title_clean)
-
-        # Add high similarity boost for exact file name match
-        if clean_normalized_title == db_title_clean or file_name.lower() == track.title.lower():
-            similarity = 1.0
-
-        # Include if reasonable match
-        if similarity >= 0.5:
-            matches.append({
-                'track_id': track.track_id,
-                'ratio': similarity,
-                'artist': track.artists or "Local File",
-                'title': track.title,
-                'album': track.album or "Local Files",
-                'is_local': True
-            })
-
-    # Then process regular Spotify tracks
-    for track in tracks_db:
-        # Skip local files as we already processed them
-        if track.is_local:
-            continue
-
-        # Process artists and titles
-        db_artists = track.artists.lower().replace('&', 'and')
-        db_title = track.title.lower()
-        track_id = track.track_id
-
-        # Skip if this is the current track ID
-        if current_track_id and track_id == current_track_id:
-            continue
-
-        # Split artists and normalize
-        db_artist_list = [a.strip() for a in db_artists.split(',')]
-        expanded_artists = []
-        for db_artist in db_artist_list:
-            if ' and ' in db_artist:
-                expanded_artists.extend([a.strip() for a in db_artist.split(' and ')])
-            else:
-                expanded_artists.append(db_artist)
-
-        # Artist match calculation
-        artist_ratios = []
-        if artist:  # Only do artist matching if we have an artist name
-            artist_ratios = [Levenshtein.ratio(normalized_artist, db_artist) for db_artist in expanded_artists]
-            artist_ratio = max(artist_ratios) if artist_ratios else 0
-
-            # Perfect match bonus
-            if any(normalized_artist == db_artist for db_artist in expanded_artists):
-                artist_ratio = 1.0
-        else:
-            artist_ratio = 0.0
-
-        # Clean titles for better matching
-        clean_normalized_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_title).strip()
-        db_title_clean = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
-
-        # Create title variations for matching
-        title_variations = [
-            db_title,
-            db_title_clean,
-            db_title.replace(' - ', ' ').replace("'s", "s")
-        ]
-
-        # Find best title match
-        title_ratios = [Levenshtein.ratio(clean_normalized_title, var) for var in title_variations]
-        title_ratio = max(title_ratios)
-
-        # Perfect match bonus
-        if clean_normalized_title in [var.lower() for var in title_variations]:
-            title_ratio = 1.0
-
-        # Remix bonus
-        remix_bonus = 0
-        if any(x in track_title.lower() for x in ['remix', 'edit', 'mix', 'version']) and \
-                any(x in db_title for x in ['remix', 'edit', 'mix', 'version']):
-            remix_bonus = 0.1
-
-            # Extra bonus for same remixer
-            remix_pattern = r'\(([^)]+)(remix|edit|version|mix)\)'
-            local_remix_match = re.search(remix_pattern, track_title.lower())
-            db_remix_match = re.search(remix_pattern, db_title.lower())
-
-            if local_remix_match and db_remix_match and local_remix_match.group(1) == db_remix_match.group(1):
-                remix_bonus += 0.1
-
-        # Calculate overall match score
-        if artist:
-            overall_ratio = (artist_ratio * 0.6 + title_ratio * 0.3 + remix_bonus)
-        else:
-            overall_ratio = (title_ratio * 0.9 + remix_bonus)
-
-        # Return if over threshold
-        if overall_ratio >= 0.45:  # Lower threshold for showing more options
-            matches.append({
-                'track_id': track_id,
-                'ratio': overall_ratio,
-                'artist': track.artists,
-                'title': track.title,
-                'album': track.album,
-                'is_local': False
-            })
-
-    # Sort by match quality
-    matches.sort(key=lambda x: x['ratio'], reverse=True)
-
-    # Limit to top 8 matches
-    top_matches = matches[:8]
-
-    # Return the original file info and potential matches
     return {
         "file_name": file_name,
-        "original_artist": original_artist,
-        "original_title": original_title,
-        "matches": top_matches
+        "original_artist": artist,
+        "original_title": track_title,
+        "matches": matches
     }
 
 
@@ -747,162 +490,34 @@ def _is_supported_audio_file(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS
 
 
-def _find_best_match_for_file(filename: str, filename_no_ext: str, local_tracks: List, regular_tracks: List) -> dict[
-                                                                                                                    str, Any] | None:
+def _find_best_match_for_file(filename: str, filename_no_ext: str, local_tracks: List, regular_tracks: List) -> \
+        Optional[Dict[str, Any]]:
     """
     Find the best match for a file among local and regular tracks.
 
     Returns:
         Dictionary with match information or None if no good match found
     """
-    # First try exact matching with local tracks
-    local_match = _find_exact_local_match(filename, filename_no_ext, local_tracks)
-    if local_match:
-        return local_match
+    all_tracks = local_tracks + regular_tracks
 
-    # Then try fuzzy matching with regular tracks
-    fuzzy_match = _find_fuzzy_match(filename_no_ext, regular_tracks)
-    if fuzzy_match:
-        return fuzzy_match
+    match = find_best_match(
+        filename=filename,
+        tracks=all_tracks,
+        threshold=0.75
+    )
 
-    return None
-
-
-def _find_exact_local_match(filename: str, filename_no_ext: str, local_tracks: List) -> Dict[str, Any]:
-    """Find exact matches with local tracks."""
-    for track in local_tracks:
-        # Try matching with track title
-        if track.title and (track.title == filename or track.title == filename_no_ext):
-            return {
-                'uri': track.uri,
-                'confidence': 1.0,
-                'match_type': 'exact_local',
-                'track_info': f"{track.artists} - {track.title}",
-                'artists': track.artists,
-                'title': track.title,
-                'album': track.album or 'Local Files'
-            }
-
-        # Also try matching with filename variations (normalize spaces, special chars)
-        normalized_filename = _normalize_for_matching(filename_no_ext)
-        normalized_title = _normalize_for_matching(track.title or '')
-
-        if normalized_title and normalized_filename == normalized_title:
-            return {
-                'uri': track.uri,
-                'confidence': 0.95,  # Slightly lower for normalized match
-                'match_type': 'normalized_local',
-                'track_info': f"{track.artists} - {track.title}",
-                'artists': track.artists,
-                'title': track.title,
-                'album': track.album or 'Local Files'
-            }
+    if match:
+        return {
+            'uri': match['uri'],
+            'confidence': match['confidence'],
+            'match_type': match['match_type'],
+            'track_info': f"{match['artist']} - {match['title']}",
+            'artists': match['artist'],
+            'title': match['title'],
+            'album': match['album']
+        }
 
     return None
-
-
-def _find_fuzzy_match(filename_no_ext: str, regular_tracks: List, max_matches: int = 8) -> Dict[str, Any]:
-    """Find fuzzy matches with regular Spotify tracks."""
-    # Extract artist and title from filename
-    artist, title = _extract_artist_title_from_filename(filename_no_ext)
-
-    matches = []
-
-    for track in regular_tracks:
-        confidence = _calculate_track_confidence(artist, title, track)
-
-        if confidence >= 0.4:  # Lower threshold for collecting potential matches
-            matches.append({
-                'uri': track.uri,
-                'confidence': confidence,
-                'match_type': 'fuzzy',
-                'track_info': f"{track.artists} - {track.title}",
-                'artists': track.artists,
-                'title': track.title,
-                'album': track.album
-            })
-
-    if not matches:
-        return None
-
-    # Sort by confidence and take top matches
-    matches.sort(key=lambda x: x['confidence'], reverse=True)
-    top_matches = matches[:max_matches]
-
-    best_match = matches[0]
-    best_match['all_matches'] = top_matches
-
-    return best_match
-
-
-def _extract_artist_title_from_filename(filename: str) -> Tuple[str, str]:
-    """Extract artist and title from filename using common patterns."""
-    # Try standard "Artist - Title" format first
-    if " - " in filename:
-        parts = filename.split(" - ", 1)
-        return parts[0].strip(), parts[1].strip()
-
-    # If no separator, treat whole filename as title
-    return "", filename.strip()
-
-
-def _calculate_track_confidence(local_artist: str, local_title: str, track) -> float:
-    """Calculate confidence score for track match."""
-    # Normalize strings for comparison
-    normalized_local_artist = local_artist.lower().replace('&', 'and') if local_artist else ""
-    normalized_local_title = local_title.lower()
-
-    db_artists = track.artists.lower().replace('&', 'and')
-    db_title = track.title.lower()
-
-    # Calculate artist similarity
-    artist_ratio = 0.0
-    if normalized_local_artist:
-        # Split database artists and find best match
-        db_artist_list = [a.strip() for a in db_artists.split(',')]
-        expanded_artists = []
-        for db_artist in db_artist_list:
-            if ' and ' in db_artist:
-                expanded_artists.extend([a.strip() for a in db_artist.split(' and ')])
-            else:
-                expanded_artists.append(db_artist)
-
-        artist_ratios = [Levenshtein.ratio(normalized_local_artist, db_artist) for db_artist in expanded_artists]
-        artist_ratio = max(artist_ratios) if artist_ratios else 0
-
-        # Perfect match bonus
-        if any(normalized_local_artist == db_artist for db_artist in expanded_artists):
-            artist_ratio = 1.0
-
-    # Calculate title similarity
-    clean_local_title = re.sub(r'[\(\[].*?[\)\]]', '', normalized_local_title).strip()
-    clean_db_title = re.sub(r'[\(\[].*?[\)\]]', '', db_title).strip()
-
-    title_ratio = Levenshtein.ratio(clean_local_title, clean_db_title)
-
-    # Perfect match bonus
-    if clean_local_title == clean_db_title:
-        title_ratio = 1.0
-
-    # Calculate weighted overall ratio
-    if normalized_local_artist:
-        overall_ratio = (artist_ratio * 0.6 + title_ratio * 0.4)
-    else:
-        overall_ratio = title_ratio * 0.9
-
-    return overall_ratio
-
-
-def _normalize_for_matching(text: str) -> str:
-    """Normalize text for matching by removing special characters and extra spaces."""
-    if not text:
-        return ""
-
-    # Remove special characters and normalize spaces
-    normalized = re.sub(r'[^\w\s]', '', text.lower())
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-
-    return normalized
 
 
 def _find_file_path_in_directory(filename: str, directory: str) -> str:
