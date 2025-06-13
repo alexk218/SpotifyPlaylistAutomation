@@ -1,4 +1,3 @@
-import pyodbc
 from typing import Optional
 
 from sql.core.connection import DatabaseConnection

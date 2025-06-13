@@ -117,6 +117,43 @@ class PlaylistRepository(BaseRepository[Playlist]):
         results = self.fetch_all(query, (f"%{normalized_search}%",))
         return [self._map_to_model(row) for row in results]
 
+    def get_playlists_by_ids(self, playlist_ids: List[str]) -> Dict[str, 'Playlist']:
+        """
+        OPTIMIZED: Get multiple playlists by their IDs in a single query.
+
+        Args:
+            playlist_ids: List of playlist IDs
+
+        Returns:
+            Dictionary mapping playlist_id to Playlist objects
+        """
+        if not playlist_ids:
+            return {}
+
+        placeholders = ','.join(['?' for _ in playlist_ids])
+        query = f"SELECT * FROM Playlists WHERE PlaylistId IN ({placeholders})"
+
+        results = self.fetch_all(query, playlist_ids)
+
+        playlists_dict = {}
+        for row in results:
+            playlist = self._map_to_model(row)
+            if playlist:
+                playlists_dict[playlist.playlist_id] = playlist
+
+        return playlists_dict
+
+    def get_all_non_master_playlists(self) -> List['Playlist']:
+        """
+        OPTIMIZED: Get all playlists except MASTER in a single query.
+
+        Returns:
+            List of Playlist objects (excluding MASTER)
+        """
+        query = "SELECT * FROM Playlists WHERE UPPER(PlaylistName) != 'MASTER'"
+        results = self.fetch_all(query)
+        return [self._map_to_model(row) for row in results]
+
     def get_playlists_for_track(self, track_id: str) -> List[Playlist]:
         """
         Get all playlists that contain a specific track.

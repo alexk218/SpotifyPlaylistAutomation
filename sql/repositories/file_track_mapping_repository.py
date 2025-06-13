@@ -1,7 +1,7 @@
 import hashlib
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 import pyodbc
 
@@ -48,6 +48,38 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         cursor = self.connection.cursor()
         results = cursor.execute(query, (spotify_uri,)).fetchall()
         return [row.FilePath for row in results]
+
+    def get_all_active_uri_to_file_mappings(self) -> Dict[str, str]:
+        """
+        Get all active URI-to-file mappings in a single query.
+
+        Returns:
+            Dictionary mapping Spotify URIs to file paths
+        """
+        query = """
+            SELECT Uri, FilePath 
+            FROM FileTrackMappings 
+            WHERE IsActive = 1 AND Uri IS NOT NULL AND FilePath IS NOT NULL
+        """
+
+        results = self.fetch_all(query)
+        return {row.Uri: row.FilePath for row in results}
+
+    def get_file_to_uri_mappings(self) -> Dict[str, str]:
+        """
+        Get all active file-to-URI mappings in a single query.
+
+        Returns:
+            Dictionary mapping normalized file paths to Spotify URIs
+        """
+        query = """
+            SELECT Uri, FilePath 
+            FROM FileTrackMappings 
+            WHERE IsActive = 1 AND Uri IS NOT NULL AND FilePath IS NOT NULL
+        """
+
+        results = self.fetch_all(query)
+        return {os.path.normpath(row.FilePath): row.Uri for row in results}
 
     def delete_by_file_path(self, file_path: str) -> bool:
         """Delete mapping by file path."""

@@ -1,5 +1,5 @@
 import pyodbc
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 from sql.repositories.base_repository import BaseRepository
 
@@ -131,6 +131,94 @@ class TrackPlaylistRepository(BaseRepository):
         """
         return [(row.TrackId, row.TrackTitle, row.PlaylistCount)
                 for row in self.fetch_all(query)]
+
+    def get_playlist_track_counts_batch(self, playlist_ids: List[str]) -> Dict[str, int]:
+        """
+        Get track counts for multiple playlists in a single query.
+
+        Args:
+            playlist_ids: List of playlist IDs
+
+        Returns:
+            Dictionary mapping playlist_id to track count
+        """
+        if not playlist_ids:
+            return {}
+
+        placeholders = ','.join(['?' for _ in playlist_ids])
+        query = f"""
+            SELECT PlaylistId, COUNT(*) as TrackCount
+            FROM TrackPlaylists 
+            WHERE PlaylistId IN ({placeholders})
+            GROUP BY PlaylistId
+        """
+
+        results = self.fetch_all(query, playlist_ids)
+
+        # Initialize all playlists with 0 count
+        counts = {pid: 0 for pid in playlist_ids}
+
+        # Update with actual counts
+        for row in results:
+            counts[row.PlaylistId] = row.TrackCount
+
+        return counts
+
+    def get_all_playlist_track_mappings(self) -> Dict[str, List[str]]:
+        """
+        Get all playlist-track mappings in a single query.
+
+        Returns:
+            Dictionary mapping playlist_id to list of track URIs
+        """
+        query = """
+            SELECT PlaylistId, Uri 
+            FROM TrackPlaylists 
+            ORDER BY PlaylistId
+        """
+
+        results = self.fetch_all(query)
+
+        playlist_mappings = {}
+        for row in results:
+            if row.PlaylistId not in playlist_mappings:
+                playlist_mappings[row.PlaylistId] = []
+            playlist_mappings[row.PlaylistId].append(row.Uri)
+
+        return playlist_mappings
+
+    def batch_get_uris_for_playlists(self, playlist_ids: List[str]) -> Dict[str, List[str]]:
+        """
+        Get track URIs for multiple playlists in a single query.
+
+        Args:
+            playlist_ids: List of playlist IDs
+
+        Returns:
+            Dictionary mapping playlist_id to list of track URIs
+        """
+        if not playlist_ids:
+            return {}
+
+        placeholders = ','.join(['?' for _ in playlist_ids])
+        query = f"""
+            SELECT PlaylistId, Uri 
+            FROM TrackPlaylists 
+            WHERE PlaylistId IN ({placeholders})
+            ORDER BY PlaylistId
+        """
+
+        results = self.fetch_all(query, playlist_ids)
+
+        # Initialize all playlists with empty lists
+        playlist_uris = {pid: [] for pid in playlist_ids}
+
+        # Populate with actual URIs
+        for row in results:
+            if row.PlaylistId in playlist_uris:
+                playlist_uris[row.PlaylistId].append(row.Uri)
+
+        return playlist_uris
 
     def delete_by_playlist_id(self, playlist_id: str) -> int:
         """

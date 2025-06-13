@@ -231,6 +231,75 @@ class TrackRepository(BaseRepository[Track]):
         # All tracks in the database have IDs, so this is just for API compatibility
         return total_tracks, total_tracks
 
+    def get_tracks_metadata_by_uris(self, uris: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Get track metadata for multiple URIs in a single query.
+
+        Args:
+            uris: List of Spotify URIs
+
+        Returns:
+            Dictionary mapping URI to track metadata
+        """
+        if not uris:
+            return {}
+
+        # Use parameterized query to avoid SQL injection
+        placeholders = ','.join(['?' for _ in uris])
+        query = f"""
+            SELECT Uri, TrackTitle, Artists, Album 
+            FROM Tracks 
+            WHERE Uri IN ({placeholders})
+        """
+
+        results = self.fetch_all(query, uris)
+
+        return {
+            row.Uri: {
+                'title': row.TrackTitle,
+                'artists': row.Artists,
+                'album': row.Album
+            }
+            for row in results
+        }
+
+    def get_all_tracks_as_uri_dict(self) -> Dict[str, 'Track']:
+        """
+        Get all tracks as a dictionary keyed by URI.
+
+        Returns:
+            Dictionary mapping URI to Track objects
+        """
+        query = "SELECT * FROM Tracks WHERE Uri IS NOT NULL"
+        results = self.fetch_all(query)
+
+        tracks_dict = {}
+        for row in results:
+            track = self._map_to_model(row)
+            if track and track.uri:
+                tracks_dict[track.uri] = track
+
+        return tracks_dict
+
+    def batch_get_tracks_by_uris(self, uris: List[str]) -> List['Track']:
+        """
+        Get multiple tracks by their URIs in a single query.
+
+        Args:
+            uris: List of Spotify URIs
+
+        Returns:
+            List of Track objects
+        """
+        if not uris:
+            return []
+
+        placeholders = ','.join(['?' for _ in uris])
+        query = f"SELECT * FROM Tracks WHERE Uri IN ({placeholders})"
+
+        results = self.fetch_all(query, uris)
+        return [self._map_to_model(row) for row in results]
+
     def get_all_as_dict_list(self) -> List[Dict[str, Any]]:
         """
         Get all tracks formatted as dictionaries for API consumption.
