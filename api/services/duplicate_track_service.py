@@ -439,6 +439,7 @@ class DuplicateTrackCleaner:
         }
 
 
+# Update the main functions to use the optimized detector
 def detect_and_cleanup_duplicate_tracks(dry_run: bool = False) -> Dict[str, Any]:
     """
     Main function to detect and clean up duplicate tracks using optimized detection.
@@ -476,7 +477,7 @@ def detect_and_cleanup_duplicate_tracks(dry_run: bool = False) -> Dict[str, Any]
 
 def get_duplicate_tracks_report() -> Dict[str, Any]:
     """
-    Generate a report of duplicate tracks with duration information.
+    Generate a report of duplicate tracks with duration information and playlist names.
     """
     try:
         detector = DuplicateTrackDetector()
@@ -490,11 +491,33 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
                 "total_duplicates": 0
             }
 
-        # Format duplicate groups for display with duration info
+        # Get all unique playlist IDs from all groups
+        all_playlist_ids = set()
+        for group in duplicate_groups:
+            all_playlist_ids.update(group.playlists_to_merge)
+
+        # Get playlist names in batch
+        playlist_id_to_name = {}
+        if all_playlist_ids:
+            with UnitOfWork() as uow:
+                playlists_dict = uow.playlist_repository.get_playlists_by_ids(list(all_playlist_ids))
+                for playlist_id, playlist_obj in playlists_dict.items():
+                    playlist_id_to_name[playlist_id] = playlist_obj.name
+
+        # Format duplicate groups for display with duration info and playlist names
         formatted_groups = []
         total_duplicates = 0
 
         for group in duplicate_groups:
+            # Convert playlist IDs to names
+            playlist_names = []
+            for playlist_id in group.playlists_to_merge:
+                if playlist_id in playlist_id_to_name:
+                    playlist_names.append(playlist_id_to_name[playlist_id])
+                else:
+                    # Fallback to ID if name not found
+                    playlist_names.append(f"ID: {playlist_id}")
+
             formatted_group = {
                 "primary_track": {
                     "title": group.primary_track.title,
@@ -507,7 +530,8 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
                     "is_local": group.primary_track.is_local
                 },
                 "duplicates": [],
-                "playlists_affected": list(group.playlists_to_merge),
+                "playlists_affected": playlist_names,  # Now contains names instead of IDs
+                "playlists_affected_count": len(playlist_names),
                 "total_tracks_in_group": len(group.tracks)
             }
 
