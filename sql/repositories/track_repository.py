@@ -49,7 +49,7 @@ class TrackRepository(BaseRepository[Track]):
                     AddedToMaster = ?, \
                     IsLocal       = ?,
                     Duration      = ?
-                WHERE TrackId = ? \
+                WHERE URI = ? \
                 """
         rows_affected = self.execute_non_query(query, (
             track.uri,
@@ -59,7 +59,7 @@ class TrackRepository(BaseRepository[Track]):
             track.added_to_master,
             1 if track.is_local else 0,
             track.duration_ms,
-            track.track_id
+            track.uri
         ))
 
         if rows_affected > 0:

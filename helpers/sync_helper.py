@@ -306,16 +306,17 @@ def analyze_tracks_changes(master_playlist_id: str):
     master_track_uris = set()  # Changed from master_track_ids to master_track_uris
 
     for track_data in master_tracks_api:
-        uri, track_id, track_title, artist_names, album_name, added_at = track_data
+        uri, track_id, track_title, artist_names, album_name, added_at, duration_ms = track_data
 
-        # URI is now the primary identifier - no need to generate it
         spotify_uri = uri
-        is_local = track_id is None  # Local files have no track_id
+        is_local = track_id is None
 
         if is_local:
-            sync_logger.info(f"Processing local file: '{track_title}' by '{artist_names}' (URI: {spotify_uri})")
+            sync_logger.info(
+                f"Processing local file: '{track_title}' by '{artist_names}' (URI: {spotify_uri}) Duration: {duration_ms}ms")
         else:
-            sync_logger.debug(f"Processing regular track: '{track_title}' by '{artist_names}' (URI: {spotify_uri})")
+            sync_logger.debug(
+                f"Processing regular track: '{track_title}' by '{artist_names}' (URI: {spotify_uri}) Duration: {duration_ms}ms")
 
         master_track_uris.add(spotify_uri)
 
@@ -324,6 +325,8 @@ def analyze_tracks_changes(master_playlist_id: str):
             existing_track = master_tracks_db[spotify_uri]
             existing_album = existing_track.album or "Unknown Album"
             api_album = album_name or "Unknown Album"
+            existing_duration = existing_track.duration_ms
+            api_duration = duration_ms
 
             changes = []
             if existing_track.title != track_title:
@@ -332,6 +335,10 @@ def analyze_tracks_changes(master_playlist_id: str):
                 changes.append(f"Artists: '{existing_track.artists}' → '{artist_names}'")
             if existing_album != api_album:
                 changes.append(f"Album: '{existing_album}' → '{api_album}'")
+            if existing_duration != api_duration:
+                existing_formatted = existing_track.get_duration_formatted() if existing_duration else "Unknown"
+                api_formatted = Track(duration_ms=api_duration).get_duration_formatted() if api_duration else "Unknown"
+                changes.append(f"Duration: '{existing_formatted}' → '{api_formatted}'")
 
             # Check if track details have changed
             if changes:
@@ -341,10 +348,12 @@ def analyze_tracks_changes(master_playlist_id: str):
                     'title': track_title,
                     'artists': artist_names,
                     'album': album_name,
+                    'duration_ms': duration_ms,
                     'is_local': is_local,
                     'old_title': existing_track.title,
                     'old_artists': existing_track.artists,
                     'old_album': existing_track.album,
+                    'old_duration_ms': existing_duration,
                     'changes': changes
                 })
             else:
@@ -358,6 +367,7 @@ def analyze_tracks_changes(master_playlist_id: str):
                 'artists': artist_names,
                 'album': album_name,
                 'added_at': added_at,
+                'duration_ms': duration_ms,
                 'is_local': is_local
             })
 
@@ -371,6 +381,7 @@ def analyze_tracks_changes(master_playlist_id: str):
                 'title': track.title,
                 'artists': track.artists,
                 'album': track.album,
+                'duration_ms': track.duration_ms,
                 'is_local': track.is_local_file() if hasattr(track, 'is_local_file') else getattr(track, 'is_local',
                                                                                                   False)
             })
@@ -430,7 +441,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         master_track_uris = set()
 
         for track_data in master_tracks_api:
-            uri, track_id, track_title, artist_names, album_name, added_at = track_data
+            uri, track_id, track_title, artist_names, album_name, added_at, duration_ms = track_data
 
             is_local = track_id is None
 
@@ -441,10 +452,20 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                 existing_track = master_tracks_db[uri]
 
                 # Check if track details have changed
-                if (existing_track.title != track_title or
-                        existing_track.artists != artist_names or
-                        existing_track.album != album_name):
+                changes = []
+                if existing_track.title != track_title:
+                    changes.append(f"Title: '{existing_track.title}' → '{track_title}'")
+                if existing_track.artists != artist_names:
+                    changes.append(f"Artists: '{existing_track.artists}' → '{artist_names}'")
+                if existing_track.album != album_name:
+                    changes.append(f"Album: '{existing_track.album}' → '{album_name}'")
+                if existing_track.duration_ms != duration_ms:
+                    existing_formatted = existing_track.get_duration_formatted() if existing_track.duration_ms else "Unknown"
+                    api_formatted = Track(
+                        duration_ms=duration_ms).get_duration_formatted() if duration_ms else "Unknown"
+                    changes.append(f"Duration: '{existing_formatted}' → '{api_formatted}'")
 
+                if changes:
                     # Mark for update
                     tracks_to_update.append({
                         'uri': uri,
@@ -452,10 +473,13 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                         'title': track_title,
                         'artists': artist_names,
                         'album': album_name,
+                        'duration_ms': duration_ms,
                         'is_local': is_local,
                         'old_title': existing_track.title,
                         'old_artists': existing_track.artists,
-                        'old_album': existing_track.album
+                        'old_album': existing_track.album,
+                        'old_duration_ms': existing_track.duration_ms,
+                        'changes': changes
                     })
                 else:
                     unchanged_tracks.append(uri)
@@ -468,6 +492,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                     'artists': artist_names,
                     'album': album_name,
                     'added_at': added_at,
+                    'duration_ms': duration_ms,
                     'is_local': is_local
                 })
 
@@ -481,6 +506,7 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                     'title': track.title,
                     'artists': track.artists,
                     'album': track.album,
+                    'duration_ms': track.duration_ms,
                     'is_local': track.is_local if hasattr(track, 'is_local') else False
                 })
 
@@ -554,10 +580,11 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
         # Add new tracks
         for track_data in tracks_to_add:
             uri = track_data['uri']
-            track_id = track_data['id']  # May be None for local files
+            track_id = track_data.get('track_id')  # May be None for local files
             track_title = track_data['title']
             artist_names = track_data['artists']
             album_name = track_data['album']
+            duration_ms = track_data.get('duration_ms')
             is_local = track_data['is_local']
             added_at = None
 
@@ -600,18 +627,21 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
                 album=album_name,
                 added_to_master=added_at,
                 is_local=is_local,
+                duration_ms=duration_ms
             )
             uow.track_repository.insert(new_track)
             added_count += 1
-            sync_logger.info(f"Added new track: {track_title} (URI: {uri})")
+            duration_info = new_track.get_duration_formatted() if duration_ms else "Unknown"
+            sync_logger.info(f"Added new track: {track_title} (Duration: {duration_info}) (URI: {uri})")
 
         # Update existing tracks
         for track_data in tracks_to_update:
             uri = track_data['uri']
-            track_id = track_data['id']
+            track_id = track_data.get('track_id')
             track_title = track_data['title']
             artist_names = track_data['artists']
             album_name = track_data['album']
+            duration_ms = track_data.get('duration_ms')
             is_local = track_data['is_local']
 
             # Get the existing track by URI
@@ -621,12 +651,14 @@ def sync_tracks_to_db(master_playlist_id: str, force_full_refresh: bool = False,
             existing_track.title = track_title
             existing_track.artists = artist_names
             existing_track.album = album_name
+            existing_track.duration_ms = duration_ms
             existing_track.is_local = is_local
             # Note: URI doesn't change, track_id might be updated for consistency
 
             uow.track_repository.update(existing_track)
             updated_count += 1
-            sync_logger.info(f"Updated track: {track_title} (URI: {uri})")
+            changes_str = ", ".join(track_data.get('changes', []))
+            sync_logger.info(f"Updated track: {track_title} | Changes: {changes_str} (URI: {uri})")
 
     # Log final results
     print(f"\nTrack sync complete: {added_count} added, {updated_count} updated, "
