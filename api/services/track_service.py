@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
-from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match
+from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match, FuzzyMatcher
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -15,9 +15,6 @@ mapping_logger = setup_logger('file_mapping', 'sql', 'file_mapping.log')
 def search_tracks_file_system(master_tracks_dir, query):
     """
     Search for tracks in file system that match the query.
-
-    Returns:
-        List of matching track information with URI data and calculated confidence
     """
     if not query:
         return []
@@ -33,10 +30,12 @@ def search_tracks_file_system(master_tracks_dir, query):
 
     # Create lookup dictionary: file_path -> mapping
     mapping_by_path = {}
+    existing_mappings = {}
     for mapping in all_mappings:
         if mapping.is_active:
             normalized_path = os.path.normpath(mapping.file_path)
             mapping_by_path[normalized_path] = mapping
+            existing_mappings[normalized_path] = mapping.uri
 
     # Scan the files in the master directory
     for root, _, files in os.walk(master_tracks_dir):
@@ -70,12 +69,15 @@ def search_tracks_file_system(master_tracks_dir, query):
                         track_info = f"{track.artists} - {track.title}"
 
                         try:
+                            # Use improved fuzzy matching with existing mappings
                             fuzzy_matches = find_fuzzy_matches(
                                 filename=file,
                                 tracks=all_tracks,
                                 threshold=0.0,
                                 max_matches=10,
-                                exclude_track_id=None
+                                exclude_track_id=None,
+                                existing_mappings=existing_mappings,
+                                file_path=file_path
                             )
 
                             # Find the confidence for our specifically mapped track
@@ -88,8 +90,6 @@ def search_tracks_file_system(master_tracks_dir, query):
                             if mapped_track_confidence is not None:
                                 confidence = mapped_track_confidence
                             else:
-                                # Our mapped track wasn't in the fuzzy matches (low similarity)
-                                # This suggests the mapping might be incorrect or the filename is very different
                                 confidence = 0.4  # Lower confidence for poor filename matches
 
                         except Exception as e:
@@ -120,36 +120,36 @@ def search_tracks_db_for_matching(query: str, limit: int = 20) -> List[Dict]:
     """Advanced search specifically for file-track matching with fuzzy matching and ranking."""
     with UnitOfWork() as uow:
         all_tracks = uow.track_repository.get_all()
+        # Get existing mappings for search awareness
+        all_mappings = uow.file_track_mapping_repository.get_all()
+        existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings if mapping.is_active}
 
-    return search_tracks(query, all_tracks, limit)
+    return search_tracks(query, all_tracks, limit, existing_mappings)
 
 
 def fuzzy_match_track(file_name, current_track_id=None):
     """
     Find potential Spotify track matches for a local file.
-
-    Args:
-        file_name: Name of the file to match
-        current_track_id: Current track ID if any
-
-    Returns:
-        Dictionary with match information
     """
     # Load tracks from database for matching
     with UnitOfWork() as uow:
         try:
             tracks_db = uow.track_repository.get_all()
+            # Get existing mappings to avoid conflicts
+            all_mappings = uow.file_track_mapping_repository.get_all()
+            existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings if mapping.is_active}
         except Exception as e:
             print(f"Database error: {e}")
             raise ValueError(f"Database error: {str(e)}")
 
-    # Use consolidated fuzzy matching
+    # Use fuzzy matching
     matches = find_fuzzy_matches(
         filename=file_name,
         tracks=tracks_db,
         threshold=0.45,  # Lower threshold for showing more options
         max_matches=8,
-        exclude_track_id=current_track_id
+        exclude_track_id=current_track_id,
+        existing_mappings=existing_mappings
     )
 
     # Extract artist and title for display
@@ -168,51 +168,6 @@ def fuzzy_match_track(file_name, current_track_id=None):
     }
 
 
-def orchestrate_file_mapping(master_tracks_dir: str, confirmed: bool, precomputed_changes: Dict[str, Any],
-                             confidence_threshold: float, user_selections: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Handle file mapping operations with consistent response structure.
-
-    Args:
-        master_tracks_dir: Directory containing audio files
-        confirmed: Whether the operation is confirmed
-        precomputed_changes: Optional precomputed analysis results
-        confidence_threshold: Minimum confidence for auto-matching
-        user_selections: List of user-selected file/track mappings
-
-    Returns:
-        Dictionary with operation results
-    """
-    if not confirmed:
-        # Analysis phase - return files that need mapping
-        analysis_result = analyze_file_mappings(master_tracks_dir, confidence_threshold)
-
-        return {
-            "success": True,
-            "stage": "analysis",
-            "message": f"Found {analysis_result['files_without_mappings']} files without mappings. "
-                       f"{len(analysis_result['auto_matched_files'])} can be auto-matched, "
-                       f"{len(analysis_result['files_requiring_user_input'])} require user selection.",
-            "needs_confirmation": analysis_result['needs_confirmation'],
-            "requires_user_selection": analysis_result['requires_user_selection'],
-            "details": analysis_result
-        }
-    else:
-        # Execution phase - create the mappings
-        creation_result = create_file_mappings_batch(master_tracks_dir, user_selections, precomputed_changes)
-
-        return {
-            "success": True,
-            "stage": "mapping_complete",
-            "message": f"File mapping completed: {creation_result['successful_mappings']} successful, "
-                       f"{creation_result['failed_mappings']} failed.",
-            "successful_mappings": creation_result['successful_mappings'],
-            "failed_mappings": creation_result['failed_mappings'],
-            "results": creation_result['results'],
-            "total_processed": creation_result['total_processed']
-        }
-
-
 def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 0.75) -> Dict[str, Any]:
     """
     Analyze which files need mapping to Spotify tracks.
@@ -228,12 +183,11 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
         # Get all existing file mappings
         existing_mappings = {}
         try:
-            # Assuming you have a method to get all mappings at once
             all_mappings = uow.file_track_mapping_repository.get_all()
-            existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings}
+            existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings if mapping.is_active}
             mapping_logger.info(f"Found {len(existing_mappings)} existing mappings")
         except Exception as e:
-            mapping_logger.warning(f"Could not batch load mappings, falling back to individual queries: {e}")
+            mapping_logger.warning(f"Could not batch load mappings, falling back: {e}")
 
         local_tracks = [track for track in all_tracks if track.is_local_file()]
         regular_tracks = [track for track in all_tracks if not track.is_local_file()]
@@ -256,7 +210,6 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     files_with_existing_mappings = 0
 
     for file_path, file in all_audio_files:
-        # Use our batch-loaded mappings instead of individual queries
         if file_path in existing_mappings:
             files_with_existing_mappings += 1
             mapping_logger.debug(f"File already mapped: {file} -> {existing_mappings[file_path]}")
@@ -278,6 +231,8 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             "requires_user_selection": False
         }
 
+    fuzzy_matcher = FuzzyMatcher(all_tracks, existing_mappings)
+
     # Process only files that actually need mapping
     auto_matched_files = []
     files_requiring_user_input = []
@@ -292,44 +247,52 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             mapping_logger.info(f"Processed {processed_count}/{len(files_needing_mapping)} files needing mapping")
             print(f"Processed {processed_count}/{len(files_needing_mapping)} files needing mapping")
 
-        filename_no_ext = os.path.splitext(file)[0]
-
         # Find best match
-        best_match = _find_best_match_for_file(file, local_tracks, regular_tracks, confidence_threshold)
+        best_match = fuzzy_matcher.find_best_match(
+            filename=file,
+            threshold=confidence_threshold,
+            file_path=file_path
+        )
 
         if best_match:
-            if best_match['confidence'] >= confidence_threshold:
+            if best_match.confidence >= confidence_threshold:
                 # Auto-match high confidence files
                 auto_matched_files.append({
                     'file_path': file_path,
                     'file_name': file,
-                    'uri': str(best_match['uri']),
-                    'confidence': float(best_match['confidence']),
-                    'match_type': str(best_match['match_type']),
-                    'track_info': str(best_match['track_info'])
+                    'uri': str(best_match.track.uri),
+                    'confidence': float(best_match.confidence),
+                    'match_type': str(best_match.match_type),
+                    'track_info': f"{best_match.track.artists} - {best_match.track.title}"
                 })
             else:
-                # Requires user input
+                # Requires user input - get multiple matches
+                all_matches = fuzzy_matcher.find_matches(
+                    filename=file,
+                    threshold=0.3,
+                    max_matches=5,
+                    file_path=file_path
+                )
+
                 potential_matches = []
-                if 'all_matches' in best_match:
-                    for match in best_match['all_matches']:
-                        potential_matches.append({
-                            'uri': str(match.get('uri', '')),
-                            'confidence': float(match.get('confidence', 0)),
-                            'track_info': str(match.get('track_info', '')),
-                            'match_type': str(match.get('match_type', ''))
-                        })
+                for match in all_matches:
+                    potential_matches.append({
+                        'uri': str(match.track.uri),
+                        'confidence': float(match.confidence),
+                        'track_info': f"{match.track.artists} - {match.track.title}",
+                        'match_type': str(match.match_type)
+                    })
 
                 files_requiring_user_input.append({
                     'file_path': file_path,
                     'file_name': file,
                     'potential_matches': potential_matches,
                     'top_match': {
-                        'uri': str(best_match.get('uri', '')),
-                        'confidence': float(best_match.get('confidence', 0)),
-                        'track_info': str(best_match.get('track_info', '')),
-                        'match_type': str(best_match.get('match_type', ''))
-                    } if best_match else None
+                        'uri': str(best_match.track.uri),
+                        'confidence': float(best_match.confidence),
+                        'track_info': f"{best_match.track.artists} - {best_match.track.title}",
+                        'match_type': str(best_match.match_type)
+                    }
                 })
         else:
             # No matches found
@@ -365,19 +328,68 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     }
 
 
+def _find_best_match_for_file(filename: str, local_tracks: List, regular_tracks: List,
+                              confidence_threshold: float, existing_mappings: Dict[str, str] = None,
+                              file_path: str = None) -> Optional[Dict[str, Any]]:
+    all_tracks = local_tracks + regular_tracks
+
+    matcher = FuzzyMatcher(all_tracks, existing_mappings)
+    match = matcher.find_best_match(
+        filename=filename,
+        threshold=confidence_threshold,
+        file_path=file_path
+    )
+
+    if match:
+        return {
+            'uri': match.track.uri,
+            'confidence': match.confidence,
+            'match_type': match.match_type,
+            'track_info': f"{match.track.artists} - {match.track.title}",
+            'artists': match.track.artists,
+            'title': match.track.title,
+            'album': match.track.album
+        }
+
+    return None
+
+
+def orchestrate_file_mapping(master_tracks_dir: str, confirmed: bool, precomputed_changes: Dict[str, Any],
+                             confidence_threshold: float, user_selections: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Handle file mapping operations with consistent response structure."""
+    if not confirmed:
+        # Analysis phase - return files that need mapping
+        analysis_result = analyze_file_mappings(master_tracks_dir, confidence_threshold)
+
+        return {
+            "success": True,
+            "stage": "analysis",
+            "message": f"Found {analysis_result['files_without_mappings']} files without mappings. "
+                       f"{len(analysis_result['auto_matched_files'])} can be auto-matched, "
+                       f"{len(analysis_result['files_requiring_user_input'])} require user selection.",
+            "needs_confirmation": analysis_result['needs_confirmation'],
+            "requires_user_selection": analysis_result['requires_user_selection'],
+            "details": analysis_result
+        }
+    else:
+        # Execution phase - create the mappings
+        creation_result = create_file_mappings_batch(master_tracks_dir, user_selections, precomputed_changes)
+
+        return {
+            "success": True,
+            "stage": "mapping_complete",
+            "message": f"File mapping completed: {creation_result['successful_mappings']} successful, "
+                       f"{creation_result['failed_mappings']} failed.",
+            "successful_mappings": creation_result['successful_mappings'],
+            "failed_mappings": creation_result['failed_mappings'],
+            "results": creation_result['results'],
+            "total_processed": creation_result['total_processed']
+        }
+
+
 def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dict[str, Any]],
                                precomputed_changes: Dict[str, Any] = None) -> Dict[str, Any]:
-    """
-    Create file mappings in the database based on user selections and auto-matches.
-
-    Args:
-        master_tracks_dir: Directory containing audio files
-        user_selections: List of user-selected file/track URI pairs
-        precomputed_changes: Optional precomputed analysis results
-
-    Returns:
-        Dictionary with creation results
-    """
+    """Create file mappings in the database based on user selections and auto-matches."""
     mapping_logger.info("Starting batch file mapping creation")
 
     successful_mappings = 0
@@ -524,36 +536,6 @@ def _is_supported_audio_file(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS
 
 
-def _find_best_match_for_file(filename: str, local_tracks: List, regular_tracks: List, confidence_threshold: float) -> \
-        Optional[Dict[str, Any]]:
-    """
-    Find the best match for a file among local and regular tracks.
-
-    Returns:
-        Dictionary with match information or None if no good match found
-    """
-    all_tracks = local_tracks + regular_tracks
-
-    match = find_best_match(
-        filename=filename,
-        tracks=all_tracks,
-        threshold=confidence_threshold
-    )
-
-    if match:
-        return {
-            'uri': match['uri'],
-            'confidence': match['confidence'],
-            'match_type': match['match_type'],
-            'track_info': f"{match['artist']} - {match['title']}",
-            'artists': match['artist'],
-            'title': match['title'],
-            'album': match['album']
-        }
-
-    return None
-
-
 def _find_file_path_in_directory(filename: str, directory: str) -> str:
     """Find the full path of a file in the directory tree."""
     for root, _, files in os.walk(directory):
@@ -563,15 +545,7 @@ def _find_file_path_in_directory(filename: str, directory: str) -> str:
 
 
 def delete_file(file_path):
-    """
-    Delete a file from the filesystem.
-
-    Args:
-        file_path: Path to the file to delete
-
-    Returns:
-        Name of the deleted file
-    """
+    """Delete a file from the filesystem."""
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -582,9 +556,7 @@ def delete_file(file_path):
 
 
 def direct_tracks_compare(master_tracks_dir):
-    """
-    Directly compare Spotify tracks with local tracks from the database using FileTrackMapping.
-    """
+    """Directly compare Spotify tracks with local tracks from the database using FileTrackMapping."""
     # 1. Get all tracks from the master playlist in the database
     with UnitOfWork() as uow:
         master_tracks = uow.track_repository.get_all()
@@ -661,9 +633,7 @@ def direct_tracks_compare(master_tracks_dir):
 
 
 def download_and_map_track(uri: str, download_dir: str):
-    """
-    Download a track using spotDL and create FileTrackMapping entry.
-    """
+    """Download a track using spotDL and create FileTrackMapping entry."""
     # Get track details from database
     with UnitOfWork() as uow:
         track = uow.track_repository.get_by_uri(uri)
@@ -785,9 +755,7 @@ def download_and_map_track(uri: str, download_dir: str):
 
 
 def download_all_missing_tracks(uris: List[str], download_dir: str, progress_callback=None):
-    """
-    Download multiple tracks by URI with progress tracking.
-    """
+    """Download multiple tracks by URI with progress tracking."""
     total_tracks = len(uris)
     successful_downloads = []
     failed_downloads = []

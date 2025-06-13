@@ -1,7 +1,7 @@
 import hashlib
 import os
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, Set
 
 import pyodbc
 
@@ -81,11 +81,134 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         results = self.fetch_all(query)
         return {os.path.normpath(row.FilePath): row.Uri for row in results}
 
+    def get_mapped_uris(self) -> Set[str]:
+        """
+        Get all URIs that are currently mapped to files.
+
+        Returns:
+            Set of Spotify URIs that have active file mappings
+        """
+        query = """
+            SELECT DISTINCT Uri 
+            FROM FileTrackMappings 
+            WHERE IsActive = 1 AND Uri IS NOT NULL
+        """
+
+        results = self.fetch_all(query)
+        return {row.Uri for row in results}
+
+    def get_uri_mapping_counts(self) -> Dict[str, int]:
+        """
+        Get count of how many files each URI is mapped to.
+
+        Returns:
+            Dictionary mapping URI to count of files
+        """
+        query = """
+            SELECT Uri, COUNT(*) as FileCount
+            FROM FileTrackMappings 
+            WHERE IsActive = 1 AND Uri IS NOT NULL
+            GROUP BY Uri
+        """
+
+        results = self.fetch_all(query)
+        return {row.Uri: row.FileCount for row in results}
+
+    def find_duplicate_mappings(self) -> Dict[str, list]:
+        """
+        Find URIs that are mapped to multiple files (potential duplicates).
+
+        Returns:
+            Dictionary mapping URI to list of file paths
+        """
+        query = """
+            SELECT Uri, FilePath
+            FROM FileTrackMappings 
+            WHERE IsActive = 1 AND Uri IN (
+                SELECT Uri 
+                FROM FileTrackMappings 
+                WHERE IsActive = 1 AND Uri IS NOT NULL
+                GROUP BY Uri 
+                HAVING COUNT(*) > 1
+            )
+            ORDER BY Uri, FilePath
+        """
+
+        results = self.fetch_all(query)
+        duplicates = {}
+        for row in results:
+            if row.Uri not in duplicates:
+                duplicates[row.Uri] = []
+            duplicates[row.Uri].append(row.FilePath)
+
+        return duplicates
+
+    def check_mapping_exists(self, file_path: str, spotify_uri: str) -> bool:
+        """
+        Check if a specific file-to-URI mapping already exists.
+
+        Args:
+            file_path: Path to the file
+            spotify_uri: Spotify URI
+
+        Returns:
+            True if mapping exists, False otherwise
+        """
+        query = """
+            SELECT 1 FROM FileTrackMappings 
+            WHERE FilePath = ? AND Uri = ? AND IsActive = 1
+        """
+
+        result = self.fetch_one(query, (os.path.normpath(file_path), spotify_uri))
+        return result is not None
+
     def delete_by_file_path(self, file_path: str) -> bool:
         """Delete mapping by file path."""
         query = "DELETE FROM FileTrackMappings WHERE FilePath = ?"
         cursor = self.connection.cursor()
         rows_affected = cursor.execute(query, (os.path.normpath(file_path),)).rowcount
+        return rows_affected > 0
+
+    def soft_delete_by_file_path(self, file_path: str) -> bool:
+        """Soft delete mapping by file path (set IsActive = 0)."""
+        query = "UPDATE FileTrackMappings SET IsActive = 0 WHERE FilePath = ?"
+        cursor = self.connection.cursor()
+        rows_affected = cursor.execute(query, (os.path.normpath(file_path),)).rowcount
+        return rows_affected > 0
+
+    def soft_delete_by_uri(self, spotify_uri: str) -> int:
+        """
+        Soft delete all mappings for a specific URI.
+
+        Args:
+            spotify_uri: Spotify URI
+
+        Returns:
+            Number of mappings deactivated
+        """
+        query = "UPDATE FileTrackMappings SET IsActive = 0 WHERE Uri = ?"
+        cursor = self.connection.cursor()
+        return cursor.execute(query, (spotify_uri,)).rowcount
+
+    def reactivate_mapping(self, file_path: str, spotify_uri: str) -> bool:
+        """
+        Reactivate a soft-deleted mapping.
+
+        Args:
+            file_path: Path to the file
+            spotify_uri: Spotify URI
+
+        Returns:
+            True if mapping was reactivated, False if not found
+        """
+        query = """
+            UPDATE FileTrackMappings 
+            SET IsActive = 1 
+            WHERE FilePath = ? AND Uri = ? AND IsActive = 0
+        """
+
+        cursor = self.connection.cursor()
+        rows_affected = cursor.execute(query, (os.path.normpath(file_path), spotify_uri)).rowcount
         return rows_affected > 0
 
     @staticmethod
