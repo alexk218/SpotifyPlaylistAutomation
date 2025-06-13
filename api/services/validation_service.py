@@ -7,6 +7,7 @@ from datetime import datetime
 import Levenshtein
 from mutagen.mp3 import MP3
 
+from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
 from helpers.m3u_helper import (
     build_track_id_mapping,
     sanitize_filename,
@@ -17,7 +18,7 @@ from helpers.validation_helper import validate_master_tracks
 from sql.core.unit_of_work import UnitOfWork
 
 
-def validate_track_metadata(master_tracks_dir):
+def validate_file_mappings(master_tracks_dir):
     """
     Validate track file mappings using the FileTrackMappings table.
     """
@@ -26,7 +27,6 @@ def validate_track_metadata(master_tracks_dir):
     files_with_mapping = 0
     files_without_mapping = 0
     potential_mismatches = []
-    duplicate_mappings = {}
     files_missing_mapping = []
 
     # Get all tracks and mappings from database
@@ -58,7 +58,8 @@ def validate_track_metadata(master_tracks_dir):
     # Scan local files
     for root, _, files in os.walk(master_tracks_dir):
         for file in files:
-            if not file.lower().endswith(('.mp3', '.flac', '.wav', '.m4a')):
+            file_ext = os.path.splitext(file)[1].lower()
+            if file_ext not in SUPPORTED_AUDIO_EXTENSIONS:
                 continue
 
             total_files += 1
@@ -94,11 +95,11 @@ def validate_track_metadata(master_tracks_dir):
 
                     # Flag potential mismatches (low similarity)
                     if similarity < 0.7:
-                        confidence = round(similarity * 100, 1)
+                        confidence = round(similarity, 1)
                         potential_mismatches.append({
                             'file': file,
                             'uri': mapping.uri,
-                            'embedded_artist_title': f"{db_track.artists} - {db_track.title}",
+                            'track_info': f"{db_track.artists} - {db_track.title}",
                             'filename': filename_no_ext,
                             'confidence': confidence,
                             'full_path': file_path,
@@ -112,7 +113,7 @@ def validate_track_metadata(master_tracks_dir):
                 files_missing_mapping.append({
                     'file': file,
                     'uri': None,
-                    'embedded_artist_title': "No Mapping",
+                    'track_info': "No Mapping",
                     'filename': filename_no_ext,
                     'confidence': 0,
                     'full_path': file_path,
@@ -173,14 +174,14 @@ def validate_track_metadata(master_tracks_dir):
     return {
         "summary": {
             "total_files": total_files,
-            "files_with_track_id": files_with_mapping,  # Keep same key name for frontend compatibility
-            "files_without_track_id": files_without_mapping,  # Keep same key name for frontend compatibility
+            "files_with_track_id": files_with_mapping,
+            "files_without_track_id": files_without_mapping,
             "potential_mismatches": len(potential_mismatches),
-            "duplicate_track_ids": len(real_duplicates)  # Keep same key name for frontend compatibility
+            "duplicate_track_ids": len(real_duplicates)
         },
         "potential_mismatches": potential_mismatches,
-        "files_missing_trackid": files_missing_mapping,  # Keep same key name for frontend compatibility
-        "duplicate_track_ids": real_duplicates  # Keep same key name for frontend compatibility
+        "files_missing_trackid": files_missing_mapping,
+        "duplicate_track_ids": real_duplicates
     }
 
 
