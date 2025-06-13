@@ -185,25 +185,29 @@ def validate_file_mappings(master_tracks_dir):
     }
 
 
-def validate_playlists_m3u(playlists_dir):
+def validate_playlists_m3u(playlists_dir: str, master_playlist_id: str = None):
     """
-    Validate M3U playlists against db information using URI-based FileTrackMappings system
+    Validate playlists against M3U files to detect discrepancies.
 
     Args:
-        playlists_dir: Directory containing m3u playlist files
+        playlists_dir: Directory containing M3U files
+        master_playlist_id: Spotify playlist ID of MASTER playlist (optional)
 
     Returns:
-        Dictionary with validation results
+        Dictionary with summary and detailed playlist analysis
     """
     uri_to_file_map = build_uri_to_file_mapping_from_database()
 
     # Get all playlists from database
     with UnitOfWork() as uow:
         db_playlists = uow.playlist_repository.get_all()
-        # Filter out the MASTER playlist
-        db_playlists = [p for p in db_playlists if p.name.upper() != "MASTER"]
+        # Filter out the MASTER playlist (using name-based filtering like original)
+        db_playlists = [p for p in db_playlists if p.playlist_id != master_playlist_id]
 
-    # Find all M3U files in all subdirectories
+        # Get all tracks metadata once for efficient lookup (NEW - for frontend display)
+        all_tracks_by_uri = uow.track_repository.get_all_tracks_as_uri_dict()
+
+    # Find all M3U files in all subdirectories (SAME AS ORIGINAL)
     m3u_files = {}  # Dict of {sanitized_name: m3u_path}
 
     for root, dirs, files in os.walk(playlists_dir):
@@ -219,18 +223,21 @@ def validate_playlists_m3u(playlists_dir):
         playlist_name = playlist.name
         playlist_id = playlist.playlist_id
 
-        # Check if this playlist has an M3U file (in any subdirectory)
+        # Check if this playlist has an M3U file (in any subdirectory) (SAME AS ORIGINAL)
         safe_name = sanitize_filename(playlist_name)
         m3u_path = m3u_files.get(safe_name)
         playlist_has_m3u_file = m3u_path is not None
 
-        # Get all track URIs for this playlist from database
+        # Get all track URIs for this playlist from database (SAME AS ORIGINAL)
         with UnitOfWork() as uow:
             # Use the new URI-based TrackPlaylists table
             track_uris = uow.track_playlist_repository.get_uris_for_playlist(playlist_id)
             all_track_uris_in_playlist_db = set(track_uris) if track_uris else set()
 
-        # Find which tracks have local files available
+        # Debug print to see what we're getting
+        print(f"Playlist '{playlist_name}': {len(all_track_uris_in_playlist_db)} tracks in database")
+
+        # Find which tracks have local files available (SAME AS ORIGINAL)
         local_track_files = set()
         not_downloaded_tracks = []
 
@@ -241,35 +248,47 @@ def validate_playlists_m3u(playlists_dir):
                 if os.path.exists(file_path):
                     local_track_files.add(uri)
                 else:
-                    # File mapping exists but file is missing
+                    # File mapping exists but file is missing (ENHANCED - add metadata)
+                    track_info = all_tracks_by_uri.get(uri)
                     not_downloaded_tracks.append({
                         'uri': uri,
+                        'title': track_info.title if track_info else 'Unknown Title',
+                        'artists': track_info.artists if track_info else 'Unknown Artist',
+                        'album': track_info.album if track_info else 'Unknown Album',
                         'expected_path': file_path,
                         'reason': 'file_missing'
                     })
             else:
-                # No file mapping exists for this track
+                # No file mapping exists for this track (ENHANCED - add metadata)
+                track_info = all_tracks_by_uri.get(uri)
                 not_downloaded_tracks.append({
                     'uri': uri,
+                    'title': track_info.title if track_info else 'Unknown Title',
+                    'artists': track_info.artists if track_info else 'Unknown Artist',
+                    'album': track_info.album if track_info else 'Unknown Album',
                     'expected_path': None,
                     'reason': 'no_mapping'
                 })
 
-        # Process M3U file if it exists
+        # Process M3U file if it exists (SAME AS ORIGINAL)
         m3u_track_uris = set()
         if playlist_has_m3u_file:
             m3u_track_uris = get_m3u_track_uris_from_file(m3u_path, uri_to_file_map)
+            print(f"M3U file '{safe_name}.m3u': {len(m3u_track_uris)} tracks found")
 
-        # Compare database vs M3U to find discrepancies
+        # Debug print to see the comparison
+        print(f"Local files: {len(local_track_files)}, M3U tracks: {len(m3u_track_uris)}")
+
+        # Compare database vs M3U to find discrepancies (SAME AS ORIGINAL)
         tracks_missing_from_m3u = local_track_files - m3u_track_uris
         unexpected_tracks_in_m3u = m3u_track_uris - all_track_uris_in_playlist_db
 
-        # Calculate discrepancy metrics
+        # Calculate discrepancy metrics (SAME AS ORIGINAL)
         total_discrepancy = len(m3u_track_uris) - len(local_track_files)
         identified_discrepancy = len(tracks_missing_from_m3u) + len(unexpected_tracks_in_m3u)
         unidentified_discrepancy = abs(total_discrepancy) - identified_discrepancy
 
-        # A playlist needs update if there are any discrepancies or missing files
+        # A playlist needs update if there are any discrepancies or missing files (SAME AS ORIGINAL)
         needs_update = (
                 not playlist_has_m3u_file or
                 bool(tracks_missing_from_m3u) or
@@ -277,16 +296,33 @@ def validate_playlists_m3u(playlists_dir):
                 len(m3u_track_uris) != len(local_track_files)
         )
 
-        # Determine relative location of M3U file
+        # Determine relative location of M3U file (SAME AS ORIGINAL)
         m3u_location = "root"
         if playlist_has_m3u_file:
             rel_path = os.path.relpath(os.path.dirname(m3u_path), playlists_dir)
             if rel_path != ".":
                 m3u_location = rel_path
 
-        # Convert sets to lists for JSON serialization
-        missing_tracks = [{'uri': uri} for uri in tracks_missing_from_m3u]
-        unexpected_tracks = [{'uri': uri} for uri in unexpected_tracks_in_m3u]
+        # Convert sets to lists for JSON serialization WITH track metadata (ENHANCED)
+        missing_tracks = []
+        for uri in tracks_missing_from_m3u:
+            track_info = all_tracks_by_uri.get(uri)
+            missing_tracks.append({
+                'uri': uri,
+                'title': track_info.title if track_info else 'Unknown Title',
+                'artists': track_info.artists if track_info else 'Unknown Artist',
+                'album': track_info.album if track_info else 'Unknown Album'
+            })
+
+        unexpected_tracks = []
+        for uri in unexpected_tracks_in_m3u:
+            track_info = all_tracks_by_uri.get(uri)
+            unexpected_tracks.append({
+                'uri': uri,
+                'title': track_info.title if track_info else 'Unknown Title',
+                'artists': track_info.artists if track_info else 'Unknown Artist',
+                'album': track_info.album if track_info else 'Unknown Album'
+            })
 
         playlist_analysis.append({
             'name': playlist_name,
@@ -305,11 +341,11 @@ def validate_playlists_m3u(playlists_dir):
             'location': m3u_location,
         })
 
-    # Count playlists needing updates
+    # Count playlists needing updates (SAME AS ORIGINAL)
     playlists_needing_update = sum(1 for p in playlist_analysis if p['needs_update'])
     missing_m3u_files = sum(1 for p in playlist_analysis if not p['has_m3u'])
 
-    # Sort by issue severity
+    # Sort by issue severity (SAME AS ORIGINAL)
     playlist_analysis.sort(key=lambda x: (
         not x['has_m3u'],  # Missing M3U playlist file completely
         abs(x['total_discrepancy']),  # Then by total discrepancy

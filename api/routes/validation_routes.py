@@ -31,6 +31,7 @@ def validate_tracks():
 def validate_playlists_m3u():
     """Validate playlists against M3U files."""
     playlists_dir = request.args.get('playlistsDir')
+    master_playlist_id = request.args.get('masterPlaylistId')
 
     if not playlists_dir:
         return jsonify({
@@ -39,7 +40,7 @@ def validate_playlists_m3u():
         }), 400
 
     try:
-        result = validation_service.validate_playlists_m3u(playlists_dir)
+        result = validation_service.validate_playlists_m3u(playlists_dir, master_playlist_id)
         return jsonify({
             "success": True,
             "summary": result["summary"],
