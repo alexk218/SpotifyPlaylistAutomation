@@ -229,25 +229,3 @@ def validate_master_tracks(master_tracks_dir: str) -> Dict[str, int]:
         'wav_files': files_by_extension['.wav'],
         'aiff_files': files_by_extension['.aiff']
     }
-
-
-def get_track_info_from_db(track_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Get track information from the database.
-
-    Args:
-        track_id: Track ID to look up
-
-    Returns:
-        Dictionary with track information or None if not found
-    """
-    with UnitOfWork() as uow:
-        track = uow.track_repository.get_by_id(track_id)
-        if track:
-            return {
-                'id': track.track_id,
-                'name': track.title,
-                'artists': track.artists.split(', '),
-                'album': track.album
-            }
-    return None

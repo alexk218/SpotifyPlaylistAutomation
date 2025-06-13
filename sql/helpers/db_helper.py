@@ -46,42 +46,6 @@ def fetch_master_tracks_db():
         return [(track.title, track.artists, track.album) for track in tracks]
 
 
-# Fetch all tracks from the database
-def fetch_all_tracks_db():
-    """
-    Fetch all tracks from the Tracks table.
-
-    Returns:
-        List of Track objects
-    """
-    with UnitOfWork() as uow:
-        tracks = uow.track_repository.get_all()
-
-        db_logger.info(f"Fetched {len(tracks)} tracks from the database.")
-        return tracks
-
-
-# Fetch details for a specific track
-def fetch_track_details_db(track_id):
-    """
-    Retrieve track details from the database based on TrackId.
-
-    Args:
-        track_id: The track ID to look up
-
-    Returns:
-        Dictionary with TrackTitle and Artists, or None if not found
-    """
-    with UnitOfWork() as uow:
-        track = uow.track_repository.get_by_id(track_id)
-
-        if track:
-            return {'TrackTitle': track.title, 'Artists': track.artists}
-        else:
-            db_logger.warning(f"No track details found for Track ID '{track_id}'")
-            return None
-
-
 # Get the date a track was added to MASTER playlist
 def get_track_added_date(track_id: str) -> Optional[datetime]:
     """
@@ -101,48 +65,6 @@ def get_track_added_date(track_id: str) -> Optional[datetime]:
         return None
 
 
-# Count how many MP3 files have a TrackId embedded - This is for file_helper.py compatibility
-def count_tracks_with_id_db():
-    """
-    Get count of tracks with IDs in the database.
-    This is mainly a compatibility function for the old API.
-
-    Returns:
-        Tuple of (tracks_with_ids, total_tracks)
-    """
-    with UnitOfWork() as uow:
-        return uow.track_repository.get_track_count_with_id()
-
-
-# Get track IDs that exist in the database
-def get_existing_track_ids():
-    """
-    Get all track IDs from the database.
-
-    Returns:
-        Set of track IDs
-    """
-    with UnitOfWork() as uow:
-        tracks = uow.track_repository.get_all()
-        return {track.track_id for track in tracks}
-
-
-# Check if track ID exists in database
-def track_id_exists_in_db(track_id):
-    """
-    Check if a track ID exists in the database.
-
-    Args:
-        track_id: The track ID to check
-
-    Returns:
-        Boolean indicating if the track exists
-    """
-    with UnitOfWork() as uow:
-        track = uow.track_repository.get_by_id(track_id)
-        return track is not None
-
-
 def get_db_playlists() -> Dict[str, Playlist]:
     """
     Get all playlists from the database.
@@ -153,18 +75,6 @@ def get_db_playlists() -> Dict[str, Playlist]:
     with UnitOfWork() as uow:
         playlists = uow.playlist_repository.get_all()
         return {playlist.playlist_id: playlist for playlist in playlists}
-
-
-def get_db_tracks() -> Dict[str, Track]:
-    """
-    Get all tracks from the database.
-
-    Returns:
-        Dictionary of track_id to Track objects
-    """
-    with UnitOfWork() as uow:
-        tracks = uow.track_repository.get_all()
-        return {track.track_id: track for track in tracks}
 
 
 def get_db_tracks_by_uri() -> Dict[str, Track]:

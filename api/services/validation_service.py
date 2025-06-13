@@ -10,7 +10,6 @@ from mutagen.mp3 import MP3
 
 from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
 from helpers.m3u_helper import (
-    build_track_id_mapping,
     sanitize_filename,
     generate_m3u_playlist, build_uri_to_file_mapping_from_database, get_m3u_track_uris_from_file,
     get_playlists_track_uris_batch, get_all_tracks_metadata_by_uri

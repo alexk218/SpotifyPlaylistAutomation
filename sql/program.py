@@ -4,9 +4,7 @@ from dotenv import load_dotenv
 
 from sql.helpers.db_helper import clear_db
 from drivers.spotify_client import sync_to_master_playlist, sync_unplaylisted_to_unsorted, authenticate_spotify
-from helpers.file_helper import embed_track_metadata, remove_all_track_ids, count_tracks_with_id, cleanup_tracks, \
-    validate_song_lengths
-from helpers.organization_helper import organize_songs_into_m3u_playlists
+from helpers.file_helper import validate_song_lengths
 from helpers.sync_helper import sync_playlists_to_db, sync_tracks_to_db, \
     sync_track_playlist_associations_to_db
 from helpers.validation_helper import validate_master_tracks
@@ -96,30 +94,6 @@ def main():
 
     if args.sync_all or args.sync_associations:
         sync_track_playlist_associations_to_db(MASTER_PLAYLIST_ID, force_full_refresh=args.force_refresh)
-
-    # * File operations
-    if args.generate_m3u:
-        organize_songs_into_m3u_playlists(
-            tracks_dir,
-            m3u_dir,
-            extended=not args.no_extended_m3u,
-            dry_run=args.dry_run,
-            overwrite=not args.no_overwrite,
-            only_changed=not args.all_playlists
-        )
-
-    if args.embed_metadata:
-        embed_track_metadata(tracks_dir)
-
-    if args.remove_track_ids:
-        remove_all_track_ids(tracks_dir)
-
-    if args.cleanup_tracks:
-        cleanup_tracks(tracks_dir, QUARANTINE_DIRECTORY)
-
-    # * Validation
-    if args.count_track_ids:
-        count_tracks_with_id(tracks_dir)
 
     if args.validate_tracks or args.validate_all:
         validate_master_tracks(tracks_dir)
