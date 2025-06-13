@@ -140,42 +140,6 @@ class TrackRepository(BaseRepository[Track]):
         tracks = self.get_all()
         return {track.uri: track for track in tracks if track.uri}
 
-    def get_by_id(self, track_id: str) -> Optional[Track]:
-        """
-        Get a track by its ID.
-
-        Args:
-            track_id: The track ID to look up
-
-        Returns:
-            Track object or None if not found
-        """
-        return super().get_by_id(track_id)
-
-    def search_track_ids(self, track_ids: List[str]) -> List[Track]:
-        """
-        Get tracks matching the provided list of track IDs.
-
-        Args:
-            track_ids: List of track IDs to search for
-
-        Returns:
-            List of Track objects matching the IDs
-        """
-        if not track_ids:
-            return []
-
-        # Convert list of IDs to a comma-separated string for SQL IN clause
-        id_string = ','.join(f"'{id}'" for id in track_ids)
-
-        query = f"""
-            SELECT * FROM Tracks
-            WHERE TrackId IN ({id_string})
-        """
-
-        results = self.fetch_all(query)
-        return [self._map_to_model(row) for row in results]
-
     def get_by_title_and_artist(self, title: str, artist: str) -> List[Track]:
         """
         Find tracks by title and artist (partial match).
