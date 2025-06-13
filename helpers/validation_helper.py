@@ -5,6 +5,7 @@ from typing import Dict, Optional, Any
 
 from mutagen.id3 import ID3
 
+from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -39,9 +40,6 @@ def validate_master_tracks(master_tracks_dir: str) -> Dict[str, int]:
     """
     Validate local tracks against MASTER playlist data from database.
     Only makes API calls if data is not in the database.
-
-    Args:
-        master_tracks_dir: Directory containing the master tracks
 
     Returns:
         Dictionary with validation statistics
@@ -88,15 +86,14 @@ def validate_master_tracks(master_tracks_dir: str) -> Dict[str, int]:
     files_without_trackid = []
 
     # Track files by extension type
-    supported_extensions = ['.mp3', '.wav', '.aiff']
-    files_by_extension = {ext: 0 for ext in supported_extensions}
+    files_by_extension = {ext: 0 for ext in SUPPORTED_AUDIO_EXTENSIONS}
 
     # Scan local files
     total_files = 0
     for root, _, files in os.walk(master_tracks_dir):
         for file in files:
             file_ext = os.path.splitext(file.lower())[1]
-            if file_ext not in supported_extensions:
+            if file_ext not in SUPPORTED_AUDIO_EXTENSIONS:
                 continue
 
             total_files += 1
@@ -138,7 +135,7 @@ def validate_master_tracks(master_tracks_dir: str) -> Dict[str, int]:
             actual_track_id = None
 
             # Look for the file with any of the supported extensions
-            for ext in supported_extensions:
+            for ext in SUPPORTED_AUDIO_EXTENSIONS:
                 expected_filename_with_ext = expected_filename + ext
                 for root, _, files in os.walk(master_tracks_dir):
                     for file in files:
