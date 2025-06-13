@@ -6,8 +6,6 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
-from mutagen.id3 import ID3, ID3NoHeaderError
-
 from sql.core.unit_of_work import UnitOfWork
 
 
@@ -31,8 +29,8 @@ class RekordboxXmlGenerator:
         self.rating_data = rating_data
 
         # Initialize tracking variables
-        self.file_to_track_id_map = {}
-        self.track_id_to_file_map = {}
+        self.file_to_uri_map = {}
+        self.uri_to_file_map = {}
         self.m3u_files_with_paths = {}
         self.m3u_data = {}
         self.all_tracks = {}
@@ -71,8 +69,7 @@ class RekordboxXmlGenerator:
         else:
             print("No rating data provided")
 
-        # Build track ID mappings
-        self._build_track_id_mappings()
+        self._build_uri_mappings()
 
         # Process M3U files
         self._collect_m3u_files()
@@ -173,62 +170,25 @@ class RekordboxXmlGenerator:
             "local_with_energy": local_tracks_with_energy
         }
 
-    def _extract_track_id_from_file(self, file_path):
+    def _build_uri_mappings(self):
         """
-        Extract the TrackId from an MP3 file's metadata.
-
-        Args:
-            file_path: Path to the MP3 file
-
-        Returns:
-            Track ID string or None if not found
+        Build mappings between file paths and Spotify URIs using the database.
+        Populates self.file_to_uri_map and self.uri_to_file_map
         """
-        try:
-            try:
-                tags = ID3(file_path)
-                if 'TXXX:TRACKID' in tags:
-                    return tags['TXXX:TRACKID'].text[0]
-            except ID3NoHeaderError:
-                pass
-        except Exception as e:
-            print(f"Error reading ID3 tags from {file_path}: {e}")
-        return None
+        print(f"Building URI mapping from FileTrackMappings database table")
 
-    def _build_track_id_mappings(self):
-        """
-        Build mappings between file paths and track IDs.
-        Populates self.file_to_track_id_map and self.track_id_to_file_map
-        """
-        print(f"Building track ID mapping from directory: {self.master_tracks_dir}")
-        total_files = 0
-        files_with_id = 0
+        with UnitOfWork() as uow:
+            # Get all active URI-to-file mappings
+            uri_to_file_mappings = uow.file_track_mapping_repository.get_all_active_uri_to_file_mappings()
 
-        # Before processing the tracks, create a set of all track IDs from rating data
-        rating_track_ids = set()
-        if self.rating_data:
-            for uri in self.rating_data.keys():
-                # Extract just the ID part from the URI
-                if uri.startswith("spotify:track:"):
-                    track_id = uri.split("spotify:track:")[1]
-                    rating_track_ids.add(track_id)
+            for uri, file_path in uri_to_file_mappings.items():
+                # Normalize the file path to use forward slashes for consistency
+                normalized_file_path = file_path.replace('\\', '/')
 
-        for root, _, files in os.walk(self.master_tracks_dir):
-            for file in files:
-                if file.lower().endswith('.mp3'):
-                    total_files += 1
-                    file_path = os.path.join(root, file)
+                self.uri_to_file_map[uri] = normalized_file_path
+                self.file_to_uri_map[normalized_file_path] = uri
 
-                    # Normalize the file path to use forward slashes for consistency
-                    normalized_file_path = file_path.replace('\\', '/')
-
-                    # Extract track ID if present
-                    track_id = self._extract_track_id_from_file(file_path)
-                    if track_id:
-                        files_with_id += 1
-                        self.file_to_track_id_map[normalized_file_path] = track_id
-                        self.track_id_to_file_map[track_id] = normalized_file_path
-
-        print(f"Found {files_with_id} files with embedded TrackIds out of {total_files} total MP3 files")
+        print(f"Found {len(self.uri_to_file_map)} URI-to-file mappings in database")
 
     def _collect_m3u_files(self):
         """
@@ -352,7 +312,7 @@ class RekordboxXmlGenerator:
                             key = f"{artist}_{title}_{path_hash}"
 
                             # Try to get the embedded track ID if available
-                            embedded_track_id = self.file_to_track_id_map.get(file_path)
+                            spotify_uri = self.file_to_uri_map.get(file_path)
 
                             self.all_tracks[file_path] = {
                                 'id': track_id_counter,
@@ -362,7 +322,7 @@ class RekordboxXmlGenerator:
                                 'artist': artist,
                                 'duration': duration,
                                 'path': file_path,
-                                'embedded_track_id': embedded_track_id
+                                'spotify_uri': spotify_uri
                             }
                             track_id_counter += 1
 
@@ -397,7 +357,7 @@ class RekordboxXmlGenerator:
             track_elem.set("Rating", "0")
 
             # Apply ratings and energy if available
-            if self.rating_data and track_data.get('embedded_track_id'):
+            if self.rating_data and track_data.get('spotify_uri'):
                 self._apply_ratings_to_track(track_elem, track_data)
 
             # Set file kind
@@ -436,151 +396,67 @@ class RekordboxXmlGenerator:
 
     def _apply_ratings_to_track(self, track_elem, track_data):
         """
-        Apply ratings and energy values to a track.
+        Apply ratings and energy values to a track using Spotify URI.
 
         Args:
             track_elem: The XML track element to update
             track_data: The track data dictionary
         """
-        embedded_id = track_data['embedded_track_id']
+        spotify_uri = track_data.get('spotify_uri')
 
-        # Create the primary Spotify URI format
-        spotify_uri = f"spotify:track:{embedded_id}"
+        if not spotify_uri or not self.rating_data:
+            return
 
-        found_rating = False
-        rating_entry = None
-        matched_rating_key = None
+        # Direct lookup using URI (no complex matching needed)
+        rating_entry = self.rating_data.get(spotify_uri)
 
-        # First attempt: Direct match with spotify URI format
-        if spotify_uri in self.rating_data:
-            rating_entry = self.rating_data[spotify_uri]
-            found_rating = True
-            matched_rating_key = spotify_uri
-            print(f"Direct URI match found: {spotify_uri}")
+        if not rating_entry:
+            return
 
-        # Second attempt: Match with just the ID
-        elif embedded_id in self.rating_data:
-            rating_entry = self.rating_data[embedded_id]
-            found_rating = True
-            matched_rating_key = embedded_id
-            print(f"Direct ID match found: {embedded_id}")
+        try:
+            # Apply star rating if present
+            if 'rating' in rating_entry and rating_entry['rating']:
+                try:
+                    raw_rating = float(rating_entry['rating'])
+                    floored_rating = math.floor(raw_rating)
 
-        # Third attempt: Look for partial matches in keys
-        if not found_rating:
-            # Try multiple possible formats of the track ID
-            possible_formats = [
-                spotify_uri,  # Standard format
-                embedded_id,  # Just the ID
-                embedded_id.lower(),  # Lowercase ID
-                embedded_id.upper(),  # Uppercase ID
-            ]
+                    # Rekordbox uses: 0=0, 1=51, 2=102, 3=153, 4=204, 5=255
+                    rating_value = min(int(floored_rating * 51), 255)
+                    track_elem.set("Rating", str(rating_value))
+                    self.tracks_with_ratings += 1
 
-            # Check each format against all keys in rating_data
-            for format_id in possible_formats:
-                for key in self.rating_data.keys():
-                    # Check both ways - format in key or key in format
-                    if format_id in key or key in format_id:
-                        rating_entry = self.rating_data[key]
-                        found_rating = True
-                        matched_rating_key = key
-                        print(f"Partial match found: {embedded_id} matched with {key}")
-                        break
+                    print(
+                        f"Applied rating {raw_rating} -> {floored_rating} -> {rating_value} for track {track_data['title']}")
 
-                if found_rating:
-                    break
+                    # Mark this rating key as successfully applied
+                    self.rating_keys_with_success.add(spotify_uri)
+                except Exception as e:
+                    print(f"Error applying rating: {e}")
+                    self.rating_keys_with_failure[spotify_uri] = {
+                        'title': track_data['title'],
+                        'reason': f"Error applying rating: {str(e)}"
+                    }
 
-        # Fourth attempt: For local tracks, try fuzzy title matching
-        if not found_rating and embedded_id and embedded_id.startswith("local_"):
-            for uri, rating_info in self.rating_data.items():
-                if uri.startswith("spotify:local:"):
-                    parts = uri.split(":")
-                    if len(parts) >= 5:
-                        import urllib.parse
-                        try:
-                            encoded_title = parts[4] if len(parts) > 4 else ""
-                            decoded_title = urllib.parse.unquote_plus(encoded_title)
-
-                            # Remove file extension from track_data title if present
-                            track_title = track_data['title']
-                            if track_title.lower().endswith('.mp3') or track_title.lower().endswith(
-                                    '.wav') or track_title.lower().endswith('.aiff'):
-                                track_title = os.path.splitext(track_title)[0]
-
-                            # Normalize both strings for comparison (remove non-alphanumeric chars)
-                            decoded_normalized = ''.join(
-                                c.lower() for c in decoded_title if c.isalnum() or c.isspace())
-                            track_normalized = ''.join(c.lower() for c in track_title if c.isalnum() or c.isspace())
-
-                            # Print debugging info
-                            print(f"Comparing local title: '{decoded_normalized}' with track: '{track_normalized}'")
-
-                            # Check for similarity allowing for some fuzziness
-                            similarity = 0
-                            if decoded_normalized and track_normalized:
-                                # Use longest common substring as a simple similarity measure
-                                similarity = len(
-                                    os.path.commonprefix([decoded_normalized, track_normalized])) / max(
-                                    len(decoded_normalized), len(track_normalized))
-
-                            # Simple fuzzy matching - use multiple strategies
-                            if similarity > 0.7 or decoded_normalized in track_normalized or track_normalized in decoded_normalized:
-                                rating_entry = rating_info
-                                found_rating = True
-                                matched_rating_key = uri
-                                print(f"Local file match found for {track_title} (similarity: {similarity:.2f})")
-                                break
-                        except Exception as e:
-                            print(f"Error in local file matching: {e}")
-                            continue
-
-        # Apply the rating and energy if we found a match
-        if found_rating and rating_entry:
-            try:
-                # Apply star rating if present
-                if 'rating' in rating_entry and rating_entry['rating']:
-                    try:
-                        raw_rating = float(rating_entry['rating'])
-                        floored_rating = math.floor(raw_rating)
-
-                        # Rekordbox uses: 0=0, 1=51, 2=102, 3=153, 4=204, 5=255
-                        rating_value = min(int(floored_rating * 51), 255)
-                        track_elem.set("Rating", str(rating_value))
-                        self.tracks_with_ratings += 1
-
-                        print(
-                            f"Applied rating {raw_rating} -> {floored_rating} -> {rating_value} for track {track_data['title']}")
-
-                        # Mark this rating key as successfully applied
-                        self.rating_keys_with_success.add(matched_rating_key)
-                    except Exception as e:
-                        print(f"Error applying rating: {e}")
-                        # Track the failure
-                        self.rating_keys_with_failure[matched_rating_key] = {
+            # Apply energy as a comment if present
+            if 'energy' in rating_entry and rating_entry['energy']:
+                try:
+                    energy = rating_entry['energy']
+                    track_elem.set("Comments", f"E:{energy}")
+                    print(f"Applied energy {energy} for track {track_data['title']}")
+                except Exception as e:
+                    print(f"Error applying energy: {e}")
+                    if spotify_uri not in self.rating_keys_with_success:
+                        self.rating_keys_with_failure[spotify_uri] = {
                             'title': track_data['title'],
-                            'reason': f"Error applying rating: {str(e)}"
+                            'reason': f"Error applying energy: {str(e)}"
                         }
 
-                # Apply energy as a comment if present
-                if 'energy' in rating_entry and rating_entry['energy']:
-                    try:
-                        energy = rating_entry['energy']
-                        # Use consistent format "E:X" for energy comments
-                        track_elem.set("Comments", f"E:{energy}")
-                        print(f"Applied energy {energy} for track {track_data['title']}")
-                    except Exception as e:
-                        print(f"Error applying energy: {e}")
-                        # Only track as failure if we didn't already apply a rating
-                        if matched_rating_key not in self.rating_keys_with_success:
-                            self.rating_keys_with_failure[matched_rating_key] = {
-                                'title': track_data['title'],
-                                'reason': f"Error applying energy: {str(e)}"
-                            }
-            except Exception as e:
-                print(f"Unexpected error applying ratings: {e}")
-                self.rating_keys_with_failure[matched_rating_key] = {
-                    'title': track_data['title'],
-                    'reason': f"Unexpected error: {str(e)}"
-                }
+        except Exception as e:
+            print(f"Unexpected error applying ratings: {e}")
+            self.rating_keys_with_failure[spotify_uri] = {
+                'title': track_data['title'],
+                'reason': f"Unexpected error: {str(e)}"
+            }
 
     def _create_folder_structure(self):
         """
@@ -860,27 +736,13 @@ class RekordboxXmlGenerator:
 
         # Create list of tracks from rating_data that never got matched to a file
         tracks_with_ratings_not_applied = []
-        for key in unmatched_rating_keys:
-            track_info = {}
-            track_id = None
+        for uri in unmatched_rating_keys:
+            track_info = {'id': uri, 'key': uri}
 
-            # Extract the track ID from the key
-            if key.startswith("spotify:track:"):
-                track_id = key.split("spotify:track:")[1]
-                track_info = {'id': track_id, 'key': key}
-            elif key.startswith("spotify:local:"):
-                # Local track format - keep original ID
-                track_id = key
-                track_info = {'id': key, 'key': key}
-            else:
-                # Assume this is already a track ID
-                track_id = key
-                track_info = {'id': key, 'key': key}
-
-            # Try to get track title from database
+            # Try to get track title from database using URI
             try:
                 with UnitOfWork() as uow:
-                    track = uow.track_repository.get_by_id(track_id)
+                    track = uow.track_repository.get_by_uri(uri)
                     if track:
                         track_info['title'] = track.title
                         track_info['artists'] = track.artists
@@ -889,23 +751,22 @@ class RekordboxXmlGenerator:
                         track_info['db_match'] = False
                         track_info['title'] = "Unknown (Not found in database)"
             except Exception as e:
-                print(f"Error fetching track {track_id} from database: {e}")
+                print(f"Error fetching track {uri} from database: {e}")
                 track_info['db_match'] = False
                 track_info['title'] = f"Unknown (DB error: {str(e)})"
 
             # Get rating and energy from the rating data
-            entry = self.rating_data.get(key, {})
+            entry = self.rating_data.get(uri, {})
             if 'rating' in entry:
                 track_info['rating'] = entry['rating']
             if 'energy' in entry:
                 track_info['energy'] = entry['energy']
 
             # Set reason for failure
-            if key not in self.rating_keys_with_failure:
-                track_info['reason'] = "No matching file found"
+            if uri not in self.rating_keys_with_failure:
+                track_info['reason'] = "No matching file found in FileTrackMappings"
             else:
-                # This key had a specific error during application
-                failure_info = self.rating_keys_with_failure[key]
+                failure_info = self.rating_keys_with_failure[uri]
                 track_info['file_title'] = failure_info.get('title', 'Unknown')
                 track_info['reason'] = failure_info.get('reason', 'Unknown error')
 
