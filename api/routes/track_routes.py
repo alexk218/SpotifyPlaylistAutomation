@@ -222,3 +222,44 @@ def cleanup_stale_mappings():
             "message": str(e),
             "traceback": error_str
         }), 500
+
+
+@bp.route('/duplicates/detect', methods=['GET'])
+def detect_duplicate_tracks():
+    """Generate a report of duplicate tracks without making changes."""
+    try:
+        from api.services.duplicate_track_service import get_duplicate_tracks_report
+
+        result = get_duplicate_tracks_report()
+        return jsonify(result)
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error detecting duplicates: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/duplicates/cleanup', methods=['POST'])
+def cleanup_duplicate_tracks():
+    """Clean up duplicate tracks by removing duplicates and merging playlist associations."""
+    try:
+        from api.services.duplicate_track_service import detect_and_cleanup_duplicate_tracks
+
+        data = request.get_json() or {}
+        dry_run = data.get('dry_run', False)
+
+        result = detect_and_cleanup_duplicate_tracks(dry_run=dry_run)
+        return jsonify(result)
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error cleaning up duplicates: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
