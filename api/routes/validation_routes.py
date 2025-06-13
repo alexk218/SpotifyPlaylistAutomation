@@ -57,13 +57,13 @@ def validate_playlists_m3u():
         }), 500
 
 
-@bp.route('/track-metadata', methods=['GET'])
-def validate_track_metadata():
-    """Validate track metadata in the master tracks directory."""
+@bp.route('/file-mappings', methods=['GET'])
+def validate_file_mappings():
+    """Validate track-file mappings in the master tracks directory."""
     master_tracks_dir = request.args.get('masterTracksDir') or current_app.config['MASTER_TRACKS_DIRECTORY_SSD']
 
     try:
-        result = validation_service.validate_track_metadata(master_tracks_dir)
+        result = validation_service.validate_file_mappings(master_tracks_dir)
         return jsonify({
             "success": True,
             **result
