@@ -149,7 +149,6 @@ def create_execution_response(
     )
 
 
-# NEW: Helper function to convert SyncResponse to flattened precomputed changes
 def create_flattened_precomputed_changes(sync_response: SyncResponse) -> Dict[str, Any]:
     """
     Convert a SyncResponse to the flattened format expected by sync functions.
@@ -183,7 +182,6 @@ def create_flattened_precomputed_changes(sync_response: SyncResponse) -> Dict[st
     return flattened
 
 
-# NEW: Helper function to convert client precomputed changes to flattened format
 def normalize_precomputed_changes(precomputed_changes: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert any format of precomputed changes to the standardized flattened format.
@@ -247,6 +245,19 @@ def format_playlist_item(playlist_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def format_track_item(track_data: Dict[str, Any]) -> Dict[str, Any]:
     """Format track data for consistent API responses."""
+
+    # Helper function to format duration for display
+    def format_duration(duration_ms):
+        if duration_ms is None:
+            return "Unknown"
+        total_seconds = duration_ms // 1000
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        return f"{minutes}:{seconds:02d}"
+
+    duration_ms = track_data.get('duration_ms')
+    old_duration_ms = track_data.get('old_duration_ms')
+
     return {
         "uri": track_data.get('uri'),
         "id": track_data.get('id'),
@@ -258,7 +269,11 @@ def format_track_item(track_data: Dict[str, Any]) -> Dict[str, Any]:
         "old_artists": track_data.get('old_artists'),
         "old_title": track_data.get('old_title'),
         "old_album": track_data.get('old_album'),
-        "changes": track_data.get('changes', [])
+        "changes": track_data.get('changes', []),
+        "duration_ms": duration_ms,
+        "duration_formatted": format_duration(duration_ms),
+        "old_duration_ms": old_duration_ms,
+        "old_duration_formatted": format_duration(old_duration_ms)
     }
 
 
