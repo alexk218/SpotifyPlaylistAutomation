@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app
 import traceback
 from api.services import track_service
+from api.services.duplicate_track_service import get_duplicate_tracks_report, detect_and_cleanup_duplicate_tracks
 
 bp = Blueprint('tracks', __name__, url_prefix='/api/tracks')
 
@@ -228,8 +229,6 @@ def cleanup_stale_mappings():
 def detect_duplicate_tracks():
     """Generate a report of duplicate tracks without making changes."""
     try:
-        from api.services.duplicate_track_service import get_duplicate_tracks_report
-
         result = get_duplicate_tracks_report()
         return jsonify(result)
     except Exception as e:
@@ -247,8 +246,6 @@ def detect_duplicate_tracks():
 def cleanup_duplicate_tracks():
     """Clean up duplicate tracks by removing duplicates and merging playlist associations."""
     try:
-        from api.services.duplicate_track_service import detect_and_cleanup_duplicate_tracks
-
         data = request.get_json() or {}
         dry_run = data.get('dry_run', False)
 
