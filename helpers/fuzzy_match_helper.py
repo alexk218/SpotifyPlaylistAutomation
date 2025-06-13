@@ -1,9 +1,9 @@
-import hashlib
 import os
 import re
 from typing import List, Dict, Any, Tuple, Optional
 
 import Levenshtein
+
 from sql.models.track import Track
 from utils.logger import setup_logger
 
@@ -40,8 +40,6 @@ class FuzzyMatcher:
 
     def __init__(self, tracks: List[Track], existing_mappings: Dict[str, str] = None):
         """
-        Initialize the fuzzy matcher.
-
         Args:
             tracks: List of all tracks to match against
             existing_mappings: Dictionary of {file_path: spotify_uri} for already mapped files
@@ -345,13 +343,6 @@ class FuzzyMatcher:
     def _get_mapping_penalty(self, track_uri: str, current_file_path: str = None) -> float:
         """
         Calculate penalty for tracks that are already mapped to other files.
-
-        Args:
-            track_uri: The URI of the track being considered
-            current_file_path: The path of the current file being matched (to avoid self-penalty)
-
-        Returns:
-            Penalty multiplier (0.0 to 1.0). 0.0 means completely exclude, 1.0 means no penalty
         """
         if not track_uri or track_uri not in self.mapped_uris:
             return 1.0  # No penalty if not mapped
@@ -360,8 +351,16 @@ class FuzzyMatcher:
         if current_file_path and self.existing_mappings.get(current_file_path) == track_uri:
             return 1.0  # No penalty for existing mapping to same file
 
-        # Heavy penalty for tracks mapped to other files
-        return 0.1  # 90% confidence reduction, but don't completely exclude
+        # Check if the mapped files still exist
+        mapped_files = [file_path for file_path, uri in self.existing_mappings.items() if uri == track_uri]
+        existing_mapped_files = [file_path for file_path in mapped_files if os.path.exists(file_path)]
+
+        if not existing_mapped_files:
+            # All mapped files for this track no longer exist - no penalty
+            return 1.0
+
+        # Some or all mapped files still exist - apply penalty
+        return 0.1  # 90% confidence reduction
 
     def _normalize_text(self, text: str) -> str:
         """Normalize text for matching."""

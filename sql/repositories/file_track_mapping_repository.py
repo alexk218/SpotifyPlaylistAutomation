@@ -65,6 +65,37 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         results = self.fetch_all(query)
         return {row.Uri: row.FilePath for row in results}
 
+    def cleanup_stale_mappings(self) -> Dict[str, int]:
+        """Clean up mappings that point to files that no longer exist."""
+        query = """
+            SELECT MappingId, FilePath, Uri 
+            FROM FileTrackMappings 
+            WHERE IsActive = 1
+        """
+
+        results = self.fetch_all(query)
+        stale_mappings = []
+
+        for row in results:
+            if not os.path.exists(row.FilePath):
+                stale_mappings.append(row.MappingId)
+
+        # Soft delete stale mappings
+        cleaned_count = 0
+        if stale_mappings:
+            placeholders = ','.join(['?' for _ in stale_mappings])
+            cleanup_query = f"""
+                UPDATE FileTrackMappings 
+                SET IsActive = 0 
+                WHERE MappingId IN ({placeholders})
+            """
+            cleaned_count = self.execute_non_query(cleanup_query, stale_mappings)
+
+        return {
+            'checked_count': len(results),
+            'cleaned_count': cleaned_count
+        }
+
     def get_file_to_uri_mappings(self) -> Dict[str, str]:
         """
         Get all active file-to-URI mappings in a single query.

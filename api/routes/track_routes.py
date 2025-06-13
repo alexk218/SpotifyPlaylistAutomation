@@ -205,3 +205,20 @@ def download_batch():
             "message": str(e),
             "traceback": error_str
         }), 500
+
+
+@bp.route('/cleanup-mappings', methods=['POST'])
+def cleanup_stale_mappings():
+    """Clean up file mappings that point to non-existent files."""
+    try:
+        result = track_service.cleanup_stale_file_mappings()
+        return jsonify(result)
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error cleaning up mappings: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500

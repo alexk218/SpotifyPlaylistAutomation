@@ -824,3 +824,24 @@ def download_all_missing_tracks(uris: List[str], download_dir: str, progress_cal
         'success_count': len(successful_downloads),
         'failure_count': len(failed_downloads)
     }
+
+
+def cleanup_stale_file_mappings() -> Dict[str, Any]:
+    """
+    Clean up file mappings that point to files that no longer exist.
+
+    Returns:
+        Dictionary with cleanup results
+    """
+    mapping_logger.info("Starting cleanup of stale file mappings")
+
+    with UnitOfWork() as uow:
+        cleanup_stats = uow.file_track_mapping_repository.cleanup_stale_mappings()
+
+        mapping_logger.info(f"Cleanup complete: {cleanup_stats['cleaned_count']} stale mappings removed")
+
+        return {
+            "success": True,
+            "message": f"Cleaned up {cleanup_stats['cleaned_count']} stale file mappings",
+            "stats": cleanup_stats
+        }
