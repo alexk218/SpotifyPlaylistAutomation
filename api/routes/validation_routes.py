@@ -1,5 +1,5 @@
-# api/routes/validation_routes.py
 import json
+import os
 import traceback
 from flask import Blueprint, request, jsonify, current_app
 from api.services import validation_service
@@ -149,6 +149,118 @@ def remove_file_mapping():
     except Exception as e:
         error_str = traceback.format_exc()
         print(f"Error removing file mapping: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/remove-duplicate-mapping', methods=['POST'])
+def remove_duplicate_mapping():
+    """Remove a specific file mapping from duplicates."""
+    data = request.get_json()
+    file_path = data.get('filePath')
+    uri = data.get('uri')
+
+    if not file_path:
+        return jsonify({
+            "success": False,
+            "message": "File path is required"
+        }), 400
+
+    try:
+        with UnitOfWork() as uow:
+            # Verify this is actually a duplicate before removing
+            files_with_uri = uow.file_track_mapping_repository.get_files_by_uri(uri)
+
+            if len(files_with_uri) <= 1:
+                return jsonify({
+                    "success": False,
+                    "message": "This is not a duplicate mapping"
+                })
+
+            success = uow.file_track_mapping_repository.delete_by_file_path(file_path)
+            if success:
+                uow.commit()
+                return jsonify({
+                    "success": True,
+                    "message": "Duplicate mapping removed successfully"
+                })
+            else:
+                return jsonify({
+                    "success": False,
+                    "message": "No mapping found for the specified file"
+                })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error removing duplicate mapping: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+# TODO: move this logic to service
+@bp.route('/create-file-mapping', methods=['POST'])
+def create_file_mapping():
+    """Create a new file mapping between a file and a Spotify URI."""
+    data = request.get_json()
+    file_path = data.get('filePath')
+    uri = data.get('uri')
+
+    if not file_path or not uri:
+        return jsonify({
+            "success": False,
+            "message": "File path and URI are required"
+        }), 400
+
+    try:
+        with UnitOfWork() as uow:
+            # Verify the URI exists in the tracks table
+            track = uow.track_repository.get_by_uri(uri)
+            if not track:
+                return jsonify({
+                    "success": False,
+                    "message": "Track URI not found in database"
+                })
+
+            # Verify file exists
+            if not os.path.exists(file_path):
+                return jsonify({
+                    "success": False,
+                    "message": "File not found"
+                })
+
+            # Check if mapping already exists for this file
+            existing_uri = uow.file_track_mapping_repository.get_uri_by_file_path(file_path)
+            if existing_uri:
+                if existing_uri == uri:
+                    return jsonify({
+                        "success": True,
+                        "message": "Mapping already exists"
+                    })
+                else:
+                    # Remove old mapping first
+                    uow.file_track_mapping_repository.delete_by_file_path(file_path)
+
+            # Create new mapping
+            uow.file_track_mapping_repository.add_mapping_by_uri(file_path, uri)
+            uow.commit()
+
+            return jsonify({
+                "success": True,
+                "message": "File mapping created successfully",
+                "track_info": f"{track.artists} - {track.title}"
+            })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error creating file mapping: {e}")
         print(error_str)
         return jsonify({
             "success": False,

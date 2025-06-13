@@ -125,18 +125,21 @@ def validate_track_metadata(master_tracks_dir):
     real_duplicates = {}
     for uri, mappings_list in mappings_by_uri.items():
         if len(mappings_list) > 1:
-            # Get track title from database
-            track_title = "Unknown"
-            if uri in db_tracks_by_uri:
-                track = db_tracks_by_uri[uri]
-                artist = track.get_primary_artist() if hasattr(track, 'get_primary_artist') else \
-                    track.artists.split(',')[0].strip()
-                track_title = f"{artist} - {track.title}"
+            # Filter out inactive mappings and non-existent files
+            active_mappings = [m for m in mappings_list if m.is_active and os.path.exists(m.file_path)]
 
-            # Create detailed file information for each duplicate
-            file_details = []
-            for mapping in mappings_list:
-                if os.path.exists(mapping.file_path):
+            if len(active_mappings) > 1:
+                # Get track title from database
+                track_title = "Unknown"
+                if uri in db_tracks_by_uri:
+                    track = db_tracks_by_uri[uri]
+                    artist = track.get_primary_artist() if hasattr(track, 'get_primary_artist') else \
+                        track.artists.split(',')[0].strip()
+                    track_title = f"{artist} - {track.title}"
+
+                # Create detailed file information for each duplicate
+                file_details = []
+                for mapping in active_mappings:
                     try:
                         if mapping.file_path.lower().endswith('.mp3'):
                             audio = MP3(mapping.file_path)
@@ -153,14 +156,17 @@ def validate_track_metadata(master_tracks_dir):
                         'filename': os.path.basename(mapping.file_path),
                         'path': mapping.file_path,
                         'duration': duration,
-                        'duration_formatted': duration_formatted
+                        'duration_formatted': duration_formatted,
+                        'file_size': mapping.file_size or (
+                            os.path.getsize(mapping.file_path) if os.path.exists(mapping.file_path) else 0),
+                        'last_modified': mapping.last_modified if mapping.last_modified else "Unknown"
                     })
 
-            real_duplicates[uri] = {
-                'track_title': track_title,
-                'files': file_details
-            }
-
+                real_duplicates[uri] = {
+                    'track_title': track_title,
+                    'files': file_details,
+                    'uri': uri
+                }
     # Sort potential mismatches by confidence
     potential_mismatches.sort(key=lambda x: x['confidence'])
 
