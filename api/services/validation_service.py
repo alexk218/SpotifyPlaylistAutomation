@@ -186,7 +186,7 @@ def validate_file_mappings(master_tracks_dir):
 
 def validate_playlists_m3u(playlists_dir):
     """
-    Validate M3U playlists against database information using URI-based FileTrackMappings system
+    Validate M3U playlists against db information using URI-based FileTrackMappings system
 
     Args:
         playlists_dir: Directory containing m3u playlist files
@@ -194,7 +194,6 @@ def validate_playlists_m3u(playlists_dir):
     Returns:
         Dictionary with validation results
     """
-    # Build URI-to-file mapping from FileTrackMappings table
     uri_to_file_map = build_uri_to_file_mapping_from_database()
 
     # Get all playlists from database

@@ -72,7 +72,10 @@ def generate_playlists():
         return jsonify({
             "success": True,
             "message": f"Successfully regenerated {result['playlists_updated']} M3U playlists. {result['playlists_failed']} failed.",
-            "stats": result
+            "playlists_updated": result['playlists_updated'],
+            "playlists_failed": result['playlists_failed'],
+            "updated_playlists": result['updated_playlists'],
+            "total_processed": result['total_playlists_to_update']
         })
     except Exception as e:
         error_str = traceback.format_exc()
