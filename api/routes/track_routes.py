@@ -10,7 +10,6 @@ def search_tracks():
     """Search for tracks that match the query."""
     query = request.args.get('query', '')
     limit = int(request.args.get('limit', 20))
-    # include_local = request.args.get('include_local', 'true').lower() == 'true'
     search_type = request.args.get('type', 'general')  # 'general' or 'matching'
 
     try:

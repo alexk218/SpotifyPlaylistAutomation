@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 
 from mutagen.id3 import ID3, ID3NoHeaderError
 
+from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
 from helpers.file_helper import embed_track_id
 from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match
 from sql.core.unit_of_work import UnitOfWork
@@ -13,19 +14,13 @@ from utils.logger import setup_logger
 
 mapping_logger = setup_logger('file_mapping', 'sql', 'file_mapping.log')
 
-SUPPORTED_AUDIO_EXTENSIONS = {'.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.wma'}
-
 
 def search_tracks_file_system(master_tracks_dir, query):
     """
     Search for tracks in file system that match the query.
 
-    Args:
-        master_tracks_dir: Directory containing master tracks
-        query: Search query string
-
     Returns:
-        List of matching track information
+        List of matching track information with URI data and calculated confidence
     """
     if not query:
         return []
@@ -33,10 +28,25 @@ def search_tracks_file_system(master_tracks_dir, query):
     results = []
     query = query.lower()
 
+    # Get all file mappings and tracks from database for quick lookup
+    with UnitOfWork() as uow:
+        all_mappings = uow.file_track_mapping_repository.get_all()
+        all_tracks = uow.track_repository.get_all()
+        tracks_by_uri = uow.track_repository.get_all_as_dict_by_uri()
+
+    # Create lookup dictionary: file_path -> mapping
+    mapping_by_path = {}
+    for mapping in all_mappings:
+        if mapping.is_active:
+            normalized_path = os.path.normpath(mapping.file_path)
+            mapping_by_path[normalized_path] = mapping
+
     # Scan the files in the master directory
     for root, _, files in os.walk(master_tracks_dir):
         for file in files:
-            if not file.lower().endswith('.mp3'):
+            # Check if file is a supported audio format
+            file_ext = os.path.splitext(file)[1].lower()
+            if file_ext not in SUPPORTED_AUDIO_EXTENSIONS:
                 continue
 
             file_path = os.path.join(root, file)
@@ -44,40 +54,67 @@ def search_tracks_file_system(master_tracks_dir, query):
 
             # Check if query is in filename
             if query in filename_no_ext:
-                # Get TrackId if present
+                # Look up URI and track info from FileTrackMappings
+                normalized_path = os.path.normpath(file_path)
+                mapping = mapping_by_path.get(normalized_path)
+
+                uri = None
                 track_id = None
-                embedded_artist_title = "Unknown"
-                try:
-                    tags = ID3(file_path)
-                    if 'TXXX:TRACKID' in tags:
-                        track_id = tags['TXXX:TRACKID'].text[0]
+                track_info = "Unknown"
+                confidence = 0
 
-                    # Try to get artist and title from ID3 tags
-                    artist = ""
-                    title = ""
-                    if 'TPE1' in tags:  # Artist
-                        artist = str(tags['TPE1'])
-                    if 'TIT2' in tags:  # Title
-                        title = str(tags['TIT2'])
+                if mapping and mapping.uri:
+                    uri = mapping.uri
 
-                    if artist and title:
-                        embedded_artist_title = f"{artist} - {title}"
+                    # Get track info from Tracks table using URI
+                    track = tracks_by_uri.get(uri)
+                    if track:
+                        track_id = track.get_spotify_track_id()
+                        track_info = f"{track.artists} - {track.title}"
+
+                        try:
+                            fuzzy_matches = find_fuzzy_matches(
+                                filename=file,
+                                tracks=all_tracks,
+                                threshold=0.0,
+                                max_matches=10,
+                                exclude_track_id=None
+                            )
+
+                            # Find the confidence for our specifically mapped track
+                            mapped_track_confidence = None
+                            for match in fuzzy_matches:
+                                if match.get('uri') == uri:
+                                    mapped_track_confidence = match.get('confidence', 0.7)
+                                    break
+
+                            if mapped_track_confidence is not None:
+                                confidence = mapped_track_confidence
+                            else:
+                                # Our mapped track wasn't in the fuzzy matches (low similarity)
+                                # This suggests the mapping might be incorrect or the filename is very different
+                                confidence = 0.4  # Lower confidence for poor filename matches
+
+                        except Exception as e:
+                            print(f"Error calculating confidence for {file}: {e}")
                     else:
-                        embedded_artist_title = filename_no_ext
-                except Exception as e:
-                    print(f"Error reading ID3 tags from {file_path}: {e}")
+                        track_info = f"Mapped to: {uri}"
+                        confidence = 0.5  # Has mapping but track not found - medium confidence
 
                 results.append({
                     'file': file,
+                    'uri': uri,
                     'track_id': track_id,
-                    'embedded_artist_title': embedded_artist_title,
+                    'track_info': track_info,
                     'filename': filename_no_ext,
-                    'confidence': 1.0 if track_id else 0,
-                    'full_path': file_path
+                    'confidence': confidence,
+                    'full_path': file_path,
+                    'has_mapping': mapping is not None,
+                    'file_extension': file_ext
                 })
 
-    # Sort results by relevance (tracks with IDs first, then by filename match)
-    results.sort(key=lambda x: (x['track_id'] is None, x['file'].lower().find(query)))
+    # Sort results by relevance (higher confidence first, then by filename match position)
+    results.sort(key=lambda x: (-x['confidence'], x['file'].lower().find(query)))
 
     return results
 
