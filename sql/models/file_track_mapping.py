@@ -107,7 +107,7 @@ class FileTrackMapping:
         """Check if this mapping is for a local Spotify file."""
         return self.uri.startswith('spotify:local:') if self.uri else False
 
-    def is_track_mapping(self) -> bool:
+    def is_spotify_track_mapping(self) -> bool:
         """Check if this mapping is for a regular Spotify track."""
         return self.uri.startswith('spotify:track:') if self.uri else False
 
@@ -118,7 +118,7 @@ class FileTrackMapping:
         Returns:
             Track ID for regular tracks, None for local files
         """
-        if self.is_track_mapping():
+        if self.is_spotify_track_mapping():
             return self.uri.split(':')[2]
         return None
 

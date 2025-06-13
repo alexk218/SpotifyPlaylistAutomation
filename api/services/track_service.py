@@ -183,7 +183,7 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     """
     Analyze which files need mapping to Spotify tracks.
     """
-    mapping_logger.info(f"Starting OPTIMIZED file mapping analysis for directory: {master_tracks_dir}")
+    mapping_logger.info(f"Starting file mapping analysis for directory: {master_tracks_dir}")
     start_time = time.time()
 
     with UnitOfWork() as uow:
@@ -748,16 +748,9 @@ def embed_metadata_batch(master_tracks_dir, user_selections):
     }
 
 
-def direct_tracks_compare(master_tracks_dir, master_playlist_id=None):
+def direct_tracks_compare(master_tracks_dir):
     """
-    Directly compare Spotify tracks with local tracks from the database.
-
-    Args:
-        master_tracks_dir: Directory containing master tracks
-        master_playlist_id: Optional ID of the master playlist
-
-    Returns:
-        Dictionary with comparison results
+    Directly compare Spotify tracks with local tracks from the database using FileTrackMapping.
     """
     # 1. Get all tracks from the master playlist in the database
     with UnitOfWork() as uow:
@@ -775,52 +768,44 @@ def direct_tracks_compare(master_tracks_dir, master_playlist_id=None):
                 'added_at': track.added_to_master.isoformat() if track.added_to_master else None
             })
 
-        # 2. Get all local tracks (tracks that have paths associated with them)
-        # Create a set of track IDs that are verified to exist locally
-        local_track_ids = set()
+        # 2. Get all file mappings from the database
+        all_mappings = uow.file_track_mapping_repository.get_all()
+
+        # Create sets for quick lookup
+        mapped_uris = set()
         local_tracks_info = []
 
-        # Scan the master tracks directory to find which files have TrackIds
-        # Scan local files to find which ones have TrackIds embedded
-        for root, _, files in os.walk(master_tracks_dir):
-            for filename in files:
-                if not filename.lower().endswith('.mp3'):
-                    continue
+        for mapping in all_mappings:
+            if not mapping.is_active:
+                continue
 
-                file_path = os.path.join(root, filename)
+            # Verify the file still exists
+            if not os.path.exists(mapping.file_path):
+                continue
 
-                # Check if this file has a TrackId
-                try:
-                    try:
-                        tags = ID3(file_path)
-                        if 'TXXX:TRACKID' in tags:
-                            track_id = tags['TXXX:TRACKID'].text[0]
-                            local_track_ids.add(track_id)
-                            local_tracks_info.append({
-                                'path': file_path,
-                                'filename': filename,
-                                'track_id': track_id,
-                                'size': os.path.getsize(file_path),
-                                'modified': os.path.getmtime(file_path)
-                            })
-                    except ID3NoHeaderError:
-                        pass
-                except Exception as e:
-                    print(f"Error reading ID3 tags from {file_path}: {e}")
+            mapped_uris.add(mapping.uri)
+            local_tracks_info.append({
+                'path': mapping.file_path,
+                'filename': mapping.get_filename(),
+                'uri': mapping.uri,
+                'track_id': mapping.get_track_id(),
+                'size': mapping.file_size or (
+                    os.path.getsize(mapping.file_path) if os.path.exists(mapping.file_path) else 0),
+                'modified': mapping.last_modified if mapping.last_modified else (
+                    os.path.getmtime(mapping.file_path) if os.path.exists(mapping.file_path) else 0),
+                'file_hash': mapping.file_hash,
+                'is_local_file': mapping.is_local_file_mapping()
+            })
 
         # 3. Compare to find missing tracks
         missing_tracks = []
         for track in master_tracks_list:
-            # Skip tracks without an ID (shouldn't happen but just in case)
-            if not track['id']:
+            # Skip tracks without a URI
+            if not track['uri']:
                 continue
 
-            # Skip tracks that are local files
-            if track['id'].startswith('local_'):
-                continue
-
-            # If track ID is not in local tracks, it's missing
-            if track['id'] not in local_track_ids:
+            # If track URI is not in mapped files, it's missing
+            if track['uri'] not in mapped_uris:
                 missing_tracks.append(track)
 
         # Sort missing tracks by added_at date, newest first
@@ -834,12 +819,11 @@ def direct_tracks_compare(master_tracks_dir, master_playlist_id=None):
             "database_time": datetime.now().isoformat(),
             "master_tracks": master_tracks_list,
             "local_tracks": {
-                "count": len(local_track_ids),
+                "count": len(mapped_uris),
                 "tracks": local_tracks_info[:100]  # Limit to avoid huge payloads
             },
             "missing_tracks": missing_tracks,
-            "music_directory": master_tracks_dir,
-            "master_playlist_id": master_playlist_id
+            "master_tracks_dir": master_tracks_dir,
         }
 
 

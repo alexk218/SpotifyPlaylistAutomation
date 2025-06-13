@@ -249,7 +249,6 @@ def embed_metadata():
 def direct_tracks_compare():
     """Directly compare Spotify tracks with local tracks from the database."""
     master_tracks_dir = request.args.get('master_tracks_dir') or current_app.config['MASTER_TRACKS_DIRECTORY_SSD']
-    master_playlist_id = request.args.get('master_playlist_id') or current_app.config['MASTER_PLAYLIST_ID']
 
     if not master_tracks_dir:
         return jsonify({
@@ -258,7 +257,7 @@ def direct_tracks_compare():
         }), 400
 
     try:
-        result = track_service.direct_tracks_compare(master_tracks_dir, master_playlist_id)
+        result = track_service.direct_tracks_compare(master_tracks_dir)
         return jsonify({
             "success": True,
             **result
