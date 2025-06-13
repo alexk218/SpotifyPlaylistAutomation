@@ -30,7 +30,6 @@ class FuzzyMatchResult:
             'album': self.track.album or ('Local Files' if self.track.is_local else 'Unknown Album'),
             'is_local': self.track.is_local,
             'confidence': self.confidence,
-            'ratio': self.confidence,  # For backwards compatibility
             'match_type': self.match_type,
             'match_details': self.match_details
         }

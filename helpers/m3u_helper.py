@@ -8,6 +8,7 @@ from mutagen.mp3 import MP3
 from mutagen.wave import WAVE
 from mutagen.aiff import AIFF
 
+from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -74,7 +75,7 @@ def build_track_id_mapping(master_tracks_dir: str) -> Dict[str, str]:
     for root, _, files in os.walk(master_tracks_dir):
         for filename in files:
             file_ext = os.path.splitext(filename.lower())[1]
-            if file_ext not in ['.mp3', '.wav', '.aiff']:
+            if file_ext not in SUPPORTED_AUDIO_EXTENSIONS:
                 continue
 
             total_files += 1
