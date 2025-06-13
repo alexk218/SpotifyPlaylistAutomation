@@ -104,8 +104,7 @@ def fetch_playlists(spotify_client, exclusion_config=None) -> List[PlaylistInfo]
     return my_playlists
 
 
-def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
-    Tuple[str, str, str, str, str, datetime]]:
+def fetch_master_tracks(spotify_client, master_playlist_id):
     """
     Fetch all unique tracks from 'MASTER' playlist.
 
@@ -114,7 +113,7 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
         master_playlist_id: ID of the master playlist
 
     Returns:
-        List of tuples containing (Uri, TrackId, TrackTitle, Artists, Album, AddedAt)
+        List of tuples containing (Uri, TrackId, TrackTitle, Artists, Album, AddedAt, Duration)
     """
     spotify_logger.info(f"Fetching all unique tracks from 'MASTER' playlist (ID: {master_playlist_id})")
     all_tracks = []
@@ -128,7 +127,7 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
                 master_playlist_id,
                 offset=offset,
                 limit=limit,
-                fields='items(added_at,track(id,name,artists(name),album(name),uri,is_local)),next'  # Added 'uri' field
+                fields='items(added_at,track(id,name,artists(name),album(name),uri,is_local,duration_ms)),next'
             )
 
             if not tracks['items']:
@@ -143,6 +142,7 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
                     added_at = datetime.strptime(track_item['added_at'], '%Y-%m-%dT%H:%M:%SZ')
 
                     spotify_uri = track.get('uri', '')
+                    duration_ms = track.get('duration_ms')
 
                     is_local = track.get('is_local', False)
                     if is_local:
@@ -153,7 +153,7 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
                         album_name = track.get('album', {}).get('name', 'Local File')
 
                         spotify_logger.info(
-                            f"Found local file: '{track_name}' by '{artist_names}' (URI: {spotify_uri})")
+                            f"Found local file: '{track_name}' by '{artist_names}' (URI: {spotify_uri}) Duration: {duration_ms}ms")
                     else:
                         # Regular Spotify track
                         track_id = track.get('id')
@@ -162,10 +162,10 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
                         album_name = track.get('album', {}).get('name', '')
 
                         spotify_logger.debug(
-                            f"Found regular track: '{track_name}' by '{artist_names}' (URI: {spotify_uri})")
+                            f"Found regular track: '{track_name}' by '{artist_names}' (URI: {spotify_uri}) Duration: {duration_ms}ms")
 
-                    # Add to our list of tracks - URI is now the first element
-                    all_tracks.append((spotify_uri, track_id, track_name, artist_names, album_name, added_at))
+                    all_tracks.append(
+                        (spotify_uri, track_id, track_name, artist_names, album_name, added_at, duration_ms))
 
                 except Exception as e:
                     spotify_logger.error(f"Error processing track: {e}")
@@ -191,7 +191,7 @@ def fetch_master_tracks(spotify_client, master_playlist_id: str) -> List[
     processed_uris = set()
 
     for track in all_tracks:
-        spotify_uri, track_id, track_name, artist_names, album_name, added_at = track
+        spotify_uri, track_id, track_name, artist_names, album_name, added_at, duration_ms = track
 
         if track_id is None:
             # This is a local file - use URI for deduplication
@@ -256,7 +256,7 @@ def get_track_uris_for_playlist(spotify_client, playlist_id: str, force_refresh=
                     playlist_id,
                     offset=offset,
                     limit=limit,
-                    fields='items(track(id,uri,name,artists(name),album(name),is_local)),total'
+                    fields='items(track(id,uri,name,artists(name),album(name),is_local,duration_ms)),total'
                 )
 
                 if not response['items']:
@@ -278,8 +278,9 @@ def get_track_uris_for_playlist(spotify_client, playlist_id: str, force_refresh=
                         if track.get('is_local', False):
                             track_name = track.get('name', '')
                             artist_name = track.get('artists', [{}])[0].get('name', '') if track.get('artists') else ''
+                            duration_ms = track.get('duration_ms', 'Unknown')
                             spotify_logger.debug(
-                                f"Found local file: '{track_name}' by '{artist_name}' (URI: {spotify_uri})")
+                                f"Found local file: '{track_name}' by '{artist_name}' (URI: {spotify_uri}) Duration: {duration_ms}ms")
 
                 # Check if we've processed all tracks
                 if len(response['items']) < limit:
