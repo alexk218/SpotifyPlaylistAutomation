@@ -158,8 +158,8 @@ def sync_playlists_to_db(force_full_refresh=False, skip_confirmation=False, prec
                 existing_playlist = existing_playlists_db[playlist_id]
 
                 # Check if playlist details have changed
-                if (existing_playlist.name != playlist_name.strip() or
-                        existing_playlist.associations_snapshot_id != snapshot_id):
+                if existing_playlist.name != playlist_name.strip():
+                       # or existing_playlist.associations_snapshot_id != snapshot_id):
 
                     # Mark for update
                     playlists_to_update.append({
@@ -255,7 +255,7 @@ def sync_playlists_to_db(force_full_refresh=False, skip_confirmation=False, prec
 
             # Update the playlist with new data
             existing_playlist.name = playlist_data['name']
-            existing_playlist.master_sync_snapshot_id = playlist_data['snapshot_id']
+            # existing_playlist.master_sync_snapshot_id = playlist_data['snapshot_id']
             uow.playlist_repository.update(existing_playlist)
             updated_count += 1
             sync_logger.info(f"Updated playlist: {playlist_data['name']} (ID: {playlist_data['id']})")
