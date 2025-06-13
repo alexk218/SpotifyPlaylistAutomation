@@ -2,11 +2,10 @@ import json
 import os
 import re
 import shutil
+from datetime import datetime
 
 import Levenshtein
-from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
-from datetime import datetime
 
 from helpers.m3u_helper import (
     build_track_id_mapping,
@@ -20,174 +19,144 @@ from sql.core.unit_of_work import UnitOfWork
 
 def validate_track_metadata(master_tracks_dir):
     """
-    Validate track metadata in the master tracks directory.
-
-    Args:
-        master_tracks_dir: Directory containing master tracks
-
-    Returns:
-        Dictionary with validation results
+    Validate track file mappings using the FileTrackMappings table.
     """
     # Track statistics
     total_files = 0
-    files_with_track_id = 0
-    files_without_track_id = 0
+    files_with_mapping = 0
+    files_without_mapping = 0
     potential_mismatches = []
-    duplicate_track_ids = {}
-    files_missing_trackid = []
+    duplicate_mappings = {}
+    files_missing_mapping = []
 
-    # Get all tracks from database for comparison
+    # Get all tracks and mappings from database
     with UnitOfWork() as uow:
         db_tracks = uow.track_repository.get_all()
-        db_tracks_by_id = {track.track_id: track for track in db_tracks}
+        all_mappings = uow.file_track_mapping_repository.get_all()
 
-    # Create a map of IDs to expected filenames for comparison
+        # Create lookup dictionaries
+        db_tracks_by_uri = {track.uri: track for track in db_tracks}
+        mapping_by_path = {mapping.file_path: mapping for mapping in all_mappings if mapping.is_active}
+        mappings_by_uri = {}
+
+        # Group mappings by URI to detect duplicates
+        for mapping in all_mappings:
+            if mapping.is_active and mapping.uri:
+                if mapping.uri not in mappings_by_uri:
+                    mappings_by_uri[mapping.uri] = []
+                mappings_by_uri[mapping.uri].append(mapping)
+
+    # Create expected filenames for comparison
     expected_filenames = {}
-    for track_id, track in db_tracks_by_id.items():
+    for uri, track in db_tracks_by_uri.items():
         artist = track.get_primary_artist() if hasattr(track, 'get_primary_artist') else track.artists.split(',')[
             0].strip()
         title = track.title
         expected_filename = f"{artist} - {title}"
-        expected_filenames[track_id] = expected_filename.lower()
+        expected_filenames[uri] = expected_filename.lower()
 
     # Scan local files
     for root, _, files in os.walk(master_tracks_dir):
         for file in files:
-            if not file.lower().endswith('.mp3'):
+            if not file.lower().endswith(('.mp3', '.flac', '.wav', '.m4a')):
                 continue
 
             total_files += 1
             file_path = os.path.join(root, file)
             filename_no_ext = os.path.splitext(file)[0].lower()
 
+            # Get file duration
             try:
-                tags = ID3(file_path)
-                if 'TXXX:TRACKID' in tags:
-                    track_id = tags['TXXX:TRACKID'].text[0]
-                    files_with_track_id += 1
-
-                    # Add to duplicate detection
-                    if track_id in duplicate_track_ids:
-                        duplicate_track_ids[track_id].append(file)
-                    else:
-                        duplicate_track_ids[track_id] = [file]
-
-                    # Check if track_id exists in database
-                    if track_id in db_tracks_by_id:
-                        db_track = db_tracks_by_id[track_id]
-                        expected_filename = expected_filenames[track_id]
-
-                        # Calculate filename similarity
-                        similarity = Levenshtein.ratio(filename_no_ext, expected_filename)
-
-                        potential_mismatches.append({
-                            'file': file,
-                            'track_id': track_id,
-                            'embedded_artist_title': f"{db_track.artists} - {db_track.title}",
-                            'filename': filename_no_ext,
-                            'confidence': similarity,
-                            'full_path': file_path,
-                            'duration': duration,
-                            'duration_formatted': duration_formatted
-                        })
-                    else:
-                        try:
-                            audio = MP3(file_path)
-                            duration = audio.info.length
-                            duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
-                        except Exception as e:
-                            duration = 0
-                            duration_formatted = "Unknown"
-                        # Track ID not found in database
-                        potential_mismatches.append({
-                            'file': file,
-                            'track_id': track_id,
-                            'embedded_artist_title': "Unknown (TrackId not in database)",
-                            'filename': filename_no_ext,
-                            'confidence': 0,
-                            'full_path': file_path,
-                            'reason': 'track_id_not_in_db',
-                            'duration': duration,
-                            'duration_formatted': duration_formatted
-                        })
-                else:
-                    try:
-                        audio = MP3(file_path)
-                        duration = audio.info.length
-                        duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
-                    except Exception:
-                        duration = 0
-                        duration_formatted = "Unknown"
-
-                    files_without_track_id += 1
-                    # Add to list of files missing TrackId
-                    files_missing_trackid.append({
-                        'file': file,
-                        'track_id': None,
-                        'embedded_artist_title': "No TrackId",
-                        'filename': filename_no_ext,
-                        'confidence': 0,
-                        'full_path': file_path,
-                        'reason': 'missing_track_id',
-                        'duration': duration,
-                        'duration_formatted': duration_formatted
-                    })
-            except Exception as e:
-                try:
+                if file.lower().endswith('.mp3'):
                     audio = MP3(file_path)
                     duration = audio.info.length
                     duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
-                except Exception:
+                else:
                     duration = 0
                     duration_formatted = "Unknown"
-                files_without_track_id += 1
-                # Add to list of files missing TrackId with error message
-                files_missing_trackid.append({
+            except Exception:
+                duration = 0
+                duration_formatted = "Unknown"
+
+            # Check if file has mapping
+            if file_path in mapping_by_path:
+                mapping = mapping_by_path[file_path]
+                files_with_mapping += 1
+
+                # Check if URI exists in database
+                if mapping.uri in db_tracks_by_uri:
+                    db_track = db_tracks_by_uri[mapping.uri]
+                    expected_filename = expected_filenames[mapping.uri]
+
+                    # Calculate similarity between actual and expected filename
+                    similarity = 1 - (Levenshtein.distance(filename_no_ext, expected_filename) /
+                                      max(len(filename_no_ext), len(expected_filename)))
+
+                    # Flag potential mismatches (low similarity)
+                    if similarity < 0.7:
+                        confidence = round(similarity * 100, 1)
+                        potential_mismatches.append({
+                            'file': file,
+                            'uri': mapping.uri,
+                            'embedded_artist_title': f"{db_track.artists} - {db_track.title}",
+                            'filename': filename_no_ext,
+                            'confidence': confidence,
+                            'full_path': file_path,
+                            'reason': 'filename_mismatch',
+                            'duration': duration,
+                            'duration_formatted': duration_formatted
+                        })
+            else:
+                files_without_mapping += 1
+                # Add to list of files missing mapping
+                files_missing_mapping.append({
                     'file': file,
-                    'track_id': None,
-                    'embedded_artist_title': f"Error: {str(e)}",
+                    'uri': None,
+                    'embedded_artist_title': "No Mapping",
                     'filename': filename_no_ext,
                     'confidence': 0,
                     'full_path': file_path,
-                    'reason': 'error_reading_tags',
+                    'reason': 'missing_mapping',
                     'duration': duration,
                     'duration_formatted': duration_formatted
                 })
 
-    # Filter duplicate_track_ids to only include actual duplicates
+    # Find duplicate mappings (multiple files mapped to same URI)
     real_duplicates = {}
-    for track_id, files_list in duplicate_track_ids.items():
-        if len(files_list) > 1:
+    for uri, mappings_list in mappings_by_uri.items():
+        if len(mappings_list) > 1:
             # Get track title from database
             track_title = "Unknown"
-            if track_id in db_tracks_by_id:
-                track = db_tracks_by_id[track_id]
+            if uri in db_tracks_by_uri:
+                track = db_tracks_by_uri[uri]
                 artist = track.get_primary_artist() if hasattr(track, 'get_primary_artist') else \
                     track.artists.split(',')[0].strip()
                 track_title = f"{artist} - {track.title}"
 
             # Create detailed file information for each duplicate
             file_details = []
-            for file in files_list:
-                file_path = os.path.join(master_tracks_dir, file)
-                if os.path.exists(file_path):
-                    # Get file duration
+            for mapping in mappings_list:
+                if os.path.exists(mapping.file_path):
                     try:
-                        audio = MP3(file_path)
-                        duration = audio.info.length
-                        duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                        if mapping.file_path.lower().endswith('.mp3'):
+                            audio = MP3(mapping.file_path)
+                            duration = audio.info.length
+                            duration_formatted = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                        else:
+                            duration = 0
+                            duration_formatted = "Unknown"
                     except Exception:
                         duration = 0
                         duration_formatted = "Unknown"
 
                     file_details.append({
-                        'filename': file,
-                        'path': file_path,
+                        'filename': os.path.basename(mapping.file_path),
+                        'path': mapping.file_path,
                         'duration': duration,
                         'duration_formatted': duration_formatted
                     })
 
-            real_duplicates[track_id] = {
+            real_duplicates[uri] = {
                 'track_title': track_title,
                 'files': file_details
             }
@@ -198,14 +167,14 @@ def validate_track_metadata(master_tracks_dir):
     return {
         "summary": {
             "total_files": total_files,
-            "files_with_track_id": files_with_track_id,
-            "files_without_track_id": files_without_track_id,
+            "files_with_track_id": files_with_mapping,  # Keep same key name for frontend compatibility
+            "files_without_track_id": files_without_mapping,  # Keep same key name for frontend compatibility
             "potential_mismatches": len(potential_mismatches),
-            "duplicate_track_ids": len(real_duplicates)
+            "duplicate_track_ids": len(real_duplicates)  # Keep same key name for frontend compatibility
         },
         "potential_mismatches": potential_mismatches,
-        "files_missing_trackid": files_missing_trackid,
-        "duplicate_track_ids": real_duplicates
+        "files_missing_trackid": files_missing_mapping,  # Keep same key name for frontend compatibility
+        "duplicate_track_ids": real_duplicates  # Keep same key name for frontend compatibility
     }
 
 

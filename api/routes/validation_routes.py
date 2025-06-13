@@ -3,6 +3,7 @@ import json
 import traceback
 from flask import Blueprint, request, jsonify, current_app
 from api.services import validation_service
+from sql.core.unit_of_work import UnitOfWork
 
 bp = Blueprint('validation', __name__, url_prefix='/api/validation')
 
@@ -70,6 +71,84 @@ def validate_track_metadata():
     except Exception as e:
         error_str = traceback.format_exc()
         print(f"Error validating track metadata: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+# TODO: move logic to service
+@bp.route('/extract-file-mappings', methods=['POST'])
+def extract_file_mappings():
+    """Extract URI mappings from a list of file paths."""
+    data = request.get_json()
+    file_paths = data.get('filePaths', [])
+
+    if not file_paths:
+        return jsonify({
+            "success": False,
+            "message": "No file paths provided"
+        }), 400
+
+    try:
+        mappings = []
+        with UnitOfWork() as uow:
+            for file_path in file_paths:
+                uri = uow.file_track_mapping_repository.get_uri_by_file_path(file_path)
+                mappings.append({
+                    'file_path': file_path,
+                    'uri': uri
+                })
+
+        return jsonify({
+            "success": True,
+            "mappings": mappings
+        })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error extracting file mappings: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+# TODO: move this to track_routes
+@bp.route('/remove-file-mapping', methods=['POST'])
+def remove_file_mapping():
+    """Remove mapping for a specific file path."""
+    data = request.get_json()
+    file_path = data.get('filePath')
+
+    if not file_path:
+        return jsonify({
+            "success": False,
+            "message": "File path is required"
+        }), 400
+
+    try:
+        with UnitOfWork() as uow:
+            success = uow.file_track_mapping_repository.delete_by_file_path(file_path)
+            if success:
+                uow.commit()
+                return jsonify({
+                    "success": True,
+                    "message": "Mapping removed successfully"
+                })
+            else:
+                return jsonify({
+                    "success": False,
+                    "message": "No mapping found for the specified file"
+                })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error removing file mapping: {e}")
         print(error_str)
         return jsonify({
             "success": False,
