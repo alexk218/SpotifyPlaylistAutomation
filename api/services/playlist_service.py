@@ -2,7 +2,7 @@ import os
 from helpers.m3u_helper import (
     build_track_id_mapping,
     generate_all_m3u_playlists,
-    regenerate_single_playlist
+    regenerate_single_playlist, build_uri_to_file_mapping, build_uri_to_file_mapping_from_database
 )
 from sql.core.unit_of_work import UnitOfWork
 
@@ -61,10 +61,10 @@ def generate_playlists(master_tracks_dir, playlists_dir, playlists_to_update, ex
     import os
     import json
 
-    # Build track ID mapping for efficiency
-    track_id_map = build_track_id_mapping(master_tracks_dir)
+    # Build URI-to-file mapping for efficiency
+    uri_to_file_map = build_uri_to_file_mapping_from_database()
 
-    # NEW: Try to load saved playlist structure first
+    # Try to load saved playlist structure first
     saved_structure = None
     structure_file = os.path.join(playlists_dir, '.playlist_structure.json')
     if os.path.exists(structure_file):
@@ -188,11 +188,10 @@ def generate_playlists(master_tracks_dir, playlists_dir, playlists_to_update, ex
             tracks_found, tracks_added = generate_m3u_playlist(
                 playlist_name=playlist.name,
                 playlist_id=playlist_id,
-                master_tracks_dir=master_tracks_dir,
                 m3u_path=m3u_path,
                 extended=extended,
                 overwrite=overwrite,
-                track_id_map=track_id_map
+                uri_to_file_map=uri_to_file_map,
             )
 
             success_count += 1
@@ -339,7 +338,7 @@ def regenerate_playlist(playlist_id, master_tracks_dir, playlists_dir, extended=
             print(f"Error removing existing M3U file: {e}")
 
     # Build track ID mapping for efficiency
-    track_id_map = build_track_id_mapping(master_tracks_dir)
+    uri_to_file_map = build_uri_to_file_mapping()
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(target_m3u_path), exist_ok=True)
@@ -348,11 +347,10 @@ def regenerate_playlist(playlist_id, master_tracks_dir, playlists_dir, extended=
     tracks_found, tracks_added = generate_m3u_playlist(
         playlist_name=playlist_name,
         playlist_id=playlist_id,
-        master_tracks_dir=master_tracks_dir,
         m3u_path=target_m3u_path,
         extended=extended,
         overwrite=True,
-        track_id_map=track_id_map
+        uri_to_file_map=uri_to_file_map
     )
 
     # Get location relative to the playlists directory for display

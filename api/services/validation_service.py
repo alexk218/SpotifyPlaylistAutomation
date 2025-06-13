@@ -11,8 +11,7 @@ from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
 from helpers.m3u_helper import (
     build_track_id_mapping,
     sanitize_filename,
-    get_m3u_track_ids,
-    find_local_file_path_with_extensions, generate_m3u_playlist
+    generate_m3u_playlist, build_uri_to_file_mapping_from_database, get_m3u_track_uris_from_file
 )
 from helpers.validation_helper import validate_master_tracks
 from sql.core.unit_of_work import UnitOfWork
@@ -185,33 +184,18 @@ def validate_file_mappings(master_tracks_dir):
     }
 
 
-def validate_playlists_m3u(master_tracks_dir, playlists_dir):
+def validate_playlists_m3u(playlists_dir):
     """
-    Validate M3U playlists against database information.
+    Validate M3U playlists against database information using URI-based FileTrackMappings system
 
     Args:
-        master_tracks_dir: Directory containing master tracks
-        playlists_dir: Directory containing playlist files
+        playlists_dir: Directory containing m3u playlist files
 
     Returns:
         Dictionary with validation results
     """
-    # Build track ID mapping first for efficiency
-    track_id_map = build_track_id_mapping(master_tracks_dir)
-
-    filename_to_db_track_id = {}
-    with UnitOfWork() as uow:
-        local_tracks = [t for t in uow.track_repository.get_all() if t.is_local]
-        for track in local_tracks:
-            title = track.title or ''
-            # If title exists, use it for matching
-            if title:
-                # Add normalized versions of the title for better matching
-                normalized_title = title.lower().replace(' ', '_')
-                filename_to_db_track_id[normalized_title] = track.track_id
-                # Also try without extension
-                basename = os.path.splitext(normalized_title)[0]
-                filename_to_db_track_id[basename] = track.track_id
+    # Build URI-to-file mapping from FileTrackMappings table
+    uri_to_file_map = build_uri_to_file_mapping_from_database()
 
     # Get all playlists from database
     with UnitOfWork() as uow:
@@ -240,179 +224,78 @@ def validate_playlists_m3u(master_tracks_dir, playlists_dir):
         m3u_path = m3u_files.get(safe_name)
         playlist_has_m3u_file = m3u_path is not None
 
-        # Get all track-playlist associations from the database
+        # Get all track URIs for this playlist from database
         with UnitOfWork() as uow:
-            all_track_ids_in_playlist_db = set(
-                uow.track_playlist_repository.get_track_ids_for_playlist(playlist_id))
-            expected_tracks = []
+            # Use the new URI-based TrackPlaylists table
+            track_uris = uow.track_playlist_repository.get_uris_for_playlist(playlist_id)
+            all_track_uris_in_playlist_db = set(track_uris) if track_uris else set()
 
-            # Get details for all tracks in the playlist - not just local ones
-            for track_id in all_track_ids_in_playlist_db:
-                track = uow.track_repository.get_by_id(track_id)
-                if track:
-                    expected_tracks.append({
-                        'id': track_id,
-                        'title': track.title or '',
-                        'artists': track.artists or '',
-                        'album': track.album or '',
-                        'is_local': track.is_local,
-                        'has_local_file': track_id in track_id_map
-                    })
-
-        # Track which database IDs actually exist locally
+        # Find which tracks have local files available
         local_track_files = set()
+        not_downloaded_tracks = []
 
-        # For Spotify tracks (non-local), check the track_id_map
-        for track_id in all_track_ids_in_playlist_db:
-            if not track_id.startswith('local_'):
-                if track_id in track_id_map:
-                    local_track_files.add(track_id)
+        for uri in all_track_uris_in_playlist_db:
+            if uri in uri_to_file_map:
+                # Check if the file actually exists
+                file_path = uri_to_file_map[uri]
+                if os.path.exists(file_path):
+                    local_track_files.add(uri)
+                else:
+                    # File mapping exists but file is missing
+                    not_downloaded_tracks.append({
+                        'uri': uri,
+                        'expected_path': file_path,
+                        'reason': 'file_missing'
+                    })
             else:
-                # For local tracks, we need to find them by name
-                with UnitOfWork() as uow:
-                    track = uow.track_repository.get_by_id(track_id)
-                    if track:
-                        # Get the title and artists, handling NULL values
-                        title = track.title or ''
-                        artists = track.artists or ''
-
-                        # First, try using both title and artists
-                        local_path = None
-                        if title and artists:
-                            local_path = find_local_file_path_with_extensions(
-                                title, artists, master_tracks_dir,
-                                extensions=['.mp3', '.wav', '.aiff']
-                            )
-
-                        # If not found, try with just the title
-                        if not local_path and title:
-                            local_path = find_local_file_path_with_extensions(
-                                title, '', master_tracks_dir,
-                                extensions=['.mp3', '.wav', '.aiff']
-                            )
-
-                        if local_path:
-                            local_track_files.add(track_id)
+                # No file mapping exists for this track
+                not_downloaded_tracks.append({
+                    'uri': uri,
+                    'expected_path': None,
+                    'reason': 'no_mapping'
+                })
 
         # Process M3U file if it exists
-        m3u_track_ids = set()
+        m3u_track_uris = set()
         if playlist_has_m3u_file:
-            # Get tracks in the M3U file - this will include virtual IDs for WAV/AIFF files
-            # We will store virtual IDs separately to avoid double counting
-            virtual_track_ids = set()
-            actual_track_ids = set()
+            m3u_track_uris = get_m3u_track_uris_from_file(m3u_path, uri_to_file_map)
 
-            # First get all track IDs including virtual ones
-            all_ids = get_m3u_track_ids(m3u_path, track_id_map)
+        # Compare database vs M3U to find discrepancies
+        tracks_missing_from_m3u = local_track_files - m3u_track_uris
+        unexpected_tracks_in_m3u = m3u_track_uris - all_track_uris_in_playlist_db
 
-            # Separate virtual IDs from actual IDs
-            for track_id in all_ids:
-                if track_id.startswith('local_wav_aiff_'):
-                    virtual_track_ids.add(track_id)
-                else:
-                    actual_track_ids.add(track_id)
-
-            # Start with actual track IDs
-            m3u_track_ids = actual_track_ids
-
-            # Look for database matches for WAV/AIFF files
-            # But ONLY if they weren't already matched
-            wav_aiff_matches_found = set()
-            with open(m3u_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    # Skip comment lines and empty lines
-                    if line.startswith('#') or not line.strip():
-                        continue
-
-                    file_path = os.path.normpath(line.strip())
-                    if os.path.exists(file_path):
-                        file_ext = os.path.splitext(file_path.lower())[1]
-                        if file_ext in ['.wav', '.aiff']:
-                            # For WAV/AIFF files, try to match by filename
-                            filename = os.path.basename(file_path)
-                            basename = os.path.splitext(filename)[0].lower().replace(' ', '_')
-
-                            # Generate the virtual ID to check if it's already counted
-                            virtual_id = f"local_wav_aiff_{basename}"
-
-                            # Try to find in our mapping
-                            if basename in filename_to_db_track_id:
-                                db_track_id = filename_to_db_track_id[basename]
-
-                                # If this is the first time we've seen this file, add the database ID
-                                if virtual_id in virtual_track_ids and virtual_id not in wav_aiff_matches_found:
-                                    m3u_track_ids.add(db_track_id)
-                                    wav_aiff_matches_found.add(virtual_id)
-
-        # These are tracks that should be in the M3U but aren't
-        missing_track_ids = local_track_files - m3u_track_ids
-
-        # These are tracks in the M3U that shouldn't be there
-        unexpected_track_ids = m3u_track_ids - all_track_ids_in_playlist_db
-
-        # Get details for missing tracks (only those with local files)
-        missing_tracks = []
-        for track_id in missing_track_ids:
-            with UnitOfWork() as uow:
-                track = uow.track_repository.get_by_id(track_id)
-                if track:
-                    missing_tracks.append({
-                        'id': track_id,
-                        'title': track.title,
-                        'artists': track.artists,
-                        'album': track.album or '',
-                        'is_local': track.is_local,
-                        'has_local_file': True
-                    })
-
-        # Get details for unexpected tracks
-        unexpected_tracks = []
-        for track_id in unexpected_track_ids:
-            with UnitOfWork() as uow:
-                track = uow.track_repository.get_by_id(track_id)
-                if track:
-                    unexpected_tracks.append({
-                        'id': track_id,
-                        'title': track.title,
-                        'artists': track.artists,
-                        'album': track.album or '',
-                        'is_local': track.is_local,
-                        'has_local_file': True
-                    })
-
-        # Also get tracks that are in the playlist but have no local files
-        not_downloaded_tracks = []
-        for track in expected_tracks:
-            if track['id'] not in local_track_files:
-                not_downloaded_tracks.append(track)
-
-        # Calculate the total discrepancy
-        total_discrepancy = len(all_track_ids_in_playlist_db) - len(m3u_track_ids)
-        identified_discrepancy = len(missing_tracks) + len(unexpected_tracks) + len(not_downloaded_tracks)
+        # Calculate discrepancy metrics
+        total_discrepancy = len(m3u_track_uris) - len(local_track_files)
+        identified_discrepancy = len(tracks_missing_from_m3u) + len(unexpected_tracks_in_m3u)
         unidentified_discrepancy = abs(total_discrepancy) - identified_discrepancy
 
-        # The playlist needs an update if there's any discrepancy whatsoever
-        needs_update = (len(m3u_track_ids) != len(all_track_ids_in_playlist_db) or  # Total count mismatch
-                        len(missing_tracks) > 0 or  # Missing tracks that should be included
-                        len(unexpected_tracks) > 0 or  # Unexpected tracks that shouldn't be there
-                        not playlist_has_m3u_file)  # Missing M3U file
+        # A playlist needs update if there are any discrepancies or missing files
+        needs_update = (
+                not playlist_has_m3u_file or
+                bool(tracks_missing_from_m3u) or
+                bool(unexpected_tracks_in_m3u) or
+                len(m3u_track_uris) != len(local_track_files)
+        )
 
-        m3u_location = ""
-        if playlist_has_m3u_file and m3u_path:
+        # Determine relative location of M3U file
+        m3u_location = "root"
+        if playlist_has_m3u_file:
             rel_path = os.path.relpath(os.path.dirname(m3u_path), playlists_dir)
-            if rel_path == ".":
-                m3u_location = "root"
-            else:
+            if rel_path != ".":
                 m3u_location = rel_path
+
+        # Convert sets to lists for JSON serialization
+        missing_tracks = [{'uri': uri} for uri in tracks_missing_from_m3u]
+        unexpected_tracks = [{'uri': uri} for uri in unexpected_tracks_in_m3u]
 
         playlist_analysis.append({
             'name': playlist_name,
             'id': playlist_id,
             'has_m3u': playlist_has_m3u_file,
             'needs_update': needs_update,
-            'total_associations': len(all_track_ids_in_playlist_db),
+            'total_associations': len(all_track_uris_in_playlist_db),
             'tracks_with_local_files': len(local_track_files),
-            'm3u_track_count': len(m3u_track_ids),
+            'm3u_track_count': len(m3u_track_uris),
             'tracks_missing_from_m3u': missing_tracks,
             'unexpected_tracks_in_m3u': unexpected_tracks,
             'total_discrepancy': total_discrepancy,
@@ -756,7 +639,8 @@ def create_playlist_from_track_ids(track_ids, playlist_name, playlist_descriptio
         }
 
 
-def get_playlists_for_organization(exclusion_settings, playlists_dir=None, force_reload=False):  # MODIFIED
+# TODO: fix
+def get_playlists_for_organization(exclusion_settings, playlists_dir=None, force_reload=False):
     """
     Get all playlists for organization, applying exclusion rules.
 
@@ -783,7 +667,7 @@ def get_playlists_for_organization(exclusion_settings, playlists_dir=None, force
 
         # Get track count for this playlist
         with UnitOfWork() as uow:
-            track_count = len(uow.track_playlist_repository.get_track_ids_for_playlist(playlist.playlist_id))
+            track_count = len(uow.track_playlist_repository.get_uris_for_playlist(playlist.playlist_id))
 
         filtered_playlists.append({
             'id': playlist.playlist_id,
@@ -1149,7 +1033,6 @@ def apply_playlist_reorganization(playlists_dir, master_tracks_dir, new_structur
                 tracks_found, tracks_added = generate_m3u_playlist(
                     playlist_name=playlist.name,
                     playlist_id=playlist.playlist_id,
-                    master_tracks_dir=master_tracks_dir,
                     m3u_path=target_path,
                     extended=True,
                     overwrite=True,
