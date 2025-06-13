@@ -24,8 +24,8 @@ class TrackRepository(BaseRepository[Track]):
 
     def insert(self, track: Track) -> None:
         query = """
-                INSERT INTO Tracks (Uri, TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, AddedDate)
-                VALUES (?, ?, ?, ?, ?, ?, ?, GETDATE()) \
+                INSERT INTO Tracks (Uri, TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, Duration, AddedDate)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, GETDATE()) \
                 """
         self.execute_non_query(query, (
             track.uri,
@@ -34,7 +34,8 @@ class TrackRepository(BaseRepository[Track]):
             track.artists,
             track.album,
             track.added_to_master,
-            1 if track.is_local else 0
+            1 if track.is_local else 0,
+            track.duration_ms
         ))
         self.db_logger.info(f"Inserted track: {track.track_id} - {track.title}")
 
@@ -46,7 +47,8 @@ class TrackRepository(BaseRepository[Track]):
                     Artists       = ?, \
                     Album         = ?, \
                     AddedToMaster = ?, \
-                    IsLocal       = ?
+                    IsLocal       = ?,
+                    Duration      = ?
                 WHERE TrackId = ? \
                 """
         rows_affected = self.execute_non_query(query, (
@@ -56,6 +58,7 @@ class TrackRepository(BaseRepository[Track]):
             track.album,
             track.added_to_master,
             1 if track.is_local else 0,
+            track.duration_ms,
             track.track_id
         ))
 
@@ -331,6 +334,7 @@ class TrackRepository(BaseRepository[Track]):
         album = row.Album
         added_to_master = row.AddedToMaster if hasattr(row, 'AddedToMaster') else None
         is_local = bool(row.IsLocal) if hasattr(row, 'IsLocal') else False
+        duration_ms = row.Duration if hasattr(row, 'Duration') else None
 
         # Create and return a Track object
-        return Track(uri, track_id, title, artists, album, added_to_master, is_local)
+        return Track(uri, track_id, title, artists, album, added_to_master, is_local, duration_ms)

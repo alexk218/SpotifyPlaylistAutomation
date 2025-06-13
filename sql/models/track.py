@@ -4,7 +4,7 @@ from typing import List, Optional
 
 class Track:
     def __init__(self, uri: str = None, track_id: str = None, title: str = "", artists: str = "", album: str = "",
-                 added_to_master: Optional[datetime] = None, is_local: bool = False):
+                 added_to_master: Optional[datetime] = None, is_local: bool = False, duration_ms: int = None):
         """
         Initialize a Track instance.
 
@@ -16,6 +16,7 @@ class Track:
             album: Album name
             added_to_master: When track was added to master playlist
             is_local: Whether this is a local file
+            duration_ms: Track duration in milliseconds
         """
         self.uri = uri
         self.track_id = track_id  # May be None for local files
@@ -24,7 +25,18 @@ class Track:
         self.album = album
         self.added_to_master = added_to_master
         self.is_local = is_local
+        self.duration_ms = duration_ms
         self.playlists = []
+
+    def get_duration_formatted(self) -> str:
+        """Get duration formatted as MM:SS"""
+        if not self.duration_ms:
+            return "Unknown"
+
+        total_seconds = self.duration_ms // 1000
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        return f"{minutes}:{seconds:02d}"
 
     def is_local_file(self) -> bool:
         """Check if this track is a local file based on URI."""
