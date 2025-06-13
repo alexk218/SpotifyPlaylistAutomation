@@ -827,15 +827,24 @@ def direct_tracks_compare(master_tracks_dir):
         }
 
 
-def download_and_embed_track(track_id: str, download_dir: str):
+def download_and_map_track(uri: str, download_dir: str):
     """
-    Download a track using spotDL and embed the TrackId metadata.
+    Download a track using spotDL and create FileTrackMapping entry.
     """
-    # Get track details from database first
+    # Get track details from database
     with UnitOfWork() as uow:
-        track = uow.track_repository.get_by_id(track_id)
+        track = uow.track_repository.get_by_uri(uri)
         if not track:
-            raise ValueError(f"Track ID '{track_id}' not found in database")
+            raise ValueError(f"Track URI '{uri}' not found in database")
+
+    # Extract track ID for Spotify URL construction
+    track_id = None
+    if uri.startswith('spotify:track:'):
+        track_id = uri.split(':')[2]
+    elif uri.startswith('spotify:local:'):
+        raise ValueError(f"Cannot download local file URI: {uri}")
+    else:
+        raise ValueError(f"Invalid Spotify URI format: {uri}")
 
     # Construct Spotify URL
     spotify_url = f"https://open.spotify.com/track/{track_id}"
@@ -851,19 +860,17 @@ def download_and_embed_track(track_id: str, download_dir: str):
         existing_files = set()
 
     try:
-        # Run spotDL command with proper encoding handling
+        # Run spotDL command
         cmd = ["spotdl", spotify_url, "--output", download_dir]
-
         print(f"Attempting to download: {track.artists} - {track.title}")
 
-        # Execute the command and capture output with UTF-8 encoding
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=300,  # 5 minute timeout
-            encoding='utf-8',  # Force UTF-8 encoding
-            errors='replace'  # Replace problematic characters instead of crashing
+            encoding='utf-8',
+            errors='replace'
         )
 
         print(f"spotDL exit code: {result.returncode}")
@@ -872,30 +879,6 @@ def download_and_embed_track(track_id: str, download_dir: str):
             print(f"spotDL stderr: {result.stderr}")
 
         if result.returncode == 0:
-            # Check if spotDL actually downloaded something
-            download_success_indicators = [
-                "Downloaded",
-                "download complete",
-                "Successfully downloaded"
-            ]
-
-            output_text = result.stdout.lower() if result.stdout else ""
-            download_indicated = any(indicator in output_text for indicator in download_success_indicators)
-
-            # Also check for failure indicators
-            failure_indicators = [
-                "no results found",
-                "could not find",
-                "failed to download",
-                "error:",
-                "not found"
-            ]
-
-            failure_indicated = any(indicator in output_text for indicator in failure_indicators)
-
-            if failure_indicated:
-                raise RuntimeError(f"spotDL could not find track: {track.artists} - {track.title}")
-
             # Find NEW files that were created after the download
             new_files = []
             try:
@@ -904,7 +887,6 @@ def download_and_embed_track(track_id: str, download_dir: str):
                     if file.endswith('.mp3'):
                         current_files.add(file)
 
-                # Find files that didn't exist before
                 newly_created_files = current_files - existing_files
 
                 if newly_created_files:
@@ -930,38 +912,32 @@ def download_and_embed_track(track_id: str, download_dir: str):
             except Exception as e:
                 print(f"Error finding new files: {e}")
 
-            # If we found new files, use the newest one
+            # If we found new files, create the file mapping
             if new_files:
                 downloaded_file = new_files[0]
                 print(f"Using newly downloaded file: {downloaded_file}")
 
-                # Embed the TrackId using existing helper
-                from helpers.file_helper import embed_track_id
-                embed_success = embed_track_id(downloaded_file, track_id)
+                # Create FileTrackMapping entry instead of embedding metadata
+                with UnitOfWork() as uow:
+                    try:
+                        uow.file_track_mapping_repository.add_mapping_by_uri(downloaded_file, uri)
+                        mapping_success = True
+                        print(f"Created file mapping: {downloaded_file} -> {uri}")
+                    except Exception as e:
+                        mapping_success = False
+                        print(f"Failed to create file mapping: {e}")
 
-                if embed_success:
-                    return {
-                        "downloaded_file": downloaded_file,
-                        "track_info": f"{track.artists} - {track.title}",
-                        "metadata_embedded": True,
-                        "spotdl_output": result.stdout[:500] if result.stdout else ""
-                    }
-                else:
-                    return {
-                        "downloaded_file": downloaded_file,
-                        "track_info": f"{track.artists} - {track.title}",
-                        "metadata_embedded": False,
-                        "warning": "Download successful but metadata embedding failed",
-                        "spotdl_output": result.stdout[:500] if result.stdout else ""
-                    }
+                return {
+                    "downloaded_file": downloaded_file,
+                    "track_info": f"{track.artists} - {track.title}",
+                    "mapping_created": mapping_success,
+                    "uri": uri,
+                    "spotdl_output": result.stdout[:500] if result.stdout else ""
+                }
             else:
                 # No new files found - download likely failed
-                if download_indicated:
-                    raise RuntimeError(
-                        f"spotDL indicated success but no new files found for: {track.artists} - {track.title}")
-                else:
-                    raise RuntimeError(
-                        f"No download occurred for: {track.artists} - {track.title}. Track may not be available on YouTube.")
+                raise RuntimeError(
+                    f"No download occurred for: {track.artists} - {track.title}. Track may not be available on YouTube.")
         else:
             # spotDL command failed
             error_output = result.stderr or result.stdout or "Unknown error"
@@ -975,36 +951,36 @@ def download_and_embed_track(track_id: str, download_dir: str):
         raise RuntimeError(f"Download failed for '{track.artists} - {track.title}': {str(e)}")
 
 
-def download_all_missing_tracks(track_ids: List[str], download_dir: str, progress_callback=None):
+def download_all_missing_tracks(uris: List[str], download_dir: str, progress_callback=None):
     """
-    Download multiple tracks with progress tracking.
+    Download multiple tracks by URI with progress tracking.
     """
-    total_tracks = len(track_ids)
+    total_tracks = len(uris)
     successful_downloads = []
     failed_downloads = []
 
-    for i, track_id in enumerate(track_ids):
+    for i, uri in enumerate(uris):
         try:
             # Get track info for better progress display
             with UnitOfWork() as uow:
-                track = uow.track_repository.get_by_id(track_id)
-                track_name = f"{track.artists} - {track.title}" if track else f"Track {track_id}"
+                track = uow.track_repository.get_by_uri(uri)
+                track_name = f"{track.artists} - {track.title}" if track else f"URI {uri}"
 
             # Call progress callback if provided
             if progress_callback:
                 progress_callback({
                     'current': i,
                     'total': total_tracks,
-                    'track_id': track_id,
+                    'uri': uri,
                     'track_name': track_name,
                     'status': 'downloading'
                 })
 
             print(f"Downloading {i + 1}/{total_tracks}: {track_name}")
-            result = download_and_embed_track(track_id, download_dir)
+            result = download_and_map_track(uri, download_dir)
 
             successful_downloads.append({
-                'track_id': track_id,
+                'uri': uri,
                 'track_name': track_name,
                 'result': result
             })
@@ -1013,7 +989,7 @@ def download_all_missing_tracks(track_ids: List[str], download_dir: str, progres
                 progress_callback({
                     'current': i + 1,
                     'total': total_tracks,
-                    'track_id': track_id,
+                    'uri': uri,
                     'track_name': track_name,
                     'status': 'completed'
                 })
@@ -1023,8 +999,8 @@ def download_all_missing_tracks(track_ids: List[str], download_dir: str, progres
         except Exception as e:
             error_msg = str(e)
             failed_downloads.append({
-                'track_id': track_id,
-                'track_name': track_name if 'track_name' in locals() else f"Track {track_id}",
+                'uri': uri,
+                'track_name': track_name if 'track_name' in locals() else f"URI {uri}",
                 'error': error_msg
             })
 
@@ -1032,13 +1008,13 @@ def download_all_missing_tracks(track_ids: List[str], download_dir: str, progres
                 progress_callback({
                     'current': i + 1,
                     'total': total_tracks,
-                    'track_id': track_id,
-                    'track_name': track_name if 'track_name' in locals() else f"Track {track_id}",
+                    'uri': uri,
+                    'track_name': track_name if 'track_name' in locals() else f"URI {uri}",
                     'status': 'failed',
                     'error': error_msg
                 })
 
-            print(f"✗ Failed to download {track_name if 'track_name' in locals() else track_id}: {error_msg}")
+            print(f"✗ Failed to download {track_name if 'track_name' in locals() else uri}: {error_msg}")
 
     return {
         'total_tracks': total_tracks,

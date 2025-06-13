@@ -275,21 +275,21 @@ def direct_tracks_compare():
 
 @bp.route('/download', methods=['POST'])
 def download_track():
-    """Download a track using spotDL and embed metadata."""
-    track_id = request.json.get('track_id')
+    """Download a track using spotDL and create file mapping."""
+    uri = request.json.get('uri')
     download_dir = request.json.get('download_dir') or current_app.config.get('MASTER_TRACKS_DIRECTORY_SSD')
 
-    if not track_id:
+    if not uri:
         return jsonify({
             "success": False,
-            "message": "Track ID is required"
+            "message": "Track URI is required"
         }), 400
 
     try:
-        result = track_service.download_and_embed_track(track_id, download_dir)
+        result = track_service.download_and_map_track(uri, download_dir)
         return jsonify({
             "success": True,
-            "message": f"Successfully downloaded and embedded metadata for track",
+            "message": f"Successfully downloaded and mapped track",
             **result
         })
     except Exception as e:
@@ -305,18 +305,18 @@ def download_track():
 
 @bp.route('/download-batch', methods=['POST'])
 def download_batch():
-    """Download multiple tracks using spotDL and embed metadata."""
-    track_ids = request.json.get('track_ids', [])
+    """Download multiple tracks using spotDL and create file mappings."""
+    uris = request.json.get('uris', [])
     download_dir = request.json.get('download_dir') or current_app.config.get('MASTER_TRACKS_DIRECTORY_SSD')
 
-    if not track_ids:
+    if not uris:
         return jsonify({
             "success": False,
-            "message": "Track IDs are required"
+            "message": "Track URIs are required"
         }), 400
 
     try:
-        result = track_service.download_all_missing_tracks(track_ids, download_dir)
+        result = track_service.download_all_missing_tracks(uris, download_dir)
         return jsonify({
             "success": True,
             "message": f"Batch download completed: {result['success_count']} successful, {result['failure_count']} failed",
