@@ -16,9 +16,11 @@ duplicate_logger = setup_logger('duplicate_tracks', 'sql', 'duplicate_tracks.log
 class DuplicateGroup:
     """Represents a group of duplicate tracks."""
     tracks: List[Track]
-    primary_track: Track  # The track to keep (longest)
+    primary_track: Track  # The track to keep (longest or user-selected)
     duplicates_to_remove: List[Track]  # Tracks to remove
     playlists_to_merge: Set[str]  # All playlists these tracks belong to
+    requires_user_selection: bool = False  # Whether this group needs manual selection
+    group_id: str = ""  # Unique identifier for this group
 
     def get_track_ids_to_remove(self) -> List[str]:
         """Get track IDs of duplicates to remove."""
@@ -37,7 +39,7 @@ class DuplicateTrackDetector:
 
     def find_all_duplicates(self) -> List[DuplicateGroup]:
         """Find all duplicate tracks using optimized fingerprinting approach."""
-        duplicate_logger.info("Starting optimized duplicate track detection")
+        duplicate_logger.info("Starting duplicate track detection")
 
         try:
             with UnitOfWork() as uow:
@@ -217,13 +219,29 @@ class DuplicateTrackDetector:
 
     def _create_duplicate_group(self, tracks: List[Track], track_playlist_map: Dict[str, Set[str]]) -> Optional[
         DuplicateGroup]:
-        """Create a DuplicateGroup, selecting the longest track as primary."""
+        """Create a DuplicateGroup, detecting if manual selection is needed."""
         if len(tracks) < 2:
             return None
 
-        # Select primary track (longest duration)
-        primary_track = self._select_primary_track_by_duration(tracks)
-        duplicates_to_remove = [t for t in tracks if t != primary_track]
+        # Check if all tracks have same duration (requires manual selection)
+        durations = [track.duration_ms or 0 for track in tracks]
+        unique_durations = set(durations)
+        requires_manual = len(unique_durations) <= 1 and len(tracks) > 1  # Same or no duration info
+
+        # Create unique group ID
+        track_uris = sorted([track.uri for track in tracks if track.uri])
+        group_id = hashlib.md5("|".join(track_uris).encode()).hexdigest()[:8]
+
+        if requires_manual:
+            # For manual selection, pick first track as temporary primary
+            primary_track = tracks[0]
+            duplicates_to_remove = tracks[1:]
+            duplicate_logger.info(
+                f"Manual selection required for group {group_id}: {len(tracks)} tracks with same duration")
+        else:
+            # Auto-select longest track
+            primary_track = self._select_primary_track_by_duration(tracks)
+            duplicates_to_remove = [t for t in tracks if t != primary_track]
 
         # Get all playlists these tracks belong to
         all_playlists = set()
@@ -231,17 +249,13 @@ class DuplicateTrackDetector:
             if track.uri and track.uri in track_playlist_map:
                 all_playlists.update(track_playlist_map[track.uri])
 
-        primary_duration = primary_track.get_duration_formatted() if primary_track.duration_ms else "Unknown"
-        duplicate_logger.info(
-            f"Duplicate group: keeping '{primary_track.artists} - {primary_track.title}' "
-            f"({primary_duration}) ({primary_track.uri}), removing {len(duplicates_to_remove)} duplicates"
-        )
-
         return DuplicateGroup(
             tracks=tracks,
             primary_track=primary_track,
             duplicates_to_remove=duplicates_to_remove,
-            playlists_to_merge=all_playlists
+            playlists_to_merge=all_playlists,
+            requires_user_selection=requires_manual,
+            group_id=group_id
         )
 
     def _select_primary_track_by_duration(self, tracks: List[Track]) -> Track:
@@ -439,13 +453,17 @@ class DuplicateTrackCleaner:
         }
 
 
-# Update the main functions to use the optimized detector
-def detect_and_cleanup_duplicate_tracks(dry_run: bool = False) -> Dict[str, Any]:
+def detect_and_cleanup_duplicate_tracks(dry_run: bool = False, user_selections: Dict[str, str] = None) -> Dict[
+    str, Any]:
     """
-    Main function to detect and clean up duplicate tracks using optimized detection.
+    Main function to detect and clean up duplicate tracks.
+
+    Args:
+        dry_run: If True, only analyze what would be done
+        user_selections: Dict mapping group_id to selected track URI for manual groups
     """
     try:
-        # Use optimized detector
+        # Use detector
         detector = DuplicateTrackDetector()
         duplicate_groups = detector.find_all_duplicates()
 
@@ -459,7 +477,40 @@ def detect_and_cleanup_duplicate_tracks(dry_run: bool = False) -> Dict[str, Any]
                 "dry_run": dry_run
             }
 
-        # Clean up duplicates using the cleaner defined in this file
+        # Check if any groups require user selection
+        groups_requiring_selection = [g for g in duplicate_groups if g.requires_user_selection]
+
+        if groups_requiring_selection and not user_selections:
+            return {
+                "success": False,
+                "message": f"{len(groups_requiring_selection)} duplicate groups require manual selection",
+                "requires_user_selection": True,
+                "groups_requiring_selection": len(groups_requiring_selection),
+                "error": "MANUAL_SELECTION_REQUIRED"
+            }
+
+        # Apply user selections to groups that need them
+        if user_selections:
+            for group in groups_requiring_selection:
+                if group.group_id in user_selections:
+                    selected_uri = user_selections[group.group_id]
+                    # Find the selected track and make it primary
+                    selected_track = None
+                    for track in group.tracks:
+                        if track.uri == selected_uri:
+                            selected_track = track
+                            break
+
+                    if selected_track:
+                        group.primary_track = selected_track
+                        group.duplicates_to_remove = [t for t in group.tracks if t != selected_track]
+                        duplicate_logger.info(
+                            f"User selected {selected_track.uri} as primary for group {group.group_id}")
+                    else:
+                        duplicate_logger.warning(
+                            f"User selected URI {selected_uri} not found in group {group.group_id}")
+
+        # Clean up duplicates
         cleaner = DuplicateTrackCleaner()
         cleanup_result = cleaner.cleanup_duplicates(duplicate_groups, dry_run=dry_run)
 
@@ -488,7 +539,8 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
                 "success": True,
                 "message": "No duplicate tracks found",
                 "duplicate_groups": [],
-                "total_duplicates": 0
+                "total_duplicates": 0,
+                "requires_user_selection": False
             }
 
         # Get all unique playlist IDs from all groups
@@ -507,6 +559,7 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
         # Format duplicate groups for display with duration info and playlist names
         formatted_groups = []
         total_duplicates = 0
+        groups_requiring_selection = 0
 
         for group in duplicate_groups:
             # Convert playlist IDs to names
@@ -518,7 +571,12 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
                     # Fallback to ID if name not found
                     playlist_names.append(f"ID: {playlist_id}")
 
+            if group.requires_user_selection:
+                groups_requiring_selection += 1
+
             formatted_group = {
+                "group_id": group.group_id,
+                "requires_user_selection": group.requires_user_selection,
                 "primary_track": {
                     "title": group.primary_track.title,
                     "artists": group.primary_track.artists,
@@ -529,8 +587,21 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
                     "duration_formatted": group.primary_track.get_duration_formatted(),
                     "is_local": group.primary_track.is_local
                 },
+                "all_tracks": [  # Include all tracks for manual selection
+                    {
+                        "title": track.title,
+                        "artists": track.artists,
+                        "album": track.album,
+                        "uri": track.uri,
+                        "track_id": track.track_id,
+                        "duration_ms": track.duration_ms,
+                        "duration_formatted": track.get_duration_formatted(),
+                        "is_local": track.is_local,
+                        "is_primary": track == group.primary_track
+                    } for track in group.tracks
+                ],
                 "duplicates": [],
-                "playlists_affected": playlist_names,  # Now contains names instead of IDs
+                "playlists_affected": playlist_names,
                 "playlists_affected_count": len(playlist_names),
                 "total_tracks_in_group": len(group.tracks)
             }
@@ -555,7 +626,10 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
             "message": f"Found {len(duplicate_groups)} duplicate groups with {total_duplicates} tracks to remove",
             "duplicate_groups": formatted_groups,
             "total_groups": len(duplicate_groups),
-            "total_duplicates": total_duplicates
+            "total_duplicates": total_duplicates,
+            "requires_user_selection": groups_requiring_selection > 0,
+            "groups_requiring_selection": groups_requiring_selection,
+            "groups_auto_resolved": len(duplicate_groups) - groups_requiring_selection
         }
 
     except Exception as e:
@@ -565,3 +639,14 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
             "message": f"Error generating report: {str(e)}",
             "error": str(e)
         }
+
+
+def apply_user_selections_and_cleanup(user_selections: Dict[str, str], dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Apply user selections for duplicate groups and perform cleanup.
+
+    Args:
+        user_selections: Dict mapping group_id to selected track URI
+        dry_run: If True, only analyze what would be done
+    """
+    return detect_and_cleanup_duplicate_tracks(dry_run=dry_run, user_selections=user_selections)

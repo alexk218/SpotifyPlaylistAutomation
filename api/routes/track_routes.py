@@ -2,8 +2,11 @@ from flask import Blueprint, request, jsonify, current_app
 import traceback
 from api.services import track_service
 from api.services.duplicate_track_service import get_duplicate_tracks_report, detect_and_cleanup_duplicate_tracks
+from utils.logger import setup_logger
 
 bp = Blueprint('tracks', __name__, url_prefix='/api/tracks')
+
+tracks_logger = setup_logger('tracks_helper', 'tracks', 'tracks.log')
 
 
 @bp.route('/search', methods=['GET'])
@@ -225,38 +228,102 @@ def cleanup_stale_mappings():
         }), 500
 
 
-@bp.route('/duplicates/detect', methods=['GET'])
-def detect_duplicate_tracks():
-    """Generate a report of duplicate tracks without making changes."""
+@bp.route('/duplicates/cleanup', methods=['POST'])
+def cleanup_duplicates():
+    """
+    Endpoint to clean up duplicate tracks with optional user selections.
+    """
     try:
-        result = get_duplicate_tracks_report()
+        from api.services.duplicate_track_service import detect_and_cleanup_duplicate_tracks
+
+        data = request.get_json() or {}
+        dry_run = data.get('dry_run', False)
+        user_selections = data.get('user_selections')  # Optional dict of group_id -> selected_uri
+
+        # Pass user_selections only if it's provided and not empty
+        if user_selections and isinstance(user_selections, dict) and len(user_selections) > 0:
+            result = detect_and_cleanup_duplicate_tracks(dry_run=dry_run, user_selections=user_selections)
+        else:
+            result = detect_and_cleanup_duplicate_tracks(dry_run=dry_run)
+
+        if result["success"]:
+            action = "analyzed" if dry_run else "cleaned up"
+            tracks_logger.info(f"Duplicate cleanup {action}: {result.get('tracks_removed', 0)} tracks processed")
+        else:
+            tracks_logger.error(f"Duplicate cleanup failed: {result['message']}")
+
         return jsonify(result)
+
     except Exception as e:
-        error_str = traceback.format_exc()
-        print(f"Error detecting duplicates: {e}")
-        print(error_str)
+        error_msg = f"Error in duplicate cleanup endpoint: {str(e)}"
+        tracks_logger.error(error_msg)
         return jsonify({
             "success": False,
-            "message": str(e),
-            "traceback": error_str
+            "message": "Internal server error during duplicate cleanup",
+            "error": str(e)
         }), 500
 
 
-@bp.route('/duplicates/cleanup', methods=['POST'])
-def cleanup_duplicate_tracks():
-    """Clean up duplicate tracks by removing duplicates and merging playlist associations."""
+@bp.route('/duplicates/detect', methods=['GET'])
+def detect_duplicates():
+    """
+    Endpoint to detect duplicate tracks with playlist names displayed.
+    """
     try:
-        data = request.get_json() or {}
-        dry_run = data.get('dry_run', False)
+        from api.services.duplicate_track_service import get_duplicate_tracks_report
 
-        result = detect_and_cleanup_duplicate_tracks(dry_run=dry_run)
+        result = get_duplicate_tracks_report()
+
+        if result["success"]:
+            tracks_logger.info(f"Duplicate detection completed: {result['total_groups']} groups found")
+        else:
+            tracks_logger.error(f"Duplicate detection failed: {result['message']}")
+
         return jsonify(result)
+
     except Exception as e:
-        error_str = traceback.format_exc()
-        print(f"Error cleaning up duplicates: {e}")
-        print(error_str)
+        error_msg = f"Error in duplicate detection endpoint: {str(e)}"
+        tracks_logger.error(error_msg)
         return jsonify({
             "success": False,
-            "message": str(e),
-            "traceback": error_str
+            "message": "Internal server error during duplicate detection",
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/duplicates/apply-selections', methods=['POST'])
+def apply_duplicate_selections():
+    """
+    Endpoint to apply user selections for duplicate groups and perform cleanup.
+    """
+    try:
+        from api.services.duplicate_track_service import apply_user_selections_and_cleanup
+
+        data = request.get_json() or {}
+        user_selections = data.get('user_selections', {})
+        dry_run = data.get('dry_run', False)
+
+        if not user_selections:
+            return jsonify({
+                "success": False,
+                "message": "No user selections provided"
+            }), 400
+
+        result = apply_user_selections_and_cleanup(user_selections, dry_run=dry_run)
+
+        if result["success"]:
+            action = "analyzed with selections" if dry_run else "cleaned up with user selections"
+            tracks_logger.info(f"Duplicate cleanup {action}: {result.get('tracks_removed', 0)} tracks processed")
+        else:
+            tracks_logger.error(f"Duplicate cleanup with selections failed: {result['message']}")
+
+        return jsonify(result)
+
+    except Exception as e:
+        error_msg = f"Error in duplicate selections endpoint: {str(e)}"
+        tracks_logger.error(error_msg)
+        return jsonify({
+            "success": False,
+            "message": "Internal server error during duplicate cleanup with selections",
+            "error": str(e)
         }), 500
