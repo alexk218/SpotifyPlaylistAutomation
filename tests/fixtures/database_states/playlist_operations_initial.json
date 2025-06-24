@@ -40,7 +40,8 @@
       "artists": "Artist 1",
       "album": "Album 1",
       "added_to_master": "2025-05-31T22:03:46.000Z",
-      "is_local": false
+      "is_local": false,
+      "duration": 123456
     },
     {
       "uri": "spotify:track:spotify_track_2",
@@ -49,7 +50,8 @@
       "artists": "Artist 2",
       "album": "Album 2",
       "added_to_master": "2025-05-30T18:15:30.000Z",
-      "is_local": false
+      "is_local": false,
+      "duration": 123457
     },
     {
       "uri": "spotify:track:spotify_track_3",
@@ -58,7 +60,8 @@
       "artists": "Artist 3",
       "album": "Album 3",
       "added_to_master": "2025-05-29T14:22:15.000Z",
-      "is_local": false
+      "is_local": false,
+      "duration": 123458
     },
     {
       "uri": "spotify:local:Local+Artist+1:Local+Album+1:local_track_1:427",
@@ -67,7 +70,8 @@
       "artists": "Local Artist 1",
       "album": "Local Album 1",
       "added_to_master": "2025-05-28T10:30:00.000Z",
-      "is_local": true
+      "is_local": true,
+      "duration": 123459
     },
     {
       "uri": "spotify:local:Local+Artist+2:Local+Album+2:local_track_2:354",
@@ -76,7 +80,8 @@
       "artists": "Local Artist 2",
       "album": "Local Album 2",
       "added_to_master": "2025-05-27T16:45:00.000Z",
-      "is_local": true
+      "is_local": true,
+      "duration": 123450
     }
   ],
   "track_playlist_associations": [
