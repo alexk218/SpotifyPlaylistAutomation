@@ -146,13 +146,14 @@ class DatabaseFixtureLoader:
             # Add tracks - URI-based system
             for track_data in combined_data['tracks']:
                 track = Track(
-                    uri=track_data.get('uri'),  # Primary identifier (may be None for old fixtures)
-                    track_id=track_data.get('track_id'),  # Legacy identifier (may be None for local files)
+                    uri=track_data.get('uri'),
+                    track_id=track_data.get('track_id'),
                     title=track_data['title'],
                     artists=track_data['artists'],
                     album=track_data['album'],
                     added_to_master=self._parse_datetime(track_data.get('added_to_master')),
-                    is_local=track_data.get('is_local', False)
+                    is_local=track_data.get('is_local', False),
+                    duration_ms=track_data.get('duration_ms', 0),
                 )
                 uow.track_repository.insert(track)
 
