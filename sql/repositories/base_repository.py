@@ -1,5 +1,5 @@
-import pyodbc
-from typing import Any, List, Optional, Dict, Tuple, TypeVar, Generic, Type
+import sqlite3
+from typing import Any, List, Optional, Dict, Tuple, TypeVar, Generic
 
 from utils.logger import setup_logger
 
@@ -9,10 +9,10 @@ T = TypeVar('T')
 
 class BaseRepository(Generic[T]):
     """
-    Base repository class providing common database operations.
+    Base repository class providing common database operations for SQLite.
     """
 
-    def __init__(self, connection: pyodbc.Connection):
+    def __init__(self, connection: sqlite3.Connection):
         """
         Initialize a new BaseRepository.
 
@@ -24,7 +24,7 @@ class BaseRepository(Generic[T]):
         self.id_column = ""  # Override in subclasses
         self.db_logger = setup_logger('repository', 'sql', 'repository.log')
 
-    def execute_query(self, query: str, params: Optional[Tuple] = None) -> pyodbc.Cursor:
+    def execute_query(self, query: str, params: Optional[Tuple] = None) -> sqlite3.Cursor:
         """
         Execute a SQL query with optional parameters
         A query RETURNS VALUES -> SELECT statements. So we return a cursor to read results.
@@ -72,7 +72,7 @@ class BaseRepository(Generic[T]):
         finally:
             cursor.close()
 
-    def fetch_all(self, query: str, params: Optional[Tuple] = None) -> List[Any]:
+    def fetch_all(self, query: str, params: Optional[Tuple] = None) -> List[sqlite3.Row]:
         """
         Execute a query and fetch all results.
 
@@ -90,7 +90,7 @@ class BaseRepository(Generic[T]):
         finally:
             cursor.close()
 
-    def fetch_one(self, query: str, params: Optional[Tuple] = None) -> Optional[Any]:
+    def fetch_one(self, query: str, params: Optional[Tuple] = None) -> Optional[sqlite3.Row]:
         """
         Execute a query and fetch a single result.
 
@@ -174,7 +174,7 @@ class BaseRepository(Generic[T]):
 
         return rows_affected > 0
 
-    def _map_to_model(self, row: Any) -> T:
+    def _map_to_model(self, row: sqlite3.Row) -> T:
         """
         Map a database row to a model object.
 

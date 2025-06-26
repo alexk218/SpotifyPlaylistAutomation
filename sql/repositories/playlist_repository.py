@@ -1,4 +1,5 @@
-import pyodbc
+import sqlite3
+
 from typing import List, Optional, Dict, Any
 
 from sql.models.playlist import Playlist
@@ -6,7 +7,7 @@ from sql.repositories.base_repository import BaseRepository
 
 
 class PlaylistRepository(BaseRepository[Playlist]):
-    def __init__(self, connection: pyodbc.Connection):
+    def __init__(self, connection: sqlite3.Connection):
         super().__init__(connection)
         self.table_name = "Playlists"
         self.id_column = "PlaylistId"
@@ -14,7 +15,7 @@ class PlaylistRepository(BaseRepository[Playlist]):
     def insert(self, playlist: Playlist) -> None:
         query = """
                 INSERT INTO Playlists (PlaylistId, PlaylistName, MasterSyncSnapshotId, AssociationsSnapshotId, AddedDate)
-                VALUES (?, ?, ?, ?, GETDATE())
+                VALUES (?, ?, ?, ?, datetime('now'))
                 """
         self.execute_non_query(query, (
             playlist.playlist_id,
@@ -72,7 +73,7 @@ class PlaylistRepository(BaseRepository[Playlist]):
         query = """
                 SELECT *
                 FROM Playlists
-                WHERE RTRIM(LTRIM(PlaylistName)) = ? \
+                WHERE TRIM(PlaylistName) = ?
                 """
         result = self.fetch_one(query, (normalized_name,))
 
@@ -83,12 +84,12 @@ class PlaylistRepository(BaseRepository[Playlist]):
         query = """
                 SELECT *
                 FROM Playlists
-                WHERE LOWER(RTRIM(LTRIM(PlaylistName))) = LOWER(?) \
+                WHERE LOWER(TRIM(PlaylistName)) = LOWER(?)
                 """
         result = self.fetch_one(query, (normalized_name,))
 
         if result:
-            self.db_logger.info(f"Found playlist '{result.PlaylistName}' with case-insensitive match for '{name}'")
+            self.db_logger.info(f"Found playlist '{result['PlaylistName']}' with case-insensitive match for '{name}'")
             return self._map_to_model(result)
 
         return None
@@ -172,7 +173,7 @@ class PlaylistRepository(BaseRepository[Playlist]):
         result = self.fetch_one(query)
         return result.count if result else 0
 
-    def _map_to_model(self, row: pyodbc.Row) -> Playlist:
+    def _map_to_model(self, row: sqlite3.Row) -> Playlist:
         """
         Map a database row to a Playlist object.
 
@@ -182,11 +183,9 @@ class PlaylistRepository(BaseRepository[Playlist]):
         Returns:
             Playlist object with properties set from the row
         """
-        playlist_id = row.PlaylistId
-        name = row.PlaylistName.strip() if row.PlaylistName else ""
-        master_sync_snapshot_id = row.MasterSyncSnapshotId if hasattr(row,
-                                                                      'MasterSyncSnapshotId') and row.MasterSyncSnapshotId else ""
-        associations_snapshot_id = row.AssociationsSnapshotId if hasattr(row,
-                                                                         'AssociationsSnapshotId') and row.AssociationsSnapshotId else ""
+        playlist_id = row['PlaylistId']
+        name = row['PlaylistName'].strip() if row['PlaylistName'] else ""
+        master_sync_snapshot_id = row['MasterSyncSnapshotId'] if row['MasterSyncSnapshotId'] else ""
+        associations_snapshot_id = row['AssociationsSnapshotId'] if row['AssociationsSnapshotId'] else ""
 
         return Playlist(playlist_id, name, master_sync_snapshot_id, associations_snapshot_id)

@@ -1,16 +1,15 @@
 import hashlib
 import os
+import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, Set
-
-import pyodbc
 
 from sql.models.file_track_mapping import FileTrackMapping
 from sql.repositories.base_repository import BaseRepository
 
 
 class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
-    def __init__(self, connection: pyodbc.Connection):
+    def __init__(self, connection: sqlite3.Connection):
         super().__init__(connection)
         self.table_name = "FileTrackMappings"
         self.id_column = "MappingId"
@@ -23,7 +22,7 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         query = """
             INSERT INTO FileTrackMappings 
             (FilePath, FileHash, Uri, FileSize, LastModified, CreatedAt, IsActive)
-            VALUES (?, ?, ?, ?, ?, GETDATE(), 1)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), 1)
         """
 
         cursor = self.connection.cursor()
@@ -251,7 +250,7 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
                 hash_sha256.update(chunk)
         return hash_sha256.hexdigest()
 
-    def _map_to_model(self, row: pyodbc.Row) -> FileTrackMapping:
+    def _map_to_model(self, row: sqlite3.Row) -> FileTrackMapping:
         """
         Map a database row to a FileTrackMapping object.
 
@@ -261,14 +260,14 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         Returns:
             FileTrackMapping object with properties set from the row
         """
-        mapping_id = row.MappingId if hasattr(row, 'MappingId') else None
-        file_path = row.FilePath if hasattr(row, 'FilePath') else ""
-        spotify_uri = row.Uri if hasattr(row, 'Uri') else ""
-        file_hash = row.FileHash if hasattr(row, 'FileHash') else None
-        file_size = row.FileSize if hasattr(row, 'FileSize') else None
-        last_modified = row.LastModified if hasattr(row, 'LastModified') else None
-        created_at = row.CreatedAt if hasattr(row, 'CreatedAt') else None
-        is_active = bool(row.IsActive) if hasattr(row, 'IsActive') else True
+        mapping_id = row['MappingId'] if row['MappingId'] else None
+        file_path = row['FilePath'] if row['FilePath'] else ""
+        spotify_uri = row['Uri'] if row['Uri'] else ""
+        file_hash = row['FileHash'] if row['FileHash'] else None
+        file_size = row['FileSize'] if row['FileSize'] else None
+        last_modified = row['LastModified'] if row['LastModified'] else None
+        created_at = row['CreatedAt'] if row['CreatedAt'] else None
+        is_active = bool(row['IsActive']) if row['IsActive'] else True
 
         return FileTrackMapping(
             mapping_id=mapping_id,

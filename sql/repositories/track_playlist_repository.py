@@ -1,5 +1,5 @@
-import pyodbc
-from typing import List, Tuple, Optional, Dict
+import sqlite3
+from typing import List, Tuple, Dict
 
 from sql.repositories.base_repository import BaseRepository
 
@@ -10,7 +10,7 @@ class TrackPlaylistRepository(BaseRepository):
     Handles database operations for the TrackPlaylists junction table.
     """
 
-    def __init__(self, connection: pyodbc.Connection):
+    def __init__(self, connection: sqlite3.Connection):
         """
         Initialize a new TrackPlaylistRepository.
 

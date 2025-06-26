@@ -1,4 +1,5 @@
-import pyodbc
+import sqlite3
+
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Tuple
 
@@ -11,7 +12,7 @@ class TrackRepository(BaseRepository[Track]):
     Repository for Track entities, handling database operations for the Tracks table.
     """
 
-    def __init__(self, connection: pyodbc.Connection):
+    def __init__(self, connection: sqlite3.Connection):
         """
         Initialize a new TrackRepository.
 
@@ -25,7 +26,7 @@ class TrackRepository(BaseRepository[Track]):
     def insert(self, track: Track) -> None:
         query = """
                 INSERT INTO Tracks (Uri, TrackId, TrackTitle, Artists, Album, AddedToMaster, IsLocal, Duration, AddedDate)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, GETDATE()) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 """
         self.execute_non_query(query, (
             track.uri,
@@ -325,16 +326,16 @@ class TrackRepository(BaseRepository[Track]):
         self.db_logger.info(f"Retrieved {len(track_data)} tracks as dictionaries")
         return track_data
 
-    def _map_to_model(self, row: pyodbc.Row) -> Track:
+    def _map_to_model(self, row: sqlite3.Row) -> Track:
         # Extract values from the row
-        uri = row.Uri if hasattr(row, 'Uri') else None
-        track_id = row.TrackId
-        title = row.TrackTitle
-        artists = row.Artists
-        album = row.Album
-        added_to_master = row.AddedToMaster if hasattr(row, 'AddedToMaster') else None
-        is_local = bool(row.IsLocal) if hasattr(row, 'IsLocal') else False
-        duration_ms = row.Duration if hasattr(row, 'Duration') else None
+        uri = row['Uri'] if row['Uri'] else None
+        track_id = row['TrackId']
+        title = row['TrackTitle']
+        artists = row['Artists']
+        album = row['Album']
+        added_to_master = row['AddedToMaster'] if row['AddedToMaster'] else None
+        is_local = bool(row['IsLocal']) if row['IsLocal'] else False
+        duration_ms = row['Duration'] if row['Duration'] else None
 
         # Create and return a Track object
         return Track(uri, track_id, title, artists, album, added_to_master, is_local, duration_ms)
