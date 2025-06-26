@@ -27,27 +27,17 @@ class DatabaseConnection:
 
     def __init__(self):
         """Initialize the database connection manager if not already initialized."""
-        with self._lock:
-            if self._initialized:
-                return
+        if self._initialized:
+            return
 
-            load_dotenv()
+        load_dotenv()
+        self.db_path = self._get_database_path()
+        self.db_logger = setup_logger('db_connection', 'sql', 'db_connection.log')
 
-            # Configuration
-            self.db_path = self._get_database_path()
-            self.db_logger = setup_logger('db_connection', 'sql', 'db_connection.log')
-
-            # Connection pool settings
-            self._max_pool_size = 10
-            self._connection_timeout = 30  # seconds
-            self._pool = []  # Available connections
-            self._in_use = {}  # Connections currently in use: {conn: timestamp}
-
-            # Initialize database and schema
-            self._initialize_database()
-
-            self.db_logger.info(f"SQLite database connection manager initialized: {self.db_path}")
-            self._initialized = True
+        # Initialize database schema once
+        self._initialize_database()
+        self.db_logger.info(f"SQLite database connection manager initialized: {self.db_path}")
+        self._initialized = True
 
     def _get_database_path(self) -> str:
         """Get the SQLite database file path."""
@@ -148,74 +138,42 @@ class DatabaseConnection:
 
         Returns:
             An active database connection
-
-        Raises:
-            Exception: If unable to get a connection after timeout
         """
-        with self._lock:
-            # First, try to get a connection from the pool
-            if self._pool:
-                connection = self._pool.pop()
-                self._in_use[connection] = time.time()
-                self.db_logger.debug(f"Reusing connection from pool. Available: {len(self._pool)}")
-                return connection
+        try:
+            connection = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,
+                timeout=30.0
+            )
 
-            # If pool is empty but we haven't reached max connections, create a new one
-            if len(self._in_use) < self._max_pool_size:
-                try:
-                    connection = self._create_new_connection()
-                    self._in_use[connection] = time.time()
-                    self.db_logger.info(f"Created new connection. Total in use: {len(self._in_use)}")
-                    return connection
-                except Exception as e:
-                    self.db_logger.error(f"Error creating new connection: {e}")
-                    raise
+            # Apply SQLite performance optimizations
+            cursor = connection.cursor()
 
-            # If we've reached max connections, wait for one to become available
-            start_time = time.time()
-            while time.time() - start_time < self._connection_timeout:
-                time.sleep(0.1)  # Small delay to prevent CPU spinning
+            # Essential performance settings
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA synchronous = NORMAL")  # Faster than FULL
+            cursor.execute("PRAGMA cache_size = -64000")  # 64MB cache
+            cursor.execute("PRAGMA temp_store = MEMORY")  # Temp tables in memory
+            cursor.execute("PRAGMA mmap_size = 134217728")  # 128MB memory map
+            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute("PRAGMA busy_timeout = 10000")
 
-                # Try again to get a connection from the pool
-                if self._pool:
-                    connection = self._pool.pop()
-                    self._in_use[connection] = time.time()
-                    self.db_logger.debug(f"Got connection from pool after waiting")
-                    return connection
-
-            # If we get here, we timed out waiting for a connection
-            self.db_logger.error(f"Timeout waiting for database connection")
-            raise Exception("Timeout waiting for database connection")
+            cursor.close()
+            connection.row_factory = sqlite3.Row
+            return connection
+        except Exception as e:
+            self.db_logger.error(f"Failed to create connection: {e}")
+            raise
 
     def release_connection(self, connection: sqlite3.Connection) -> None:
         """
-        Return a connection to the pool.
-
-        Args:
-            connection: The connection to release
+        Close the connection immediately.
         """
-        with self._lock:
-            if connection in self._in_use:
-                del self._in_use[connection]
-
-                # Only return to pool if we're under the limit and the connection is still good
-                if len(self._pool) < self._max_pool_size:
-                    try:
-                        # Test if connection is still valid
-                        cursor = connection.cursor()
-                        cursor.execute("SELECT 1")
-                        cursor.close()
-
-                        self._pool.append(connection)
-                        self.db_logger.debug(f"Returned connection to pool. Available: {len(self._pool)}")
-                    except Exception as e:
-                        self.db_logger.warning(f"Closing bad connection instead of returning to pool: {e}")
-                        self._close_connection(connection)
-                else:
-                    self._close_connection(connection)
-            else:
-                self.db_logger.warning(f"Attempted to release a connection that's not tracked as in-use")
-                self._close_connection(connection)
+        try:
+            connection.close()
+            self.db_logger.debug("Closed SQLite connection")
+        except Exception as e:
+            self.db_logger.error(f"Error closing connection: {e}")
 
     def _create_new_connection(self) -> sqlite3.Connection:
         """
@@ -233,6 +191,9 @@ class DatabaseConnection:
                 check_same_thread=False,  # Allow use across threads
                 timeout=30.0  # Reasonable timeout
             )
+
+            # Enable query profiling
+            connection.set_trace_callback(lambda stmt: print(f"SQL: {stmt}"))
 
             # Basic optimizations only
             cursor = connection.cursor()
@@ -254,45 +215,3 @@ class DatabaseConnection:
         except Exception as e:
             self.db_logger.error(f"Failed to create database connection: {e}")
             raise
-
-    def _close_connection(self, connection: sqlite3.Connection) -> None:
-        """
-        Close a database connection.
-
-        Args:
-            connection: The connection to close
-        """
-        try:
-            connection.close()
-            self.db_logger.debug("Closed database connection")
-        except Exception as e:
-            self.db_logger.error(f"Error closing database connection: {e}")
-
-    def close_all_connections(self) -> None:
-        """Close all connections in the pool and in use."""
-        with self._lock:
-            # Close all connections in the pool
-            for conn in self._pool:
-                self._close_connection(conn)
-            self._pool = []
-
-            # Close all in-use connections
-            for conn in list(self._in_use.keys()):
-                self._close_connection(conn)
-            self._in_use = {}
-
-            self.db_logger.info("Closed all database connections")
-
-    def get_stats(self) -> dict:
-        """
-        Get statistics about the connection pool.
-
-        Returns:
-            Dictionary with pool statistics
-        """
-        with self._lock:
-            return {
-                "pool_size": len(self._pool),
-                "in_use": len(self._in_use),
-                "max_size": self._max_pool_size
-            }
