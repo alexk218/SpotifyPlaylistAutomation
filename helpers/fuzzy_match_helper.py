@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from typing import List, Dict, Any, Tuple, Optional
 
 import Levenshtein
@@ -9,6 +10,8 @@ from utils.logger import setup_logger
 
 fuzzy_logger = setup_logger('fuzzy_matching', 'helpers', 'fuzzy_matching.log')
 
+# Global debug flag - set to True for detailed timing info
+DEBUG_PERFORMANCE = True
 
 # TODO: move this to api/models ?
 class FuzzyMatchResult:
@@ -35,8 +38,34 @@ class FuzzyMatchResult:
         }
 
 
+class PreprocessedTrack:
+    """Container for preprocessed track data to avoid repeated calculations."""
+
+    def __init__(self, track: Track, mapping_penalty: float):
+        self.track = track
+        self.mapping_penalty = mapping_penalty
+
+        # Pre-compute expensive string operations
+        self.normalized_artists = track.artists.lower().replace('&', 'and') if track.artists else ""
+        self.normalized_title = track.title.lower() if track.title else ""
+
+        # Pre-extract remix info
+        self.base_title, self.remix_info = self._extract_remix_info_fast(self.normalized_title)
+
+        # Pre-compute artist words for fast filtering
+        self.artist_words = set(self.normalized_artists.split()) if self.normalized_artists else set()
+
+        # Pre-compute combined text for search
+        self.combined_text = f"{self.normalized_artists} {self.normalized_title}".strip()
+
+    def _extract_remix_info_fast(self, title: str) -> Tuple[str, str]:
+        """Fast remix info extraction using pre-compiled patterns."""
+        # Use the patterns from parent class - will be set after initialization
+        return title, ""  # Will be updated by parent class
+
+
 class FuzzyMatcher:
-    """Consolidated fuzzy matching logic for tracks."""
+    """Optimized fuzzy matching logic for tracks."""
 
     def __init__(self, tracks: List[Track], existing_mappings: Dict[str, str] = None):
         """
@@ -44,19 +73,79 @@ class FuzzyMatcher:
             tracks: List of all tracks to match against
             existing_mappings: Dictionary of {file_path: spotify_uri} for already mapped files
         """
-        self.tracks = tracks
-        self.local_tracks = [track for track in tracks if track.is_local]
-        self.regular_tracks = [track for track in tracks if not track.is_local]
+        init_start = time.time()
 
-        # Track which URIs are already mapped to files
+        self.tracks = tracks
         self.existing_mappings = existing_mappings or {}
         self.mapped_uris = set(self.existing_mappings.values())
+
+        # Compile regex patterns once
+        self.remix_patterns = [
+            re.compile(
+                r'\s*[\(\[]([^)\]]*(?:remix|edit|mix|version|vip|bootleg|rework|flip|refix|redo|extended|radio|club|dub)[^)\]]*)\s*[\)\]]',
+                re.IGNORECASE),
+            re.compile(
+                r'\s*-\s*([^-]*(?:remix|edit|mix|version|vip|bootleg|rework|flip|refix|redo|extended|radio|club|dub)[^-]*)\s*$',
+                re.IGNORECASE)
+        ]
 
         # Cache for remix/version keywords
         self.remix_keywords = {
             'remix', 'edit', 'mix', 'version', 'vip', 'bootleg', 'rework',
             'flip', 'refix', 'redo', 'extended', 'radio', 'club', 'dub'
         }
+
+        # Pre-process all tracks for performance
+        preprocess_start = time.time()
+        self.preprocessed_regular_tracks = []
+        self.preprocessed_local_tracks = []
+        self._preprocess_tracks()
+        preprocess_time = time.time() - preprocess_start
+
+        init_time = time.time() - init_start
+
+        if DEBUG_PERFORMANCE:
+            print(f"FuzzyMatcher initialized in {init_time:.3f}s:")
+            print(f"  Total tracks: {len(tracks)}")
+            print(f"  Regular tracks: {len(self.preprocessed_regular_tracks)}")
+            print(f"  Local tracks: {len(self.preprocessed_local_tracks)}")
+            print(f"  Existing mappings: {len(self.existing_mappings)}")
+            print(f"  Preprocessing time: {preprocess_time:.3f}s")
+
+    def _preprocess_tracks(self):
+        """Pre-compute expensive string operations for all tracks."""
+        skipped_mapped = 0
+        skipped_invalid = 0
+
+        for track in self.tracks:
+            # Skip tracks with no title
+            if not track.title or not track.title.strip():
+                skipped_invalid += 1
+                continue
+
+            # Calculate mapping penalty once
+            mapping_penalty = self._get_mapping_penalty_fast(track.uri)
+
+            if mapping_penalty <= 0:
+                skipped_mapped += 1
+                continue
+
+            # Create preprocessed track
+            preprocessed = PreprocessedTrack(track, mapping_penalty)
+
+            # Update remix info using our compiled patterns
+            preprocessed.base_title, preprocessed.remix_info = self._extract_remix_info_fast(
+                preprocessed.normalized_title)
+
+            # Separate local and regular tracks
+            if track.is_local:
+                self.preprocessed_local_tracks.append(preprocessed)
+            else:
+                self.preprocessed_regular_tracks.append(preprocessed)
+
+        if DEBUG_PERFORMANCE:
+            print(f"  Skipped {skipped_mapped} already mapped tracks")
+            print(f"  Skipped {skipped_invalid} tracks with no title")
 
     def find_matches(self,
                      filename: str,
@@ -65,31 +154,41 @@ class FuzzyMatcher:
                      exclude_track_id: str = None,
                      file_path: str = None) -> List[FuzzyMatchResult]:
         """
-        Find fuzzy matches for a filename with improved logic.
+        Optimized find matches with comprehensive timing.
         """
-        # Clean filename
+        total_start = time.time()
+
+        # Clean filename and extract artist/title
+        extract_start = time.time()
         filename_no_ext = os.path.splitext(filename)[0]
-
-        # Extract artist and title from filename
         artist, title = self._extract_artist_title(filename_no_ext)
+        extract_time = time.time() - extract_start
 
-        fuzzy_logger.info(f"Matching file: {filename} -> Artist: '{artist}', Title: '{title}'")
+        if DEBUG_PERFORMANCE:
+            fuzzy_logger.info(f"Matching file: {filename} -> Artist: '{artist}', Title: '{title}'")
 
         all_matches = []
 
-        # 1. Try exact local file matches first (highest priority)
-        local_matches = self._find_exact_local_matches(filename, filename_no_ext, file_path)
+        # 1. Try exact local file matches first (usually very fast)
+        local_exact_start = time.time()
+        local_matches = self._find_exact_local_matches_optimized(filename, filename_no_ext, file_path)
+        local_exact_time = time.time() - local_exact_start
         all_matches.extend(local_matches)
 
-        # 2. Try fuzzy matching with regular tracks
-        regular_matches = self._find_fuzzy_matches_improved(artist, title, exclude_track_id, file_path)
+        # 2. Try fuzzy matching with regular tracks (main performance bottleneck)
+        regular_start = time.time()
+        regular_matches = self._find_fuzzy_matches_optimized(artist, title, exclude_track_id, file_path)
+        regular_time = time.time() - regular_start
         all_matches.extend(regular_matches)
 
-        # 3. Try fuzzy matching with local tracks (lower priority)
-        local_fuzzy_matches = self._find_local_fuzzy_matches(filename_no_ext, exclude_track_id, file_path)
+        # 3. Try fuzzy matching with local tracks (usually few matches)
+        local_fuzzy_start = time.time()
+        local_fuzzy_matches = self._find_local_fuzzy_matches_optimized(filename_no_ext, exclude_track_id, file_path)
+        local_fuzzy_time = time.time() - local_fuzzy_start
         all_matches.extend(local_fuzzy_matches)
 
-        # Filter by threshold and sort by confidence
+        # Filter and sort
+        filter_start = time.time()
         filtered_matches = [match for match in all_matches if match.confidence >= threshold]
         filtered_matches.sort(key=lambda x: x.confidence, reverse=True)
 
@@ -100,6 +199,22 @@ class FuzzyMatcher:
             if match.track.track_id not in seen_track_ids:
                 seen_track_ids.add(match.track.track_id)
                 unique_matches.append(match)
+        filter_time = time.time() - filter_start
+
+        total_time = time.time() - total_start
+
+        # Performance logging
+        if DEBUG_PERFORMANCE and (total_time > 0.1 or len(all_matches) == 0):
+            print(f"MATCH {filename}: {total_time:.3f}s total")
+            print(f"  Extract: {extract_time:.3f}s")
+            print(f"  Local exact: {local_exact_time:.3f}s ({len(local_matches)} matches)")
+            print(f"  Regular fuzzy: {regular_time:.3f}s ({len(regular_matches)} matches)")
+            print(f"  Local fuzzy: {local_fuzzy_time:.3f}s ({len(local_fuzzy_matches)} matches)")
+            print(f"  Filter/sort: {filter_time:.3f}s")
+            print(f"  Final matches: {len(unique_matches)}")
+            if len(unique_matches) > 0:
+                best = unique_matches[0]
+                print(f"  Best: {best.track.artists} - {best.track.title} ({best.confidence:.3f})")
 
         return unique_matches[:max_matches]
 
@@ -132,25 +247,19 @@ class FuzzyMatcher:
         # If no separator, treat whole filename as title
         return "", filename.strip()
 
-    def _find_exact_local_matches(self, filename: str, filename_no_ext: str, file_path: str = None) -> List[
+    def _find_exact_local_matches_optimized(self, filename: str, filename_no_ext: str, file_path: str = None) -> List[
         FuzzyMatchResult]:
-        """Find exact matches with local tracks."""
+        """Optimized exact local matches using preprocessed data."""
         matches = []
 
-        for track in self.local_tracks:
-            if not track.title:
-                continue
-
-            # Apply mapping penalty
-            confidence_penalty = self._get_mapping_penalty(track.uri, file_path)
-            if confidence_penalty <= 0:
-                continue  # Skip already mapped tracks
+        for preprocessed in self.preprocessed_local_tracks:
+            track = preprocessed.track
 
             # Try exact filename match
             if track.title == filename or track.title == filename_no_ext:
                 matches.append(FuzzyMatchResult(
                     track=track,
-                    confidence=1.0 * confidence_penalty,
+                    confidence=1.0 * preprocessed.mapping_penalty,
                     match_type="exact_local"
                 ))
                 continue
@@ -162,73 +271,103 @@ class FuzzyMatcher:
             if normalized_title and normalized_filename == normalized_title:
                 matches.append(FuzzyMatchResult(
                     track=track,
-                    confidence=0.95 * confidence_penalty,
+                    confidence=0.95 * preprocessed.mapping_penalty,
                     match_type="normalized_local"
                 ))
 
         return matches
 
-    def _find_fuzzy_matches_improved(self, artist: str, title: str, exclude_track_id: str = None,
-                                     file_path: str = None) -> List[FuzzyMatchResult]:
-        """Improved fuzzy matching with better remix handling."""
+    def _find_fuzzy_matches_optimized(self, artist: str, title: str, exclude_track_id: str = None,
+                                      file_path: str = None) -> List[FuzzyMatchResult]:
+        """HEAVILY OPTIMIZED fuzzy matching using preprocessed data."""
+        matching_start = time.time()
+
         matches = []
 
-        # Normalize input
+        # Normalize input once
         normalized_artist = artist.lower().replace('&', 'and') if artist else ""
         normalized_title = title.lower()
 
-        for track in self.regular_tracks:
+        # Extract remix info once for the input
+        local_base, local_remix_info = self._extract_remix_info_fast(normalized_title)
+
+        # Pre-filter candidates by artist if possible (HUGE speedup)
+        filter_start = time.time()
+        if normalized_artist:
+            artist_words = set(normalized_artist.split())
+            # Fast set intersection to find tracks with overlapping artist words
+            candidate_tracks = [
+                pt for pt in self.preprocessed_regular_tracks
+                if not artist_words.isdisjoint(pt.artist_words)
+            ]
+        else:
+            # No artist info, have to check all tracks
+            candidate_tracks = self.preprocessed_regular_tracks
+
+        filter_time = time.time() - filter_start
+
+        # Process only candidate tracks
+        calc_start = time.time()
+        processed_count = 0
+
+        for preprocessed in candidate_tracks:
+            track = preprocessed.track
+
             if exclude_track_id and track.track_id == exclude_track_id:
                 continue
 
-            # Apply mapping penalty
-            confidence_penalty = self._get_mapping_penalty(track.uri, file_path)
-            if confidence_penalty <= 0:
-                continue  # Skip already mapped tracks
+            processed_count += 1
 
-            confidence = self._calculate_track_confidence_improved(
-                normalized_artist, normalized_title, track
+            # Use precomputed values for fast confidence calculation
+            confidence = self._calculate_confidence_fast(
+                normalized_artist, local_base, local_remix_info,
+                preprocessed.normalized_artists, preprocessed.base_title, preprocessed.remix_info
             )
 
-            # Apply the mapping penalty
-            final_confidence = confidence * confidence_penalty
+            # Apply precomputed mapping penalty
+            final_confidence = confidence * preprocessed.mapping_penalty
 
             if final_confidence >= 0.4:  # Lower threshold for collecting matches
                 match_details = []
-                if confidence_penalty < 1.0:
-                    match_details.append(f"mapped_penalty_{confidence_penalty:.2f}")
+                if preprocessed.mapping_penalty < 1.0:
+                    match_details.append(f"mapped_penalty_{preprocessed.mapping_penalty:.2f}")
 
                 matches.append(FuzzyMatchResult(
                     track=track,
                     confidence=final_confidence,
-                    match_type="fuzzy_improved",
+                    match_type="fuzzy_optimized",
                     match_details=match_details
                 ))
 
+        calc_time = time.time() - calc_start
+        total_time = time.time() - matching_start
+
+        if DEBUG_PERFORMANCE and total_time > 0.05:
+            print(f"    Fuzzy matching details:")
+            print(f"      Filter time: {filter_time:.3f}s")
+            print(f"      Candidates: {len(candidate_tracks)}/{len(self.preprocessed_regular_tracks)}")
+            print(f"      Processed: {processed_count}")
+            print(f"      Calc time: {calc_time:.3f}s ({calc_time / max(processed_count, 1) * 1000:.1f}ms per track)")
+            print(f"      Matches found: {len(matches)}")
+
         return matches
 
-    def _find_local_fuzzy_matches(self, filename_no_ext: str, exclude_track_id: str = None, file_path: str = None) -> \
-            List[FuzzyMatchResult]:
-        """Find fuzzy matches with local tracks."""
+    def _find_local_fuzzy_matches_optimized(self, filename_no_ext: str, exclude_track_id: str = None,
+                                            file_path: str = None) -> List[FuzzyMatchResult]:
+        """Optimized local fuzzy matches using preprocessed data."""
         matches = []
 
-        for track in self.local_tracks:
+        for preprocessed in self.preprocessed_local_tracks:
+            track = preprocessed.track
+
             if exclude_track_id and track.track_id == exclude_track_id:
                 continue
 
-            if not track.title:
-                continue
+            # Calculate similarity using precomputed normalized title
+            similarity = Levenshtein.ratio(filename_no_ext.lower(), preprocessed.normalized_title)
 
-            # Apply mapping penalty
-            confidence_penalty = self._get_mapping_penalty(track.uri, file_path)
-            if confidence_penalty <= 0:
-                continue
-
-            # Calculate similarity
-            similarity = Levenshtein.ratio(filename_no_ext.lower(), track.title.lower())
-
-            # Apply penalty
-            final_similarity = similarity * confidence_penalty
+            # Apply precomputed penalty
+            final_similarity = similarity * preprocessed.mapping_penalty
 
             # Only include high-quality local matches to avoid noise
             if final_similarity >= 0.8:
@@ -240,27 +379,31 @@ class FuzzyMatcher:
 
         return matches
 
-    def _calculate_track_confidence_improved(self, local_artist: str, local_title: str, track: Track) -> float:
-        """Enhanced confidence calculation with better remix handling."""
-        db_artists = track.artists.lower().replace('&', 'and')
-        db_title = track.title.lower()
+    def _calculate_confidence_fast(self, local_artist: str, local_base_title: str, local_remix_info: str,
+                                   db_artists: str, db_base_title: str, db_remix_info: str) -> float:
+        """Fast confidence calculation using precomputed values."""
 
         # Calculate artist similarity
         artist_ratio = 0.0
         if local_artist:
-            # Split by comma only, don't split individual artist names
-            db_artist_list = [a.strip() for a in db_artists.split(',')]
-
-            # Check for exact match first
-            if local_artist in db_artist_list:
+            # Check for exact match first (fastest)
+            if local_artist in db_artists:
                 artist_ratio = 1.0
             else:
-                # Use fuzzy matching against each artist
-                artist_ratios = [Levenshtein.ratio(local_artist, db_artist) for db_artist in db_artist_list]
-                artist_ratio = max(artist_ratios) if artist_ratios else 0
+                # Split and check individual artists
+                db_artist_list = [a.strip() for a in db_artists.split(',')]
+
+                # Check for exact match in list
+                if local_artist in db_artist_list:
+                    artist_ratio = 1.0
+                else:
+                    # Fuzzy matching as fallback
+                    artist_ratios = [Levenshtein.ratio(local_artist, db_artist) for db_artist in db_artist_list]
+                    artist_ratio = max(artist_ratios) if artist_ratios else 0
 
         # Enhanced title matching with remix awareness
-        title_confidence = self._calculate_title_confidence_with_remixes(local_title, db_title)
+        title_confidence = self._calculate_title_confidence_fast(local_base_title, local_remix_info, db_base_title,
+                                                                 db_remix_info)
 
         # Calculate weighted overall ratio
         if local_artist:
@@ -268,12 +411,9 @@ class FuzzyMatcher:
         else:
             return title_confidence * 0.9
 
-    def _calculate_title_confidence_with_remixes(self, local_title: str, db_title: str) -> float:
-        """Calculate title confidence with enhanced remix/version handling."""
-
-        # Extract base titles and remix info
-        local_base, local_remix_info = self._extract_remix_info(local_title)
-        db_base, db_remix_info = self._extract_remix_info(db_title)
+    def _calculate_title_confidence_fast(self, local_base: str, local_remix_info: str, db_base: str,
+                                         db_remix_info: str) -> float:
+        """Fast title confidence calculation with enhanced remix/version handling."""
 
         # Calculate base title similarity
         base_similarity = Levenshtein.ratio(local_base, db_base)
@@ -284,7 +424,7 @@ class FuzzyMatcher:
 
         # Both have remix info - check if they match
         if local_remix_info and db_remix_info:
-            remix_similarity = self._calculate_remix_similarity(local_remix_info, db_remix_info)
+            remix_similarity = self._calculate_remix_similarity_fast(local_remix_info, db_remix_info)
             # Weight base title heavily, but remix info is important for distinction
             return (base_similarity * 0.7) + (remix_similarity * 0.3)
 
@@ -297,33 +437,27 @@ class FuzzyMatcher:
         else:
             return base_similarity
 
-    def _extract_remix_info(self, title: str) -> Tuple[str, str]:
-        """Extract base title and remix information."""
-        # Pattern to match content in parentheses or after common separators
-        remix_patterns = [
-            r'\s*[\(\[]([^)\]]*(?:remix|edit|mix|version|vip|bootleg|rework|flip|refix|redo|extended|radio|club|dub)[^)\]]*)\s*[\)\]]',
-            r'\s*-\s*([^-]*(?:remix|edit|mix|version|vip|bootleg|rework|flip|refix|redo|extended|radio|club|dub)[^-]*)\s*$'
-        ]
-
-        for pattern in remix_patterns:
-            match = re.search(pattern, title, re.IGNORECASE)
+    def _extract_remix_info_fast(self, title: str) -> Tuple[str, str]:
+        """Fast remix info extraction using pre-compiled patterns."""
+        for pattern in self.remix_patterns:
+            match = pattern.search(title)
             if match:
-                base_title = re.sub(pattern, '', title, flags=re.IGNORECASE).strip()
+                base_title = pattern.sub('', title).strip()
                 remix_info = match.group(1).lower().strip()
                 return base_title, remix_info
 
         # No remix info found
         return title, ""
 
-    def _calculate_remix_similarity(self, remix1: str, remix2: str) -> float:
-        """Calculate similarity between remix information."""
+    def _calculate_remix_similarity_fast(self, remix1: str, remix2: str) -> float:
+        """Fast remix similarity calculation."""
         if not remix1 or not remix2:
             return 0.0
 
-        # Direct string similarity
+        # Direct string similarity (fast)
         direct_similarity = Levenshtein.ratio(remix1, remix2)
 
-        # Check for common remix keywords
+        # Quick keyword check
         words1 = set(remix1.lower().split())
         words2 = set(remix2.lower().split())
 
@@ -340,41 +474,29 @@ class FuzzyMatcher:
 
         return direct_similarity
 
-    def _get_mapping_penalty(self, track_uri: str, current_file_path: str = None) -> float:
+    def _get_mapping_penalty_fast(self, track_uri: str) -> float:
         """
-        Calculate penalty for tracks that are already mapped to other files.
+        Fast mapping penalty calculation without file system checks.
         """
         if not track_uri or track_uri not in self.mapped_uris:
             return 1.0  # No penalty if not mapped
 
-        # Check if this track is mapped to the current file (no penalty for re-matching same file)
-        if current_file_path and self.existing_mappings.get(current_file_path) == track_uri:
-            return 1.0  # No penalty for existing mapping to same file
-
-        # Check if the mapped files still exist
-        mapped_files = [file_path for file_path, uri in self.existing_mappings.items() if uri == track_uri]
-        existing_mapped_files = [file_path for file_path in mapped_files if os.path.exists(file_path)]
-
-        if not existing_mapped_files:
-            # All mapped files for this track no longer exist - no penalty
-            return 1.0
-
-        # Some or all mapped files still exist - apply penalty
+        # Apply penalty for already mapped tracks
+        # Note: Removed file existence check for performance
         return 0.1  # 90% confidence reduction
 
     def _normalize_text(self, text: str) -> str:
-        """Normalize text for matching."""
+        """Fast text normalization."""
         if not text:
             return ""
 
-        # Remove special characters and normalize spaces
-        normalized = re.sub(r'[^\w\s]', '', text.lower())
-        normalized = re.sub(r'\s+', ' ', normalized).strip()
-
-        return normalized
+        # Simple normalization - removed regex for performance
+        return text.lower().strip()
 
     def search_tracks(self, query: str, limit: int = 20) -> List[FuzzyMatchResult]:
-        """Search tracks by query string with mapping awareness."""
+        """Optimized search tracks using preprocessed data."""
+        search_start = time.time()
+
         if not query or not query.strip():
             return []
 
@@ -384,35 +506,29 @@ class FuzzyMatcher:
         # Split query into words for word-level matching
         query_words = set(query_lower.split())
 
-        for track in self.tracks:
-            # Apply light mapping penalty for search (don't exclude, just de-prioritize)
-            confidence_penalty = max(0.3, self._get_mapping_penalty(track.uri))
+        # Search through preprocessed regular tracks
+        for preprocessed in self.preprocessed_regular_tracks:
+            track = preprocessed.track
 
             scores = []
             match_details = []
 
-            # Clean track data
-            track_title = track.title.lower() if track.title else ""
-            track_artists = track.artists.lower() if track.artists else ""
-            track_combined = f"{track_artists} {track_title}".strip()
-
             # 1. Exact substring matches (highest priority)
-            if query_lower in track_title:
+            if query_lower in preprocessed.normalized_title:
                 scores.append(0.95)
                 match_details.append("title_exact")
-            if query_lower in track_artists:
+            if query_lower in preprocessed.normalized_artists:
                 scores.append(0.95)
                 match_details.append("artist_exact")
-            if query_lower in track_combined:
+            if query_lower in preprocessed.combined_text:
                 scores.append(0.90)
                 match_details.append("combined_exact")
 
-            # 2. Word-level matching
-            title_words = set(track_title.split())
-            artist_words = set(track_artists.split())
+            # 2. Word-level matching using precomputed artist words
+            title_words = set(preprocessed.normalized_title.split())
 
             title_word_overlap = len(query_words.intersection(title_words)) / max(len(query_words), 1)
-            artist_word_overlap = len(query_words.intersection(artist_words)) / max(len(query_words), 1)
+            artist_word_overlap = len(query_words.intersection(preprocessed.artist_words)) / max(len(query_words), 1)
 
             if title_word_overlap > 0.5:
                 scores.append(0.8 * title_word_overlap)
@@ -421,31 +537,39 @@ class FuzzyMatcher:
                 scores.append(0.8 * artist_word_overlap)
                 match_details.append(f"artist_words_{artist_word_overlap:.2f}")
 
-            # 3. Fuzzy matching with Levenshtein
-            title_ratio = Levenshtein.ratio(query_lower, track_title)
-            artist_ratio = Levenshtein.ratio(query_lower, track_artists)
-            combined_ratio = Levenshtein.ratio(query_lower, track_combined)
+            # 3. Fuzzy matching with Levenshtein (only if we have some matches already)
+            if scores:
+                title_ratio = Levenshtein.ratio(query_lower, preprocessed.normalized_title)
+                artist_ratio = Levenshtein.ratio(query_lower, preprocessed.normalized_artists)
+                combined_ratio = Levenshtein.ratio(query_lower, preprocessed.combined_text)
 
-            scores.extend([title_ratio * 0.7, artist_ratio * 0.7, combined_ratio * 0.6])
+                scores.extend([title_ratio * 0.7, artist_ratio * 0.7, combined_ratio * 0.6])
 
             # Get the best score and apply penalty
-            max_score = max(scores) if scores else 0
-            final_score = max_score * confidence_penalty
+            if scores:
+                max_score = max(scores)
+                final_score = max_score * preprocessed.mapping_penalty
 
-            # Only include results above minimum threshold
-            if final_score > 0.1:
-                if confidence_penalty < 1.0:
-                    match_details.append(f"mapped_penalty_{confidence_penalty:.2f}")
+                # Only include results above minimum threshold
+                if final_score > 0.1:
+                    if preprocessed.mapping_penalty < 1.0:
+                        match_details.append(f"mapped_penalty_{preprocessed.mapping_penalty:.2f}")
 
-                results.append(FuzzyMatchResult(
-                    track=track,
-                    confidence=final_score,
-                    match_type="search",
-                    match_details=match_details[:3]
-                ))
+                    results.append(FuzzyMatchResult(
+                        track=track,
+                        confidence=final_score,
+                        match_type="search_optimized",
+                        match_details=match_details[:3]
+                    ))
 
         # Sort by confidence and limit results
         results.sort(key=lambda x: x.confidence, reverse=True)
+
+        search_time = time.time() - search_start
+
+        if DEBUG_PERFORMANCE:
+            print(f"Search '{query}': {search_time:.3f}s, {len(results)} results")
+
         return results[:limit]
 
 

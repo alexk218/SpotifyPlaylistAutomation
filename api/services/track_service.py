@@ -175,6 +175,7 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     mapping_logger.info(f"Starting file mapping analysis for directory: {master_tracks_dir}")
     start_time = time.time()
 
+    db_start = time.time()
     with UnitOfWork() as uow:
         # Get all tracks from database
         all_tracks = uow.track_repository.get_all()
@@ -191,6 +192,9 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
 
         local_tracks = [track for track in all_tracks if track.is_local_file()]
         regular_tracks = [track for track in all_tracks if not track.is_local_file()]
+
+    db_time = time.time() - db_start
+    print(f"Database loading took: {db_time:.2f}s")
 
     mapping_logger.info("Scanning audio files...")
     all_audio_files = []
@@ -241,7 +245,9 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     # Progress tracking for long operations
     processed_count = 0
 
+    match_start = time.time()
     for file_path, file in files_needing_mapping:
+        specific_match_start = time.time()
         processed_count += 1
         if processed_count % 100 == 0:  # Log progress every 100 files
             mapping_logger.info(f"Processed {processed_count}/{len(files_needing_mapping)} files needing mapping")
@@ -304,6 +310,12 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             })
 
         files_without_mappings.append(file)
+        specific_match_time = time.time() - specific_match_start
+        print(f"Matching for {file}: {specific_match_time:.2f}s")
+
+
+    match_time = time.time() - match_start
+    print(f"Matching took: {match_time:.2f}s")
 
     elapsed_time = time.time() - start_time
 
@@ -389,7 +401,7 @@ def orchestrate_file_mapping(master_tracks_dir: str, confirmed: bool, precompute
 
 def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dict[str, Any]],
                                precomputed_changes: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Create file mappings in the database using optimized batch processing."""
+    """Create file mappings in the database based on user selections and auto-matches."""
     mapping_logger.info("Starting batch file mapping creation")
 
     successful_mappings = 0
@@ -419,6 +431,7 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
     for selection in user_selections:
         file_path = selection.get('file_path')
         if not file_path:
+            # Try to construct file path from filename if not provided
             filename = selection.get('file_name', selection.get('filename', ''))
             if filename:
                 file_path = _find_file_path_in_directory(filename, master_tracks_dir)
@@ -434,23 +447,91 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
 
     mapping_logger.info(f"Processing {len(all_mappings)} total mappings")
 
-    # Process in larger batches to balance performance vs locking
-    batch_size = 500  # Much larger batches
-    total_batches = (len(all_mappings) + batch_size - 1) // batch_size
+    # Create mappings in database
+    with UnitOfWork() as uow:
+        for mapping in all_mappings:
+            try:
+                file_path = mapping['file_path']
+                uri = mapping['uri']
+                filename = mapping['filename']
 
-    for batch_num in range(total_batches):
-        start_idx = batch_num * batch_size
-        end_idx = min(start_idx + batch_size, len(all_mappings))
-        batch = all_mappings[start_idx:end_idx]
+                # Verify file exists
+                if not os.path.exists(file_path):
+                    failed_mappings += 1
+                    results.append({
+                        'filename': filename,
+                        'uri': uri,
+                        'success': False,
+                        'reason': 'File not found'
+                    })
+                    mapping_logger.error(f"File not found: {file_path}")
+                    continue
 
-        mapping_logger.info(f"Processing batch {batch_num + 1}/{total_batches} ({len(batch)} mappings)")
+                # Verify URI exists in tracks table
+                track = uow.track_repository.get_by_uri(uri)
+                if not track:
+                    failed_mappings += 1
+                    results.append({
+                        'filename': filename,
+                        'uri': uri,
+                        'success': False,
+                        'reason': 'Track URI not found in database'
+                    })
+                    mapping_logger.error(f"Track URI not found in database: {uri}")
+                    continue
 
-        # Process batch with optimized queries
-        batch_successful, batch_failed, batch_results = _process_mapping_batch_optimized(batch)
+                # Check if mapping already exists
+                existing_uri = uow.file_track_mapping_repository.get_uri_by_file_path(file_path)
+                if existing_uri:
+                    if existing_uri == uri:
+                        # Same mapping already exists - consider it successful
+                        successful_mappings += 1
+                        results.append({
+                            'filename': filename,
+                            'uri': uri,
+                            'success': True,
+                            'reason': 'Mapping already exists',
+                            'confidence': mapping.get('confidence', 0.0),
+                            'source': mapping['source'],
+                            'track_info': f"{track.artists} - {track.title}"
+                        })
+                        mapping_logger.debug(f"Mapping already exists: {filename} -> {uri}")
+                        continue
+                    else:
+                        # Different mapping exists - this is a conflict
+                        failed_mappings += 1
+                        results.append({
+                            'filename': filename,
+                            'uri': uri,
+                            'success': False,
+                            'reason': f'File already mapped to different track: {existing_uri}'
+                        })
+                        mapping_logger.warning(f"Mapping conflict for {filename}: existing={existing_uri}, new={uri}")
+                        continue
 
-        successful_mappings += batch_successful
-        failed_mappings += batch_failed
-        results.extend(batch_results)
+                # Create the mapping
+                uow.file_track_mapping_repository.add_mapping_by_uri(file_path, uri)
+                successful_mappings += 1
+                results.append({
+                    'filename': filename,
+                    'uri': uri,
+                    'success': True,
+                    'confidence': mapping.get('confidence', 0.0),
+                    'source': mapping['source'],
+                    'track_info': f"{track.artists} - {track.title}"
+                })
+
+                mapping_logger.info(f"Created mapping: {filename} -> {uri} (source: {mapping['source']})")
+
+            except Exception as e:
+                failed_mappings += 1
+                results.append({
+                    'filename': mapping.get('filename', 'unknown'),
+                    'uri': mapping.get('uri', 'unknown'),
+                    'success': False,
+                    'reason': f'Database error: {str(e)}'
+                })
+                mapping_logger.error(f"Failed to create mapping for {mapping.get('filename')}: {e}")
 
     mapping_logger.info(f"Batch mapping creation complete: {successful_mappings} successful, {failed_mappings} failed")
 
@@ -460,128 +541,6 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
         'results': results,
         'total_processed': len(all_mappings)
     }
-
-
-def _process_mapping_batch_optimized(batch: List[Dict[str, Any]]) -> tuple[int, int, List[Dict[str, Any]]]:
-    """Process a batch of mappings with optimized database queries."""
-    successful = 0
-    failed = 0
-    results = []
-
-    try:
-        with UnitOfWork() as uow:
-            # Pre-load all required data in batch to minimize database queries
-            all_uris = [mapping['uri'] for mapping in batch]
-            all_file_paths = [mapping['file_path'] for mapping in batch]
-
-            # Batch check which URIs exist in tracks table
-            existing_tracks = {}
-            if all_uris:
-                tracks = uow.track_repository.batch_get_tracks_by_uris(all_uris)
-                existing_tracks = {track.uri: track for track in tracks}
-
-            # Batch check existing file mappings
-            existing_mappings = {}
-            for file_path in all_file_paths:
-                try:
-                    existing_uri = uow.file_track_mapping_repository.get_uri_by_file_path(file_path)
-                    if existing_uri:
-                        existing_mappings[file_path] = existing_uri
-                except Exception:
-                    pass  # File doesn't have mapping
-
-            # Process each mapping with pre-loaded data
-            for mapping in batch:
-                try:
-                    file_path = mapping['file_path']
-                    uri = mapping['uri']
-                    filename = mapping['filename']
-
-                    # Quick file existence check
-                    if not os.path.exists(file_path):
-                        failed += 1
-                        results.append({
-                            'filename': filename,
-                            'uri': uri,
-                            'success': False,
-                            'reason': 'File not found'
-                        })
-                        continue
-
-                    # Check if track exists (using pre-loaded data)
-                    track = existing_tracks.get(uri)
-                    if not track:
-                        failed += 1
-                        results.append({
-                            'filename': filename,
-                            'uri': uri,
-                            'success': False,
-                            'reason': 'Track URI not found in database'
-                        })
-                        continue
-
-                    # Check existing mapping (using pre-loaded data)
-                    existing_uri = existing_mappings.get(file_path)
-                    if existing_uri:
-                        if existing_uri == uri:
-                            # Same mapping already exists
-                            successful += 1
-                            results.append({
-                                'filename': filename,
-                                'uri': uri,
-                                'success': True,
-                                'reason': 'Mapping already exists',
-                                'confidence': mapping.get('confidence', 0.0),
-                                'source': mapping['source'],
-                                'track_info': f"{track.artists} - {track.title}"
-                            })
-                            continue
-                        else:
-                            # Different mapping exists
-                            failed += 1
-                            results.append({
-                                'filename': filename,
-                                'uri': uri,
-                                'success': False,
-                                'reason': f'File already mapped to different track: {existing_uri}'
-                            })
-                            continue
-
-                    # Create new mapping
-                    uow.file_track_mapping_repository.add_mapping_by_uri(file_path, uri)
-                    successful += 1
-                    results.append({
-                        'filename': filename,
-                        'uri': uri,
-                        'success': True,
-                        'confidence': mapping.get('confidence', 0.0),
-                        'source': mapping['source'],
-                        'track_info': f"{track.artists} - {track.title}"
-                    })
-
-                except Exception as e:
-                    failed += 1
-                    results.append({
-                        'filename': mapping.get('filename', 'unknown'),
-                        'uri': mapping.get('uri', 'unknown'),
-                        'success': False,
-                        'reason': f'Processing error: {str(e)}'
-                    })
-
-    except Exception as e:
-        mapping_logger.error(f"Batch processing failed: {e}")
-        # If entire batch fails, mark all as failed
-        for mapping in batch:
-            if not any(r['filename'] == mapping.get('filename', 'unknown') for r in results):
-                failed += 1
-                results.append({
-                    'filename': mapping.get('filename', 'unknown'),
-                    'uri': mapping.get('uri', 'unknown'),
-                    'success': False,
-                    'reason': f'Batch processing error: {str(e)}'
-                })
-
-    return successful, failed, results
 
 
 def _is_supported_audio_file(filename: str) -> bool:
