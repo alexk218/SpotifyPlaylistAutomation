@@ -8,3 +8,6 @@ playlists_markdown/
 txtfiles/
 logs/
 cache/
+/data/*.db
+/data/*.db-wal
+/data/*.db-shm

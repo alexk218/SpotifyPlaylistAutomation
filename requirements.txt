@@ -6,7 +6,6 @@ directory_tree==1.0.0
 idna==3.7
 importlib-metadata==6.7.0
 mutagen==1.47.0
-pyodbc~=5.1.0
 python-dotenv~=1.0.1
 redis==5.0.1
 requests==2.32.3
