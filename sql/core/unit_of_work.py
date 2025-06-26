@@ -25,6 +25,7 @@ class UnitOfWork:
         self.file_track_mapping_repository = None
         self.db_logger = setup_logger('unit_of_work', 'sql', 'unit_of_work.log')
         self._repositories_initialized = False
+        self._transaction_started = False
 
     def __enter__(self):
         """
@@ -63,8 +64,17 @@ class UnitOfWork:
             return
 
         self.connection = self.connection_provider.get_connection()
-        self.connection.autocommit = False  # Ensure we're in transaction mode
-        self.db_logger.info("Started new transaction")
+
+        # Start explicit transaction for SQLite
+        try:
+            self.connection.execute("BEGIN")
+            self._transaction_started = True
+            self.db_logger.info("Started new transaction")
+        except Exception as e:
+            self.db_logger.error(f"Error starting transaction: {e}")
+            self.connection_provider.release_connection(self.connection)
+            self.connection = None
+            raise
 
         # Initialize repositories - we do this here to ensure they share the same connection
         self._init_repositories()
@@ -76,8 +86,10 @@ class UnitOfWork:
             return
 
         try:
-            self.connection.commit()
-            self.db_logger.info("Transaction committed")
+            if self._transaction_started:
+                self.connection.commit()
+                self._transaction_started = False
+                self.db_logger.info("Transaction committed")
         except Exception as e:
             self.db_logger.error(f"Error committing transaction: {e}")
             self.rollback()
@@ -90,8 +102,10 @@ class UnitOfWork:
             return
 
         try:
-            self.connection.rollback()
-            self.db_logger.info("Transaction rolled back")
+            if self._transaction_started:
+                self.connection.rollback()
+                self._transaction_started = False
+                self.db_logger.info("Transaction rolled back")
         except Exception as e:
             self.db_logger.error(f"Error rolling back transaction: {e}")
             raise
@@ -99,6 +113,14 @@ class UnitOfWork:
     def _release_connection(self):
         """Release the database connection back to the pool."""
         if self.connection is not None:
+            # Ensure transaction is ended before releasing
+            if self._transaction_started:
+                try:
+                    self.connection.rollback()
+                    self._transaction_started = False
+                except Exception as e:
+                    self.db_logger.error(f"Error rolling back transaction during release: {e}")
+
             self.connection_provider.release_connection(self.connection)
             self.connection = None
             self._repositories_initialized = False
