@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
+from api.services.duplicate_track_service import detect_duplicate_file_mappings, resolve_duplicate_mappings, \
+    analyze_existing_duplicate_mappings
 from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match, FuzzyMatcher, \
     print_levenshtein_stats, reset_levenshtein_stats
 from sql.core.unit_of_work import UnitOfWork
@@ -167,6 +169,206 @@ def fuzzy_match_track(file_name, current_track_id=None):
         "original_title": track_title,
         "matches": matches
     }
+
+
+def analyze_file_mappings_with_duplicate_detection(master_tracks_dir: str,
+                                                   confidence_threshold: float = 0.75) -> Dict[str, Any]:
+    """
+    Enhanced analysis that includes duplicate detection and prevention.
+    """
+    mapping_logger.info(f"Starting enhanced file mapping analysis with duplicate detection")
+    start_time = time.time()
+
+    # Perform standard analysis first
+    standard_analysis = analyze_file_mappings(master_tracks_dir, confidence_threshold)
+
+    if not standard_analysis.get('auto_matched_files'):
+        # No auto-matches to check for duplicates
+        return {
+            **standard_analysis,
+            'duplicate_detection': {
+                'performed': False,
+                'reason': 'No auto-matched files to check'
+            }
+        }
+
+    # Extract proposed mappings from auto-matched files
+    proposed_mappings = []
+    for auto_match in standard_analysis['auto_matched_files']:
+        proposed_mappings.append({
+            'file_path': auto_match['file_path'],
+            'uri': auto_match['uri'],
+            'confidence': auto_match['confidence'],
+            'filename': auto_match['file_name'],
+            'source': 'auto_match',
+            'track_info': auto_match.get('track_info', '')
+        })
+
+    # Detect duplicates
+    duplicate_detection = detect_duplicate_file_mappings(proposed_mappings)
+
+    if duplicate_detection['needs_user_resolution']:
+        # Move conflicting files to require user input
+        clean_auto_matches = duplicate_detection['clean_mappings_data']
+        duplicate_groups = duplicate_detection['duplicate_groups_data']
+
+        # Convert duplicate groups to files requiring user input
+        additional_user_input_files = []
+        for group in duplicate_groups:
+            for mapping in group['mappings']:
+                # Create user input entry with all options for this URI
+                user_input_entry = {
+                    'file_path': mapping['file_path'],
+                    'file_name': mapping['filename'],
+                    'duplicate_conflict': True,
+                    'conflicting_uri': group['uri'],
+                    'conflicting_track_info': group['track_info'],
+                    'potential_matches': [
+                        {
+                            'uri': m['uri'],
+                            'confidence': m['confidence'],
+                            'track_info': group['track_info'],
+                            'is_recommended': m == group['recommended_mapping']
+                        } for m in group['mappings']
+                    ],
+                    'top_match': {
+                        'uri': group['recommended_mapping']['uri'],
+                        'confidence': group['recommended_mapping']['confidence'],
+                        'track_info': group['track_info'],
+                        'match_type': 'auto_match_with_conflict'
+                    }
+                }
+                additional_user_input_files.append(user_input_entry)
+
+        # Update the analysis results
+        updated_analysis = {
+            **standard_analysis,
+            'auto_matched_files': clean_auto_matches,
+            'files_requiring_user_input': standard_analysis['files_requiring_user_input'] + additional_user_input_files,
+            'duplicate_detection': {
+                'performed': True,
+                'conflicts_found': duplicate_detection['duplicate_groups'],
+                'clean_mappings': duplicate_detection['clean_mappings'],
+                'needs_resolution': True,
+                'duplicate_groups': duplicate_groups
+            }
+        }
+
+        mapping_logger.warning(
+            f"Found {duplicate_detection['duplicate_groups']} duplicate conflicts requiring user resolution")
+
+    else:
+        # No duplicates found
+        updated_analysis = {
+            **standard_analysis,
+            'duplicate_detection': {
+                'performed': True,
+                'conflicts_found': 0,
+                'clean_mappings': duplicate_detection['clean_mappings'],
+                'needs_resolution': False
+            }
+        }
+
+        mapping_logger.info("No duplicate conflicts found in auto-matched files")
+
+    elapsed_time = time.time() - start_time
+    mapping_logger.info(f"Enhanced analysis completed in {elapsed_time:.2f} seconds")
+
+    return updated_analysis
+
+
+def create_file_mappings_with_duplicate_resolution(master_tracks_dir: str,
+                                                   user_selections: List[Dict[str, Any]],
+                                                   precomputed_changes: Dict[str, Any] = None,
+                                                   duplicate_resolutions: Dict[str, str] = None) -> Dict[str, Any]:
+    """
+    Enhanced file mapping creation that handles duplicate resolution.
+
+    Args:
+        duplicate_resolutions: Dict mapping URI to selected file_path for conflicts
+    """
+    mapping_logger.info("Starting enhanced file mapping creation with duplicate resolution")
+
+    # Get proposed mappings
+    proposed_mappings = []
+
+    # Add auto-matched files from precomputed changes
+    if precomputed_changes and 'auto_matched_files' in precomputed_changes:
+        for auto_match in precomputed_changes['auto_matched_files']:
+            proposed_mappings.append({
+                'file_path': auto_match['file_path'],
+                'filename': auto_match.get('file_name', auto_match.get('filename', '')),
+                'uri': auto_match['uri'],
+                'confidence': auto_match['confidence'],
+                'source': 'auto_match'
+            })
+
+    # Add user selections
+    for selection in user_selections:
+        file_path = selection.get('file_path')
+        if not file_path:
+            filename = selection.get('file_name', selection.get('filename', ''))
+            if filename:
+                file_path = _find_file_path_in_directory(filename, master_tracks_dir)
+
+        if file_path and selection.get('uri'):
+            proposed_mappings.append({
+                'file_path': file_path,
+                'filename': selection.get('file_name', selection.get('filename', os.path.basename(file_path))),
+                'uri': selection['uri'],
+                'confidence': selection.get('confidence', 0.0),
+                'source': 'user_selection'
+            })
+
+    # Detect duplicates in final mapping set
+    duplicate_detection = detect_duplicate_file_mappings(proposed_mappings)
+
+    final_mappings = []
+
+    if duplicate_detection['needs_user_resolution']:
+        if duplicate_resolutions:
+            # Resolve duplicates using user selections
+            resolution_result = resolve_duplicate_mappings(
+                duplicate_detection['duplicate_groups_data'],
+                duplicate_resolutions
+            )
+
+            # Combine clean mappings with resolved mappings
+            final_mappings = duplicate_detection['clean_mappings_data'] + resolution_result['resolved_mappings']
+
+            mapping_logger.info(f"Resolved {resolution_result['total_resolved']} duplicate conflicts")
+        else:
+            # Return duplicate conflicts for user resolution
+            return {
+                'success': True,
+                'stage': 'duplicate_resolution_required',
+                'message': f"Found {duplicate_detection['duplicate_groups']} duplicate mapping conflicts that require user resolution",
+                'duplicate_detection': duplicate_detection,
+                'needs_duplicate_resolution': True,
+                'clean_mappings_count': duplicate_detection['clean_mappings'],
+                'conflicted_mappings_count': sum(
+                    len(group['mappings']) for group in duplicate_detection['duplicate_groups_data'])
+            }
+    else:
+        # No duplicates - use all clean mappings
+        final_mappings = duplicate_detection['clean_mappings_data']
+
+    # Create the mappings using existing batch creation logic
+    creation_result = create_file_mappings_batch(master_tracks_dir, final_mappings)
+
+    return {
+        **creation_result,
+        'stage': 'mapping_complete',
+        'duplicate_detection': duplicate_detection,
+        'duplicate_resolution_applied': bool(duplicate_resolutions)
+    }
+
+
+def get_existing_duplicate_mappings() -> Dict[str, Any]:
+    """
+    Get existing duplicate file mappings from the database.
+    """
+    return analyze_existing_duplicate_mappings()
 
 
 def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 0.75) -> Dict[str, Any]:

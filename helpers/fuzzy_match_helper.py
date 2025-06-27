@@ -175,6 +175,12 @@ class FuzzyMatcher:
 
         self.tracks = tracks
         self.existing_mappings = existing_mappings or {}
+        # NEW: Track URIs assigned during this matching session
+        self.session_assigned_uris = {}  # uri -> {'file_path': str, 'confidence': float, 'filename': str}
+
+        # Precompute normalized data for performance
+        self.preprocessed_regular_tracks = []
+        self.preprocessed_local_tracks = []
         self.mapped_uris = set(self.existing_mappings.values())
         self.duration_extractor = AudioDurationExtractor()
 
@@ -379,14 +385,74 @@ class FuzzyMatcher:
                         filename: str,
                         threshold: float = 0.75,
                         exclude_track_id: str = None,
-                        file_path: str = None) -> Optional[FuzzyMatchResult]:
-        """Find the single best match for a filename."""
-        matches = self.find_matches(filename, threshold=0.4, max_matches=1,
-                                    exclude_track_id=exclude_track_id, file_path=file_path)
+                        file_path: str = None,
+                        prevent_duplicates: bool = True) -> Optional[FuzzyMatchResult]:
+        """Find the single best match for a filename with duplicate prevention."""
 
-        if matches and matches[0].confidence >= threshold:
-            return matches[0]
-        return None
+        matches = self.find_matches(
+            filename=filename,
+            threshold=threshold,
+            max_matches=10,  # Get more matches to handle duplicates
+            exclude_track_id=exclude_track_id,
+            file_path=file_path
+        )
+
+        if not matches:
+            return None
+
+        # NEW: Filter out already-assigned URIs if duplicate prevention is enabled
+        if prevent_duplicates:
+            available_matches = []
+            for match in matches:
+                uri = match.track.uri
+
+                # Skip if this URI is already assigned in this session
+                if uri in self.session_assigned_uris:
+                    existing_assignment = self.session_assigned_uris[uri]
+
+                    # Only consider replacing if our confidence is significantly higher
+                    confidence_threshold = 0.1  # Must be 10% higher to replace
+                    if match.confidence > existing_assignment['confidence'] + confidence_threshold:
+                        # This is a better match - we'll handle the replacement later
+                        available_matches.append(match)
+
+                        # Add metadata about the potential replacement
+                        match.replacement_candidate = {
+                            'replaces_file': existing_assignment['filename'],
+                            'replaces_confidence': existing_assignment['confidence'],
+                            'confidence_improvement': match.confidence - existing_assignment['confidence']
+                        }
+                    else:
+                        # Skip this match - already assigned to a better or equal match
+                        continue
+                else:
+                    # URI is available
+                    available_matches.append(match)
+
+            if not available_matches:
+                return None
+
+            best_match = available_matches[0]
+        else:
+            best_match = matches[0]
+
+        # NEW: Track this assignment for duplicate prevention
+        if prevent_duplicates and best_match.confidence >= threshold:
+            uri = best_match.track.uri
+
+            # If this is a replacement, remove the old assignment
+            if hasattr(best_match, 'replacement_candidate'):
+                # The old assignment will be handled in batch processing
+                pass
+
+            # Record this assignment
+            self.session_assigned_uris[uri] = {
+                'file_path': file_path,
+                'confidence': best_match.confidence,
+                'filename': filename
+            }
+
+        return best_match if best_match.confidence >= threshold else None
 
     def _extract_artist_title(self, filename: str) -> Tuple[str, str]:
         """Extract artist and title from filename with better handling."""

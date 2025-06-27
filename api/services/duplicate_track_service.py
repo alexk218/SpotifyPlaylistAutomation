@@ -641,6 +641,192 @@ def get_duplicate_tracks_report() -> Dict[str, Any]:
         }
 
 
+def detect_duplicate_file_mappings(proposed_mappings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Detect potential duplicate file mappings where multiple files would be assigned to the same URI.
+
+    Args:
+        proposed_mappings: List of mappings in format:
+            [{'file_path': str, 'uri': str, 'confidence': float, 'filename': str, 'source': str}, ...]
+
+    Returns:
+        Dictionary with duplicate detection results
+    """
+    duplicate_logger.info(f"Analyzing {len(proposed_mappings)} proposed mappings for duplicates")
+
+    # Group mappings by URI
+    mappings_by_uri = {}
+    for mapping in proposed_mappings:
+        uri = mapping['uri']
+        if uri not in mappings_by_uri:
+            mappings_by_uri[uri] = []
+        mappings_by_uri[uri].append(mapping)
+
+    # Find URIs with multiple mappings
+    duplicate_groups = {}
+    clean_mappings = []
+
+    for uri, mappings in mappings_by_uri.items():
+        if len(mappings) > 1:
+            # Sort by confidence (highest first)
+            mappings.sort(key=lambda x: x['confidence'], reverse=True)
+            duplicate_groups[uri] = {
+                'uri': uri,
+                'track_info': f"Multiple files competing for: {uri}",
+                'mappings': mappings,
+                'recommended_mapping': mappings[0],  # Highest confidence
+                'conflicting_mappings': mappings[1:]  # Lower confidence ones
+            }
+            duplicate_logger.warning(f"Duplicate mapping detected for {uri}: {len(mappings)} files competing")
+        else:
+            # Single mapping - add to clean list
+            clean_mappings.append(mappings[0])
+
+    # Get track info from database for better display
+    if duplicate_groups:
+        with UnitOfWork() as uow:
+            track_uris = list(duplicate_groups.keys())
+            tracks_by_uri = uow.track_repository.get_all_as_dict_by_uri()
+
+            for uri, group in duplicate_groups.items():
+                if uri in tracks_by_uri:
+                    track = tracks_by_uri[uri]
+                    group['track_info'] = f"{track.artists} - {track.title}"
+
+    result = {
+        'success': True,
+        'total_mappings': len(proposed_mappings),
+        'clean_mappings': len(clean_mappings),
+        'duplicate_groups': len(duplicate_groups),
+        'duplicate_groups_data': list(duplicate_groups.values()),
+        'clean_mappings_data': clean_mappings,
+        'needs_user_resolution': len(duplicate_groups) > 0
+    }
+
+    duplicate_logger.info(f"Duplicate detection complete: {len(duplicate_groups)} conflicts found")
+    return result
+
+
+def resolve_duplicate_mappings(duplicate_groups: List[Dict[str, Any]],
+                               user_selections: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Resolve duplicate mappings based on user selections.
+
+    Args:
+        duplicate_groups: List of duplicate group data from detect_duplicate_file_mappings
+        user_selections: Dict mapping URI to selected file_path
+
+    Returns:
+        Dictionary with resolution results
+    """
+    duplicate_logger.info(f"Resolving {len(duplicate_groups)} duplicate groups with user selections")
+
+    resolved_mappings = []
+    rejected_mappings = []
+    auto_resolved = []
+
+    for group in duplicate_groups:
+        uri = group['uri']
+
+        if uri in user_selections:
+            # User made a selection
+            selected_file_path = user_selections[uri]
+
+            # Find the selected mapping
+            selected_mapping = None
+            for mapping in group['mappings']:
+                if mapping['file_path'] == selected_file_path:
+                    selected_mapping = mapping
+                    break
+
+            if selected_mapping:
+                resolved_mappings.append(selected_mapping)
+
+                # Add rejected mappings
+                for mapping in group['mappings']:
+                    if mapping['file_path'] != selected_file_path:
+                        rejected_mappings.append({
+                            **mapping,
+                            'rejection_reason': 'User selected different file for this track'
+                        })
+
+                duplicate_logger.info(f"User resolved {uri}: selected {selected_file_path}")
+            else:
+                # User selection not found - use recommendation
+                resolved_mappings.append(group['recommended_mapping'])
+                duplicate_logger.warning(f"User selection not found for {uri}, using recommendation")
+        else:
+            # No user selection - use automatic resolution (highest confidence)
+            resolved_mappings.append(group['recommended_mapping'])
+            auto_resolved.append(uri)
+
+            # Add rejected mappings
+            for mapping in group['conflicting_mappings']:
+                rejected_mappings.append({
+                    **mapping,
+                    'rejection_reason': 'Lower confidence than selected mapping'
+                })
+
+            duplicate_logger.info(f"Auto-resolved {uri}: selected highest confidence mapping")
+
+    return {
+        'success': True,
+        'resolved_mappings': resolved_mappings,
+        'rejected_mappings': rejected_mappings,
+        'auto_resolved_count': len(auto_resolved),
+        'user_resolved_count': len(duplicate_groups) - len(auto_resolved),
+        'total_resolved': len(resolved_mappings)
+    }
+
+
+def analyze_existing_duplicate_mappings() -> Dict[str, Any]:
+    """
+    Analyze existing file mappings in the database to find duplicates.
+
+    Returns:
+        Dictionary with existing duplicate analysis
+    """
+    duplicate_logger.info("Analyzing existing file mappings for duplicates")
+
+    with UnitOfWork() as uow:
+        # Get duplicate mappings from repository
+        duplicate_mappings = uow.file_track_mapping_repository.find_duplicate_mappings()
+
+        if not duplicate_mappings:
+            return {
+                'success': True,
+                'duplicate_count': 0,
+                'duplicate_groups': [],
+                'message': 'No duplicate file mappings found in database'
+            }
+
+        # Get track info for better display
+        tracks_by_uri = uow.track_repository.get_all_as_dict_by_uri()
+
+        duplicate_groups = []
+        for uri, file_paths in duplicate_mappings.items():
+            track_info = "Unknown track"
+            if uri in tracks_by_uri:
+                track = tracks_by_uri[uri]
+                track_info = f"{track.artists} - {track.title}"
+
+            duplicate_groups.append({
+                'uri': uri,
+                'track_info': track_info,
+                'file_paths': file_paths,
+                'file_count': len(file_paths)
+            })
+
+    duplicate_logger.info(f"Found {len(duplicate_groups)} existing duplicate mappings")
+
+    return {
+        'success': True,
+        'duplicate_count': len(duplicate_groups),
+        'duplicate_groups': duplicate_groups,
+        'total_affected_files': sum(group['file_count'] for group in duplicate_groups)
+    }
+
+
 def apply_user_selections_and_cleanup(user_selections: Dict[str, str], dry_run: bool = False) -> Dict[str, Any]:
     """
     Apply user selections for duplicate groups and perform cleanup.

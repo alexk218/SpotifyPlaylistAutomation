@@ -96,6 +96,170 @@ def manage_file_mappings():
         }), 500
 
 
+@bp.route('/mapping/analyze-enhanced', methods=['POST'])
+def analyze_file_mappings_enhanced():
+    """Enhanced file mapping analysis with duplicate detection."""
+    try:
+        data = request.get_json()
+        master_tracks_dir = data.get('masterTracksDir')
+        confidence_threshold = float(data.get('confidenceThreshold', 0.75))
+
+        if not master_tracks_dir:
+            return jsonify({
+                "success": False,
+                "message": "Master tracks directory is required"
+            }), 400
+
+        # Use enhanced analysis with duplicate detection
+        result = track_service.analyze_file_mappings_with_duplicate_detection(
+            master_tracks_dir,
+            confidence_threshold
+        )
+
+        return jsonify({
+            "success": True,
+            "stage": "enhanced_analysis",
+            **result
+        })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        tracks_logger.error(f"Error in enhanced analysis: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/mapping/create-with-resolution', methods=['POST'])
+def create_mappings_with_duplicate_resolution():
+    """Create file mappings with duplicate conflict resolution."""
+    try:
+        data = request.get_json()
+        master_tracks_dir = data.get('masterTracksDir')
+        user_selections = data.get('userSelections', [])
+        precomputed_changes = data.get('precomputedChanges', {})
+        duplicate_resolutions = data.get('duplicateResolutions', {})
+
+        if not master_tracks_dir:
+            return jsonify({
+                "success": False,
+                "message": "Master tracks directory is required"
+            }), 400
+
+        result = track_service.create_file_mappings_with_duplicate_resolution(
+            master_tracks_dir=master_tracks_dir,
+            user_selections=user_selections,
+            precomputed_changes=precomputed_changes,
+            duplicate_resolutions=duplicate_resolutions
+        )
+
+        return jsonify({
+            "success": True,
+            **result
+        })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        tracks_logger.error(f"Error creating mappings with resolution: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/mapping/duplicates', methods=['GET'])
+def get_existing_duplicate_mappings():
+    """Get existing duplicate file mappings from the database."""
+    try:
+        result = track_service.get_existing_duplicate_mappings()
+        return jsonify(result)
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        tracks_logger.error(f"Error getting existing duplicates: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
+@bp.route('/mapping/duplicates/resolve', methods=['POST'])
+def resolve_existing_duplicate_mappings():
+    """Resolve existing duplicate mappings in the database."""
+    try:
+        data = request.get_json()
+        resolutions = data.get('resolutions', {})  # {uri: file_path_to_keep}
+
+        if not resolutions:
+            return jsonify({
+                "success": False,
+                "message": "No resolutions provided"
+            }), 400
+
+        # Get existing duplicates
+        existing_duplicates = track_service.get_existing_duplicate_mappings()
+
+        if not existing_duplicates['success'] or existing_duplicates['duplicate_count'] == 0:
+            return jsonify({
+                "success": False,
+                "message": "No existing duplicates found to resolve"
+            }), 400
+
+        resolved_count = 0
+        removed_count = 0
+
+        with UnitOfWork() as uow:
+            for uri, selected_file_path in resolutions.items():
+                # Find the duplicate group for this URI
+                duplicate_group = None
+                for group in existing_duplicates['duplicate_groups']:
+                    if group['uri'] == uri:
+                        duplicate_group = group
+                        break
+
+                if not duplicate_group:
+                    continue
+
+                # Verify the selected file path is in the group
+                if selected_file_path not in duplicate_group['file_paths']:
+                    tracks_logger.warning(
+                        f"Selected file path {selected_file_path} not found in duplicate group for {uri}")
+                    continue
+
+                # Remove mappings for all other files
+                for file_path in duplicate_group['file_paths']:
+                    if file_path != selected_file_path:
+                        success = uow.file_track_mapping_repository.soft_delete_by_file_path(file_path)
+                        if success:
+                            removed_count += 1
+                            tracks_logger.info(f"Removed duplicate mapping: {file_path} -> {uri}")
+
+                resolved_count += 1
+                tracks_logger.info(f"Resolved duplicate for {uri}: kept {selected_file_path}")
+
+            uow.commit()
+
+        return jsonify({
+            "success": True,
+            "resolved_groups": resolved_count,
+            "removed_mappings": removed_count,
+            "message": f"Successfully resolved {resolved_count} duplicate groups, removed {removed_count} conflicting mappings"
+        })
+
+    except Exception as e:
+        error_str = traceback.format_exc()
+        tracks_logger.error(f"Error resolving existing duplicates: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
+        }), 500
+
+
 @bp.route('', methods=['DELETE'])
 def delete_file():
     """Delete a file from the filesystem."""
