@@ -376,7 +376,7 @@ if __name__ == "__main__":
 
     # OPTION 1: Test a single file
     print("=== SINGLE FILE TEST ===")
-    single_file = "K:/tracks_master/Moojo - Secret ID.mp3"  # UPDATE THIS PATH
+    single_file = "K:/tracks_master/Vander - I Hear the Music.mp3"
 
     if os.path.exists(single_file):
         test_single_file_real_matching(single_file)

@@ -311,7 +311,10 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
 
         files_without_mappings.append(file)
         specific_match_time = time.time() - specific_match_start
-        print(f"Matching for {file}: {specific_match_time:.2f}s")
+        if specific_match_time > 1.0:
+            print(f"\033[91mWARNING: Matching for {file}: {specific_match_time:.2f}s\033[0m")  # Red
+        else:
+            print(f"Matching for {file}: {specific_match_time:.2f}s")
 
     match_time = time.time() - match_start
     print(f"Matching took: {match_time:.2f}s")
