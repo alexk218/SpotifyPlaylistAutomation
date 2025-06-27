@@ -1,5 +1,5 @@
 import sqlite3
-from typing import Any, List, Optional, Dict, Tuple, TypeVar, Generic
+from typing import Any, List, Optional, Tuple, TypeVar, Generic
 
 from utils.logger import setup_logger
 

@@ -39,14 +39,14 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         query = "SELECT Uri FROM FileTrackMappings WHERE FilePath = ? AND IsActive = 1"
         cursor = self.connection.cursor()
         result = cursor.execute(query, (os.path.normpath(file_path),)).fetchone()
-        return result.Uri if result else None
+        return result['Uri'] if result else None
 
     def get_files_by_uri(self, spotify_uri: str) -> list:
         """Get all files linked to a Spotify URI."""
         query = "SELECT FilePath FROM FileTrackMappings WHERE Uri = ? AND IsActive = 1"
         cursor = self.connection.cursor()
         results = cursor.execute(query, (spotify_uri,)).fetchall()
-        return [row.FilePath for row in results]
+        return [row['FilePath'] for row in results]
 
     def get_all_active_uri_to_file_mappings(self) -> Dict[str, str]:
         """
@@ -62,7 +62,7 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         """
 
         results = self.fetch_all(query)
-        return {row.Uri: row.FilePath for row in results}
+        return {row['Uri']: row['FilePath'] for row in results}
 
     def cleanup_stale_mappings(self) -> Dict[str, int]:
         """Clean up mappings that point to files that no longer exist."""
@@ -76,8 +76,8 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         stale_mappings = []
 
         for row in results:
-            if not os.path.exists(row.FilePath):
-                stale_mappings.append(row.MappingId)
+            if not os.path.exists(row['FilePath']):
+                stale_mappings.append(row['MappingId'])
 
         # Soft delete stale mappings
         cleaned_count = 0
@@ -109,7 +109,7 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         """
 
         results = self.fetch_all(query)
-        return {os.path.normpath(row.FilePath): row.Uri for row in results}
+        return {os.path.normpath(row['FilePath']): row['Uri'] for row in results}
 
     def get_mapped_uris(self) -> Set[str]:
         """
@@ -125,7 +125,7 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         """
 
         results = self.fetch_all(query)
-        return {row.Uri for row in results}
+        return {row['Uri'] for row in results}
 
     def get_uri_mapping_counts(self) -> Dict[str, int]:
         """
@@ -142,7 +142,7 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         """
 
         results = self.fetch_all(query)
-        return {row.Uri: row.FileCount for row in results}
+        return {row['Uri']: row['FileCount'] for row in results}
 
     def find_duplicate_mappings(self) -> Dict[str, list]:
         """
@@ -167,9 +167,9 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         results = self.fetch_all(query)
         duplicates = {}
         for row in results:
-            if row.Uri not in duplicates:
-                duplicates[row.Uri] = []
-            duplicates[row.Uri].append(row.FilePath)
+            if row['Uri'] not in duplicates:
+                duplicates[row['Uri']] = []
+            duplicates[row['Uri']].append(row['FilePath'])
 
         return duplicates
 

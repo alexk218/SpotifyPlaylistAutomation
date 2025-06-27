@@ -259,10 +259,10 @@ class TrackRepository(BaseRepository[Track]):
         results = self.fetch_all(query, uris)
 
         return {
-            row.Uri: {
-                'title': row.TrackTitle,
-                'artists': row.Artists,
-                'album': row.Album
+            row['Uri']: {
+                'title': row['TrackTitle'],
+                'artists': row['Artists'],
+                'album': row['Album']
             }
             for row in results
         }

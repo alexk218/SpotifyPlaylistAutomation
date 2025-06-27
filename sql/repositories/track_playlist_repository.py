@@ -96,7 +96,7 @@ class TrackPlaylistRepository(BaseRepository):
             WHERE TrackId = ?
         """
         results = self.fetch_all(query, (track_id,))
-        return [row.PlaylistId for row in results]
+        return [row['PlaylistId'] for row in results]
 
     def get_track_counts_by_playlist(self) -> List[Tuple[str, str, int]]:
         """
@@ -112,7 +112,7 @@ class TrackPlaylistRepository(BaseRepository):
             GROUP BY p.PlaylistId, p.PlaylistName
             ORDER BY COUNT(tp.TrackId) DESC, p.PlaylistName
         """
-        return [(row.PlaylistId, row.PlaylistName.strip(), row.TrackCount)
+        return [(row['PlaylistId'], row['PlaylistName'].strip(), row['TrackCount'])
                 for row in self.fetch_all(query)]
 
     def get_playlist_counts_by_track(self) -> List[Tuple[str, str, int]]:
@@ -129,7 +129,7 @@ class TrackPlaylistRepository(BaseRepository):
             GROUP BY t.TrackId, t.TrackTitle
             ORDER BY COUNT(tp.PlaylistId) DESC, t.TrackTitle
         """
-        return [(row.TrackId, row.TrackTitle, row.PlaylistCount)
+        return [(row['TrackId'], row['TrackTitle'], row['PlaylistCount'])
                 for row in self.fetch_all(query)]
 
     def get_playlist_track_counts_batch(self, playlist_ids: List[str]) -> Dict[str, int]:
@@ -160,8 +160,7 @@ class TrackPlaylistRepository(BaseRepository):
 
         # Update with actual counts
         for row in results:
-            counts[row.PlaylistId] = row.TrackCount
-
+            counts[row['PlaylistId']] = row.TrackCount
         return counts
 
     def get_all_playlist_track_mappings(self) -> Dict[str, List[str]]:
@@ -181,9 +180,9 @@ class TrackPlaylistRepository(BaseRepository):
 
         playlist_mappings = {}
         for row in results:
-            if row.PlaylistId not in playlist_mappings:
-                playlist_mappings[row.PlaylistId] = []
-            playlist_mappings[row.PlaylistId].append(row.Uri)
+            if row['PlaylistId'] not in playlist_mappings:
+                playlist_mappings[row['PlaylistId']] = []
+            playlist_mappings[row['PlaylistId']].append(row['Uri'])
 
         return playlist_mappings
 
@@ -215,8 +214,8 @@ class TrackPlaylistRepository(BaseRepository):
 
         # Populate with actual URIs
         for row in results:
-            if row.PlaylistId in playlist_uris:
-                playlist_uris[row.PlaylistId].append(row.Uri)
+            if row['PlaylistId'] in playlist_uris:
+                playlist_uris[row['PlaylistId']].append(row['Uri'])
 
         return playlist_uris
 
@@ -254,7 +253,7 @@ class TrackPlaylistRepository(BaseRepository):
             WHERE Uri = ?
         """
         results = self.fetch_all(query, (uri,))
-        return [row.PlaylistId for row in results]
+        return [row['PlaylistId'] for row in results]
 
     def get_uris_for_playlist(self, playlist_id: str) -> List[str]:
         """
@@ -271,7 +270,7 @@ class TrackPlaylistRepository(BaseRepository):
             WHERE PlaylistId = ?
         """
         results = self.fetch_all(query, (playlist_id,))
-        return [row.Uri for row in results]
+        return [row['Uri'] for row in results]
 
     def insert_by_uri(self, uri: str, playlist_id: str) -> None:
         """
@@ -352,7 +351,7 @@ class TrackPlaylistRepository(BaseRepository):
             GROUP BY p.PlaylistId, p.PlaylistName
             ORDER BY COUNT(tp.Uri) DESC, p.PlaylistName
         """
-        return [(row.PlaylistId, row.PlaylistName.strip(), row.UriCount)
+        return [(row['PlaylistId'], row['PlaylistName'].strip(), row['UriCount'])
                 for row in self.fetch_all(query)]
 
     def get_playlist_counts_by_uri(self) -> List[Tuple[str, str, int]]:
@@ -369,7 +368,7 @@ class TrackPlaylistRepository(BaseRepository):
             GROUP BY t.Uri, t.TrackTitle
             ORDER BY COUNT(tp.PlaylistId) DESC, t.TrackTitle
         """
-        return [(row.Uri, row.TrackTitle, row.PlaylistCount)
+        return [(row['Uri'], row['TrackTitle'], row['PlaylistCount'])
                 for row in self.fetch_all(query)]
 
     def delete_by_playlist_id(self, playlist_id: str) -> int:
