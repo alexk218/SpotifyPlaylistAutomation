@@ -74,10 +74,12 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
 
         results = self.fetch_all(query)
         stale_mappings = []
+        cleaned_paths = []
 
         for row in results:
             if not os.path.exists(row['FilePath']):
                 stale_mappings.append(row['MappingId'])
+                cleaned_paths.append(row['FilePath'])
 
         # Soft delete stale mappings
         cleaned_count = 0
@@ -92,7 +94,8 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
 
         return {
             'checked_count': len(results),
-            'cleaned_count': cleaned_count
+            'cleaned_count': cleaned_count,
+            'cleaned_paths': cleaned_paths
         }
 
     def get_file_to_uri_mappings(self) -> Dict[str, str]:

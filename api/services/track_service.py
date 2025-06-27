@@ -313,7 +313,6 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
         specific_match_time = time.time() - specific_match_start
         print(f"Matching for {file}: {specific_match_time:.2f}s")
 
-
     match_time = time.time() - match_start
     print(f"Matching took: {match_time:.2f}s")
 
@@ -850,6 +849,8 @@ def cleanup_stale_file_mappings() -> Dict[str, Any]:
     with UnitOfWork() as uow:
         cleanup_stats = uow.file_track_mapping_repository.cleanup_stale_mappings()
 
+        print(f"Cleanup complete! Cleaned paths: {cleanup_stats['cleaned_paths']}")
+        print(f"{cleanup_stats['cleaned_count']} stale mappings removed")
         mapping_logger.info(f"Cleanup complete: {cleanup_stats['cleaned_count']} stale mappings removed")
 
         return {
