@@ -4,6 +4,7 @@ import time
 from typing import List, Dict, Any, Tuple, Optional
 
 import Levenshtein
+from mutagen import File as MutagenFile
 
 from sql.models.track import Track
 from utils.logger import setup_logger
@@ -11,9 +12,36 @@ from utils.logger import setup_logger
 fuzzy_logger = setup_logger('fuzzy_matching', 'helpers', 'fuzzy_matching.log')
 
 # Global debug flag - set to True for detailed timing info
-DEBUG_PERFORMANCE = True
+DEBUG_PERFORMANCE = False
+
 
 # TODO: move this to api/models ?
+class AudioDurationExtractor:
+    """Extract duration from audio files using mutagen."""
+
+    @staticmethod
+    def get_file_duration_ms(file_path: str) -> Optional[int]:
+        """Extract duration from audio file in milliseconds."""
+        if not file_path or not os.path.exists(file_path):
+            return None
+
+        try:
+            audio_file = MutagenFile(file_path)
+            if audio_file is None:
+                return None
+
+            if hasattr(audio_file, 'info') and hasattr(audio_file.info, 'length'):
+                duration_seconds = audio_file.info.length
+                return int(duration_seconds * 1000)
+
+            return None
+
+        except Exception as e:
+            if DEBUG_PERFORMANCE:
+                print(f"Warning: Could not extract duration from {file_path}: {e}")
+            return None
+
+
 class FuzzyMatchResult:
     """Represents a single fuzzy match result."""
 
@@ -53,7 +81,12 @@ class PreprocessedTrack:
         self.base_title, self.remix_info = self._extract_remix_info_fast(self.normalized_title)
 
         # Pre-compute artist words for fast filtering
-        self.artist_words = set(self.normalized_artists.split()) if self.normalized_artists else set()
+        if self.normalized_artists:
+            # Fast comma replacement
+            clean_artists = self.normalized_artists.replace(',', ' ').replace(';', ' ').replace('&', ' ')
+            self.artist_words = set(word for word in clean_artists.split() if word)
+        else:
+            self.artist_words = set()
 
         # Pre-compute combined text for search
         self.combined_text = f"{self.normalized_artists} {self.normalized_title}".strip()
@@ -78,6 +111,7 @@ class FuzzyMatcher:
         self.tracks = tracks
         self.existing_mappings = existing_mappings or {}
         self.mapped_uris = set(self.existing_mappings.values())
+        self.duration_extractor = AudioDurationExtractor()
 
         # Compile regex patterns once
         self.remix_patterns = [
@@ -146,6 +180,63 @@ class FuzzyMatcher:
         if DEBUG_PERFORMANCE:
             print(f"  Skipped {skipped_mapped} already mapped tracks")
             print(f"  Skipped {skipped_invalid} tracks with no title")
+
+    def _calculate_duration_confidence_boost(self, file_path: str, track_duration_ms: int) -> float:
+        """Calculate confidence boost based on duration matching."""
+        if not file_path or not track_duration_ms:
+            return 1.0
+
+        file_duration_ms = self.duration_extractor.get_file_duration_ms(file_path)
+        if not file_duration_ms:
+            return 1.0
+
+        duration_diff_ms = abs(file_duration_ms - track_duration_ms)
+
+        # Tolerance thresholds (in milliseconds)
+        if duration_diff_ms <= 1000:  # 1 second
+            return 1.25  # 25% boost
+        elif duration_diff_ms <= 3000:  # 3 seconds
+            return 1.20  # 20% boost
+        elif duration_diff_ms <= 10000:  # 10 seconds
+            return 1.15  # 15% boost
+        elif duration_diff_ms <= 30000:  # 30 seconds
+            return 1.10  # 10% boost
+        else:
+            return 1.0  # No boost
+
+    def _find_duration_based_candidates(self, file_path: str, max_candidates: int = 50) -> List['PreprocessedTrack']:
+        """Find potential matches based on duration similarity."""
+        if not file_path:
+            return []
+
+        file_duration_ms = self.duration_extractor.get_file_duration_ms(file_path)
+        if not file_duration_ms:
+            return []
+
+        duration_candidates = []
+
+        for preprocessed in self.preprocessed_regular_tracks:
+            track = preprocessed.track
+
+            if not track.duration_ms:
+                continue
+
+            # Calculate duration similarity
+            duration_diff_ms = abs(file_duration_ms - track.duration_ms)
+
+            # Only consider tracks within reasonable duration range (60 seconds)
+            if duration_diff_ms <= 60000:  # 1 minute tolerance
+                duration_score = max(0, 1.0 - (duration_diff_ms / 60000))
+                duration_candidates.append((preprocessed, duration_score, duration_diff_ms))
+
+        # Sort by duration similarity and limit candidates
+        duration_candidates.sort(key=lambda x: x[2])  # Sort by duration difference
+
+        if DEBUG_PERFORMANCE and duration_candidates:
+            print(f"    Duration-based discovery found {len(duration_candidates)} candidates")
+            print(f"    Best duration match: {duration_candidates[0][2] / 1000:.1f}s difference")
+
+        return [candidate[0] for candidate in duration_candidates[:max_candidates]]
 
     def find_matches(self,
                      filename: str,
@@ -292,19 +383,37 @@ class FuzzyMatcher:
         local_base, local_remix_info = self._extract_remix_info_fast(normalized_title)
 
         # Pre-filter candidates by artist if possible (HUGE speedup)
-        filter_start = time.time()
         if normalized_artist:
-            artist_words = set(normalized_artist.split())
-            # Fast set intersection to find tracks with overlapping artist words
+            # Fast comma replacement without regex
+            clean_artist = normalized_artist.replace(',', ' ').replace(';', ' ').replace('&', ' ')
+            artist_words = set(word for word in clean_artist.split() if word)
+
             candidate_tracks = [
                 pt for pt in self.preprocessed_regular_tracks
                 if not artist_words.isdisjoint(pt.artist_words)
             ]
         else:
-            # No artist info, have to check all tracks
+            # No artist info - use all tracks
             candidate_tracks = self.preprocessed_regular_tracks
 
-        filter_time = time.time() - filter_start
+        # NEW: Add duration-based discovery
+        # duration_candidates = []
+        # if file_path:
+        #     duration_candidates = self._find_duration_based_candidates(file_path)
+
+        # NEW: Combine candidates (remove duplicates)
+        # candidate_tracks = text_candidates.copy()
+        # for duration_candidate in duration_candidates:
+        #     if duration_candidate not in candidate_tracks:
+        #         candidate_tracks.append(duration_candidate)
+        # candidate_tracks = text_candidates
+        # duration_candidates = []  # Empty for now
+        #
+        # if DEBUG_PERFORMANCE:
+        #     print(
+        #         f"    Combined candidates: {len(candidate_tracks)} (text: {len(text_candidates)}, duration: {len(duration_candidates)})")
+        #
+        # filter_time = time.time() - filter_start
 
         # Process only candidate tracks
         calc_start = time.time()
@@ -316,8 +425,6 @@ class FuzzyMatcher:
             if exclude_track_id and track.track_id == exclude_track_id:
                 continue
 
-            processed_count += 1
-
             # Use precomputed values for fast confidence calculation
             confidence = self._calculate_confidence_fast(
                 normalized_artist, local_base, local_remix_info,
@@ -327,10 +434,20 @@ class FuzzyMatcher:
             # Apply precomputed mapping penalty
             final_confidence = confidence * preprocessed.mapping_penalty
 
-            if final_confidence >= 0.4:  # Lower threshold for collecting matches
+            # OPTIONAL: Apply duration boost only if enabled
+            if file_path and track.duration_ms and hasattr(self, 'duration_extractor'):
+                duration_boost = self._calculate_duration_confidence_boost(file_path, track.duration_ms)
+                final_confidence = min(1.0, final_confidence * duration_boost)
+                duration_boost_applied = duration_boost > 1.0
+            else:
+                duration_boost_applied = False
+
+            if final_confidence >= 0.2:  # Lower threshold for collecting matches
                 match_details = []
                 if preprocessed.mapping_penalty < 1.0:
                     match_details.append(f"mapped_penalty_{preprocessed.mapping_penalty:.2f}")
+                if duration_boost_applied:
+                    match_details.append(f"duration_boost_{duration_boost:.2f}")
 
                 matches.append(FuzzyMatchResult(
                     track=track,
@@ -339,16 +456,15 @@ class FuzzyMatcher:
                     match_details=match_details
                 ))
 
-        calc_time = time.time() - calc_start
-        total_time = time.time() - matching_start
-
-        if DEBUG_PERFORMANCE and total_time > 0.05:
-            print(f"    Fuzzy matching details:")
-            print(f"      Filter time: {filter_time:.3f}s")
-            print(f"      Candidates: {len(candidate_tracks)}/{len(self.preprocessed_regular_tracks)}")
-            print(f"      Processed: {processed_count}")
-            print(f"      Calc time: {calc_time:.3f}s ({calc_time / max(processed_count, 1) * 1000:.1f}ms per track)")
-            print(f"      Matches found: {len(matches)}")
+        # calc_time = time.time() - calc_start
+        # total_time = time.time() - matching_start
+        #
+        # if DEBUG_PERFORMANCE and total_time > 0.05:
+        #     print(f"    Fuzzy matching details:")
+        #     print(f"      Candidates: {len(candidate_tracks)}/{len(self.preprocessed_regular_tracks)}")
+        #     print(f"      Processed: {processed_count}")
+        #     print(f"      Calc time: {calc_time:.3f}s ({calc_time / max(processed_count, 1) * 1000:.1f}ms per track)")
+        #     print(f"      Matches found: {len(matches)}")
 
         return matches
 
@@ -384,22 +500,21 @@ class FuzzyMatcher:
         """Fast confidence calculation using precomputed values."""
 
         # Calculate artist similarity
-        artist_ratio = 0.0
-        if local_artist:
-            # Check for exact match first (fastest)
-            if local_artist in db_artists:
+        # Check for exact match first (fastest)
+        if local_artist in db_artists.lower():
+            artist_ratio = 1.0
+        else:
+            # Split and check individual artists only if needed
+            db_artist_list = [a.strip().lower() for a in db_artists.split(',')]
+
+            # Check for exact match in list
+            local_artist_lower = local_artist.lower()
+            if local_artist_lower in db_artist_list:
                 artist_ratio = 1.0
             else:
-                # Split and check individual artists
-                db_artist_list = [a.strip() for a in db_artists.split(',')]
-
-                # Check for exact match in list
-                if local_artist in db_artist_list:
-                    artist_ratio = 1.0
-                else:
-                    # Fuzzy matching as fallback
-                    artist_ratios = [Levenshtein.ratio(local_artist, db_artist) for db_artist in db_artist_list]
-                    artist_ratio = max(artist_ratios) if artist_ratios else 0
+                # Fuzzy matching as fallback (only if necessary)
+                artist_ratios = [Levenshtein.ratio(local_artist_lower, db_artist) for db_artist in db_artist_list]
+                artist_ratio = max(artist_ratios) if artist_ratios else 0
 
         # Enhanced title matching with remix awareness
         title_confidence = self._calculate_title_confidence_fast(local_base_title, local_remix_info, db_base_title,
@@ -474,16 +589,22 @@ class FuzzyMatcher:
 
         return direct_similarity
 
-    def _get_mapping_penalty_fast(self, track_uri: str) -> float:
-        """
-        Fast mapping penalty calculation without file system checks.
-        """
+    def _get_mapping_penalty_fast(self, track_uri: str, file_path: str = None) -> float:
         if not track_uri or track_uri not in self.mapped_uris:
             return 1.0  # No penalty if not mapped
 
-        # Apply penalty for already mapped tracks
-        # Note: Removed file existence check for performance
-        return 0.1  # 90% confidence reduction
+        # OPTION 1: Reduce penalty severity (Quick fix)
+        # return 0.7  # Changed from 0.1 to 0.7 (only 30% reduction instead of 90%)
+
+        # OPTION 2: Smarter penalty based on file existence (Better fix)
+        if file_path:
+            # Only apply harsh penalty if the mapped file actually exists and is different
+            existing_file = self.existing_mappings.get(track_uri)
+            if existing_file and os.path.exists(existing_file) and existing_file != file_path:
+                return 0.3  # Harsh penalty only for actual conflicts
+            else:
+                return 0.8  # Light penalty for stale/invalid mappings
+        return 0.7  # Default moderate penalty
 
     def _normalize_text(self, text: str) -> str:
         """Fast text normalization."""
