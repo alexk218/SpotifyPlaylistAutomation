@@ -5,7 +5,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
-from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match, FuzzyMatcher
+from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match, FuzzyMatcher, \
+    print_levenshtein_stats, reset_levenshtein_stats
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
@@ -170,58 +171,54 @@ def fuzzy_match_track(file_name, current_track_id=None):
 
 def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 0.75) -> Dict[str, Any]:
     """
-    Analyze which files need mapping to Spotify tracks.
+    Analyze which files need mapping to Spotify tracks with detailed profiling.
     """
-    mapping_logger.info(f"Starting file mapping analysis for directory: {master_tracks_dir}")
     start_time = time.time()
+    mapping_logger.info(f"Starting file mapping analysis for directory: {master_tracks_dir}")
 
+    # Reset profiling stats
+    reset_levenshtein_stats()
+
+    # Get all tracks and existing mappings from database
     db_start = time.time()
     with UnitOfWork() as uow:
-        # Get all tracks from database
         all_tracks = uow.track_repository.get_all()
-        mapping_logger.info(f"Found {len(all_tracks)} tracks in database")
-
-        # Get all existing file mappings
-        existing_mappings = {}
-        try:
-            all_mappings = uow.file_track_mapping_repository.get_all()
-            existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings if mapping.is_active}
-            mapping_logger.info(f"Found {len(existing_mappings)} existing mappings")
-        except Exception as e:
-            mapping_logger.warning(f"Could not batch load mappings, falling back: {e}")
-
-        local_tracks = [track for track in all_tracks if track.is_local_file()]
-        regular_tracks = [track for track in all_tracks if not track.is_local_file()]
-
+        all_mappings = uow.file_track_mapping_repository.get_all()
+        existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings if mapping.is_active}
     db_time = time.time() - db_start
-    print(f"Database loading took: {db_time:.2f}s")
 
-    mapping_logger.info("Scanning audio files...")
+    mapping_logger.info(
+        f"Loaded {len(all_tracks)} tracks and {len(existing_mappings)} existing mappings in {db_time:.2f}s")
+
+    # Scan for all audio files
+    scan_start = time.time()
     all_audio_files = []
-
-    # Collect all audio files
     for root, _, files in os.walk(master_tracks_dir):
         for file in files:
-            if _is_supported_audio_file(file):
+            file_ext = os.path.splitext(file)[1].lower()
+            if file_ext in SUPPORTED_AUDIO_EXTENSIONS:
                 file_path = os.path.join(root, file)
                 all_audio_files.append((file_path, file))
+    scan_time = time.time() - scan_start
 
     total_files = len(all_audio_files)
-    mapping_logger.info(f"Found {total_files} audio files")
+    mapping_logger.info(f"Found {total_files} total audio files in {scan_time:.2f}s")
 
-    # Filter out files with existing mappings early
+    # Filter out files that already have mappings
+    filter_start = time.time()
     files_needing_mapping = []
     files_with_existing_mappings = 0
 
     for file_path, file in all_audio_files:
-        if file_path in existing_mappings:
+        normalized_path = os.path.normpath(file_path)
+        if normalized_path in existing_mappings:
             files_with_existing_mappings += 1
-            mapping_logger.debug(f"File already mapped: {file} -> {existing_mappings[file_path]}")
         else:
             files_needing_mapping.append((file_path, file))
+    filter_time = time.time() - filter_start
 
-    mapping_logger.info(f"Files with existing mappings: {files_with_existing_mappings}")
-    mapping_logger.info(f"Files needing mapping: {len(files_needing_mapping)}")
+    print(f"Files with existing mappings: {files_with_existing_mappings}")
+    print(f"Files needing mapping: {len(files_needing_mapping)}")
 
     # Early exit if no files need mapping
     if not files_needing_mapping:
@@ -235,23 +232,75 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             "requires_user_selection": False
         }
 
+    # Create FuzzyMatcher once
+    matcher_start = time.time()
     fuzzy_matcher = FuzzyMatcher(all_tracks, existing_mappings)
+    matcher_time = time.time() - matcher_start
+    print(f"FuzzyMatcher created in {matcher_time:.2f}s")
 
-    # Process only files that actually need mapping
+    # Process files with detailed tracking
     auto_matched_files = []
     files_requiring_user_input = []
     files_without_mappings = []
 
-    # Progress tracking for long operations
+    # Performance tracking
     processed_count = 0
+    slow_file_count = 0
+    total_matching_time = 0
+    total_duration_time = 0
 
     match_start = time.time()
+
+    # Run performance test on first 50 files if we have many files
+    if len(files_needing_mapping) > 100:
+        print(f"\n=== RUNNING PERFORMANCE TEST ON FIRST 50 FILES ===")
+        test_start = time.time()
+
+        for i, (file_path, file) in enumerate(files_needing_mapping[:50]):
+            if i % 10 == 0:
+                print(f"Testing file {i + 1}/50...")
+
+            file_start = time.time()
+            best_match = fuzzy_matcher.find_best_match(
+                filename=file,
+                threshold=confidence_threshold,
+                file_path=file_path
+            )
+            file_time = time.time() - file_start
+
+            if file_time > 0.1:
+                print(f"SLOW TEST FILE: {file} took {file_time:.3f}s")
+
+        test_time = time.time() - test_start
+        avg_per_file = test_time / 50
+        projected_total = avg_per_file * len(files_needing_mapping)
+
+        print(f"\n=== PERFORMANCE TEST RESULTS ===")
+        print(f"50 files processed in: {test_time:.2f}s")
+        print(f"Average per file: {avg_per_file * 1000:.1f}ms")
+        print(f"Projected total time: {projected_total:.1f}s ({projected_total / 60:.1f} minutes)")
+
+        # Print duration cache stats
+        fuzzy_matcher.duration_extractor.print_cache_stats()
+        print_levenshtein_stats()
+
+        print(f"\n=== CONTINUING WITH FULL ANALYSIS ===")
+        reset_levenshtein_stats()  # Reset for full run
+
+    # Process all files
     for file_path, file in files_needing_mapping:
         specific_match_start = time.time()
         processed_count += 1
-        if processed_count % 100 == 0:  # Log progress every 100 files
-            mapping_logger.info(f"Processed {processed_count}/{len(files_needing_mapping)} files needing mapping")
-            print(f"Processed {processed_count}/{len(files_needing_mapping)} files needing mapping")
+
+        if processed_count % 100 == 0:
+            elapsed = time.time() - match_start
+            rate = processed_count / elapsed
+            remaining = len(files_needing_mapping) - processed_count
+            eta = remaining / rate if rate > 0 else 0
+
+            mapping_logger.info(f"Processed {processed_count}/{len(files_needing_mapping)} files")
+            print(
+                f"Processed {processed_count}/{len(files_needing_mapping)} files ({rate:.1f} files/sec, ETA: {eta:.0f}s)")
 
         # Find best match
         best_match = fuzzy_matcher.find_best_match(
@@ -259,6 +308,9 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             threshold=confidence_threshold,
             file_path=file_path
         )
+
+        match_time = time.time() - specific_match_start
+        total_matching_time += match_time
 
         if best_match:
             if best_match.confidence >= confidence_threshold:
@@ -310,25 +362,37 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             })
 
         files_without_mappings.append(file)
-        specific_match_time = time.time() - specific_match_start
-        if specific_match_time > 1.0:
-            print(f"\033[91mWARNING: Matching for {file}: {specific_match_time:.2f}s\033[0m")  # Red
-        else:
-            print(f"Matching for {file}: {specific_match_time:.2f}s")
+
+        # Track slow files
+        if match_time > 0.1:  # > 100ms
+            slow_file_count += 1
+            print(f"\033[91mSLOW FILE #{slow_file_count}: {file} took {match_time:.3f}s\033[0m")
 
     match_time = time.time() - match_start
-    print(f"Matching took: {match_time:.2f}s")
-
     elapsed_time = time.time() - start_time
 
+    # Final performance summary
+    print(f"\n=== FINAL PERFORMANCE SUMMARY ===")
     print(f"Analysis complete in {elapsed_time:.2f} seconds:")
+    print(f"  Database time: {db_time:.2f}s")
+    print(f"  File scanning: {scan_time:.2f}s")
+    print(f"  Filtering: {filter_time:.2f}s")
+    print(f"  Matcher creation: {matcher_time:.2f}s")
+    print(f"  Total matching: {match_time:.2f}s")
+    print(f"  Average per file: {match_time / len(files_needing_mapping) * 1000:.1f}ms")
+    print(f"  Files >100ms: {slow_file_count}")
     print(f"  Total files: {total_files}")
     print(
         f"  Files with existing mappings: {files_with_existing_mappings} ({files_with_existing_mappings / total_files * 100:.1f}%)")
     print(f"  Files without mappings: {len(files_without_mappings)}")
     print(f"  Auto-matched files: {len(auto_matched_files)}")
     print(f"  Files requiring user input: {len(files_requiring_user_input)}")
-    print(f"  Performance: {total_files / elapsed_time:.1f} files/second")
+    print(f"  Performance: {len(files_needing_mapping) / match_time:.1f} files/second")
+
+    # Print detailed cache and operation stats
+    print(f"\n=== DETAILED STATS ===")
+    fuzzy_matcher.duration_extractor.print_cache_stats()
+    print_levenshtein_stats()
 
     mapping_logger.info(f"Analysis completed in {elapsed_time:.2f} seconds")
 

@@ -11,35 +11,100 @@ from utils.logger import setup_logger
 
 fuzzy_logger = setup_logger('fuzzy_matching', 'helpers', 'fuzzy_matching.log')
 
-# Global debug flag - set to True for detailed timing info
+# Global debug flag
 DEBUG_PERFORMANCE = True
+
+# ======================
+# LEVENSHTEIN PROFILING
+# ======================
+original_ratio = Levenshtein.ratio
+levenshtein_call_count = 0
+levenshtein_total_time = 0
+
+
+def counted_levenshtein_ratio(s1, s2):
+    global levenshtein_call_count, levenshtein_total_time
+    levenshtein_call_count += 1
+    start = time.time()
+    result = original_ratio(s1, s2)
+    levenshtein_total_time += time.time() - start
+    return result
+
+
+# Apply the monkey patch
+Levenshtein.ratio = counted_levenshtein_ratio
+
+
+def print_levenshtein_stats():
+    global levenshtein_call_count, levenshtein_total_time
+    if levenshtein_call_count > 0:
+        avg_time = levenshtein_total_time / levenshtein_call_count
+        print(
+            f"Levenshtein stats: {levenshtein_call_count} calls, {levenshtein_total_time:.3f}s total, {avg_time * 1000:.3f}ms avg")
+    else:
+        print("No Levenshtein calls recorded")
+
+
+def reset_levenshtein_stats():
+    global levenshtein_call_count, levenshtein_total_time
+    levenshtein_call_count = 0
+    levenshtein_total_time = 0
 
 
 # TODO: move this to api/models ?
 class AudioDurationExtractor:
-    """Extract duration from audio files using mutagen."""
+    """Extract duration from audio files using mutagen with caching."""
 
-    @staticmethod
-    def get_file_duration_ms(file_path: str) -> Optional[int]:
-        """Extract duration from audio file in milliseconds."""
+    def __init__(self):
+        self.cache = {}
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def get_file_duration_ms(self, file_path: str) -> Optional[int]:
+        """Extract duration from audio file in milliseconds with caching."""
         if not file_path or not os.path.exists(file_path):
             return None
+
+        # Check cache first
+        if file_path in self.cache:
+            self.cache_hits += 1
+            return self.cache[file_path]
+
+        self.cache_misses += 1
+        extract_start = time.time()
 
         try:
             audio_file = MutagenFile(file_path)
             if audio_file is None:
-                return None
-
-            if hasattr(audio_file, 'info') and hasattr(audio_file.info, 'length'):
+                duration_ms = None
+            elif hasattr(audio_file, 'info') and hasattr(audio_file.info, 'length'):
                 duration_seconds = audio_file.info.length
-                return int(duration_seconds * 1000)
+                duration_ms = int(duration_seconds * 1000)
+            else:
+                duration_ms = None
 
-            return None
+            # Cache the result
+            self.cache[file_path] = duration_ms
+
+            extract_time = time.time() - extract_start
+            if extract_time > 0.1:  # > 100ms
+                print(f"SLOW DURATION EXTRACT: {os.path.basename(file_path)} took {extract_time:.3f}s")
+
+            return duration_ms
 
         except Exception as e:
             if DEBUG_PERFORMANCE:
-                print(f"Warning: Could not extract duration from {file_path}: {e}")
+                print(f"Duration extract error for {file_path}: {e}")
+            self.cache[file_path] = None
             return None
+
+    def print_cache_stats(self):
+        total = self.cache_hits + self.cache_misses
+        if total > 0:
+            hit_rate = self.cache_hits / total * 100
+            print(f"Duration cache: {self.cache_hits} hits, {self.cache_misses} misses ({hit_rate:.1f}% hit rate)")
+        else:
+            print("No duration cache activity")
 
 
 class FuzzyMatchResult:
@@ -245,41 +310,44 @@ class FuzzyMatcher:
                      exclude_track_id: str = None,
                      file_path: str = None) -> List[FuzzyMatchResult]:
         """
-        Optimized find matches with comprehensive timing.
+        Find matches with detailed performance profiling.
         """
         total_start = time.time()
 
-        # Clean filename and extract artist/title
-        extract_start = time.time()
+        # Track each step
+        steps = {}
+
+        # Extract artist/title
+        step_start = time.time()
         filename_no_ext = os.path.splitext(filename)[0]
         artist, title = self._extract_artist_title(filename_no_ext)
-        extract_time = time.time() - extract_start
+        steps['extract'] = time.time() - step_start
 
         if DEBUG_PERFORMANCE:
             fuzzy_logger.info(f"Matching file: {filename} -> Artist: '{artist}', Title: '{title}'")
 
         all_matches = []
 
-        # 1. Try exact local file matches first (usually very fast)
-        local_exact_start = time.time()
+        # 1. Try exact local file matches first
+        step_start = time.time()
         local_matches = self._find_exact_local_matches_optimized(filename, filename_no_ext, file_path)
-        local_exact_time = time.time() - local_exact_start
+        steps['local_exact'] = time.time() - step_start
         all_matches.extend(local_matches)
 
         # 2. Try fuzzy matching with regular tracks (main performance bottleneck)
-        regular_start = time.time()
+        step_start = time.time()
         regular_matches = self._find_fuzzy_matches_optimized(artist, title, exclude_track_id, file_path)
-        regular_time = time.time() - regular_start
+        steps['fuzzy_regular'] = time.time() - step_start
         all_matches.extend(regular_matches)
 
-        # 3. Try fuzzy matching with local tracks (usually few matches)
-        local_fuzzy_start = time.time()
+        # 3. Try fuzzy matching with local tracks
+        step_start = time.time()
         local_fuzzy_matches = self._find_local_fuzzy_matches_optimized(filename_no_ext, exclude_track_id, file_path)
-        local_fuzzy_time = time.time() - local_fuzzy_start
+        steps['local_fuzzy'] = time.time() - step_start
         all_matches.extend(local_fuzzy_matches)
 
-        # Filter and sort
-        filter_start = time.time()
+        # 4. Filter and sort
+        step_start = time.time()
         filtered_matches = [match for match in all_matches if match.confidence >= threshold]
         filtered_matches.sort(key=lambda x: x.confidence, reverse=True)
 
@@ -290,22 +358,20 @@ class FuzzyMatcher:
             if match.track.track_id not in seen_track_ids:
                 seen_track_ids.add(match.track.track_id)
                 unique_matches.append(match)
-        filter_time = time.time() - filter_start
+        steps['filtering'] = time.time() - step_start
 
         total_time = time.time() - total_start
 
-        # Performance logging
-        if DEBUG_PERFORMANCE and (total_time > 0.1 or len(all_matches) == 0):
-            print(f"MATCH {filename}: {total_time:.3f}s total")
-            print(f"  Extract: {extract_time:.3f}s")
-            print(f"  Local exact: {local_exact_time:.3f}s ({len(local_matches)} matches)")
-            print(f"  Regular fuzzy: {regular_time:.3f}s ({len(regular_matches)} matches)")
-            print(f"  Local fuzzy: {local_fuzzy_time:.3f}s ({len(local_fuzzy_matches)} matches)")
-            print(f"  Filter/sort: {filter_time:.3f}s")
-            print(f"  Final matches: {len(unique_matches)}")
+        # Performance logging for slow matches
+        if total_time > 0.05:  # > 50ms
+            print(f"SLOW MATCH {filename}: {total_time:.3f}s total")
+            for step_name, duration in steps.items():
+                if duration > 0.01:  # > 10ms
+                    print(f"  {step_name}: {duration:.3f}s")
+
             if len(unique_matches) > 0:
                 best = unique_matches[0]
-                print(f"  Best: {best.track.artists} - {best.track.title} ({best.confidence:.3f})")
+                print(f"  Best match: {best.track.artists} - {best.track.title} ({best.confidence:.3f})")
 
         return unique_matches[:max_matches]
 
@@ -370,21 +436,30 @@ class FuzzyMatcher:
 
     def _find_fuzzy_matches_optimized(self, artist: str, title: str, exclude_track_id: str = None,
                                       file_path: str = None) -> List[FuzzyMatchResult]:
-        """HEAVILY OPTIMIZED fuzzy matching using preprocessed data."""
+        """HEAVILY OPTIMIZED fuzzy matching with detailed profiling."""
         matching_start = time.time()
+
+        # Track detailed steps
+        steps = {
+            'normalization': 0,
+            'candidate_filtering': 0,
+            'confidence_calculations': 0,
+            'duration_calculations': 0,
+            'result_processing': 0
+        }
 
         matches = []
 
-        # Normalize input once
+        # Normalization
+        step_start = time.time()
         normalized_artist = artist.lower().replace('&', 'and') if artist else ""
         normalized_title = title.lower()
-
-        # Extract remix info once for the input
         local_base, local_remix_info = self._extract_remix_info_fast(normalized_title)
+        steps['normalization'] = time.time() - step_start
 
-        # Pre-filter candidates by artist if possible (HUGE speedup)
+        # Candidate filtering
+        step_start = time.time()
         if normalized_artist:
-            # Fast comma replacement without regex
             clean_artist = normalized_artist.replace(',', ' ').replace(';', ' ').replace('&', ' ')
             artist_words = set(word for word in clean_artist.split() if word)
 
@@ -393,31 +468,17 @@ class FuzzyMatcher:
                 if not artist_words.isdisjoint(pt.artist_words)
             ]
         else:
-            # No artist info - use all tracks
             candidate_tracks = self.preprocessed_regular_tracks
 
-        # NEW: Add duration-based discovery
-        # duration_candidates = []
-        # if file_path:
-        #     duration_candidates = self._find_duration_based_candidates(file_path)
+        steps['candidate_filtering'] = time.time() - step_start
 
-        # NEW: Combine candidates (remove duplicates)
-        # candidate_tracks = text_candidates.copy()
-        # for duration_candidate in duration_candidates:
-        #     if duration_candidate not in candidate_tracks:
-        #         candidate_tracks.append(duration_candidate)
-        # candidate_tracks = text_candidates
-        # duration_candidates = []  # Empty for now
-        #
-        # if DEBUG_PERFORMANCE:
-        #     print(
-        #         f"    Combined candidates: {len(candidate_tracks)} (text: {len(text_candidates)}, duration: {len(duration_candidates)})")
-        #
-        # filter_time = time.time() - filter_start
+        # Track Levenshtein calls for this file
+        levenshtein_start_count = levenshtein_call_count
 
-        # Process only candidate tracks
-        calc_start = time.time()
+        # Process candidate tracks
+        step_start = time.time()
         processed_count = 0
+        duration_calc_time = 0
 
         for preprocessed in candidate_tracks:
             track = preprocessed.track
@@ -425,7 +486,7 @@ class FuzzyMatcher:
             if exclude_track_id and track.track_id == exclude_track_id:
                 continue
 
-            # Use precomputed values for fast confidence calculation
+            # Confidence calculation
             confidence = self._calculate_confidence_fast(
                 normalized_artist, local_base, local_remix_info,
                 preprocessed.normalized_artists, preprocessed.base_title, preprocessed.remix_info
@@ -434,15 +495,20 @@ class FuzzyMatcher:
             # Apply precomputed mapping penalty
             final_confidence = confidence * preprocessed.mapping_penalty
 
-            # OPTIONAL: Apply duration boost only if enabled
+            # Duration boost calculation
+            duration_boost_applied = False
             if file_path and track.duration_ms and hasattr(self, 'duration_extractor'):
+                duration_start = time.time()
                 duration_boost = self._calculate_duration_confidence_boost(file_path, track.duration_ms)
+                duration_calc_time += time.time() - duration_start
+
                 final_confidence = min(1.0, final_confidence * duration_boost)
                 duration_boost_applied = duration_boost > 1.0
-            else:
-                duration_boost_applied = False
 
-            if final_confidence >= 0.2:  # Lower threshold for collecting matches
+            processed_count += 1
+
+            # Collect matches
+            if final_confidence >= 0.2:
                 match_details = []
                 if preprocessed.mapping_penalty < 1.0:
                     match_details.append(f"mapped_penalty_{preprocessed.mapping_penalty:.2f}")
@@ -456,15 +522,36 @@ class FuzzyMatcher:
                     match_details=match_details
                 ))
 
-        # calc_time = time.time() - calc_start
-        # total_time = time.time() - matching_start
-        #
-        # if DEBUG_PERFORMANCE and total_time > 0.05:
-        #     print(f"    Fuzzy matching details:")
-        #     print(f"      Candidates: {len(candidate_tracks)}/{len(self.preprocessed_regular_tracks)}")
-        #     print(f"      Processed: {processed_count}")
-        #     print(f"      Calc time: {calc_time:.3f}s ({calc_time / max(processed_count, 1) * 1000:.1f}ms per track)")
-        #     print(f"      Matches found: {len(matches)}")
+        steps['confidence_calculations'] = time.time() - step_start
+        steps['duration_calculations'] = duration_calc_time
+
+        # Result processing
+        step_start = time.time()
+        # Sort matches by confidence
+        matches.sort(key=lambda x: x.confidence, reverse=True)
+        steps['result_processing'] = time.time() - step_start
+
+        total_time = time.time() - matching_start
+        file_levenshtein_calls = levenshtein_call_count - levenshtein_start_count
+
+        # Detailed logging for slow operations
+        if total_time > 0.02 or file_levenshtein_calls > 1000:  # > 20ms or many Levenshtein calls
+            print(f"  FUZZY DETAILS for '{title}' (artist: '{artist}'):")
+            print(f"    Total time: {total_time:.3f}s")
+            print(
+                f"    Candidates: {len(candidate_tracks)}/{len(self.preprocessed_regular_tracks)} ({len(candidate_tracks) / len(self.preprocessed_regular_tracks) * 100:.1f}%)")
+            print(f"    Processed: {processed_count}")
+            print(f"    Levenshtein calls: {file_levenshtein_calls}")
+            print(f"    Matches found: {len(matches)}")
+
+            # Step breakdown
+            for step_name, duration in steps.items():
+                if duration > 0.005:  # > 5ms
+                    print(f"    {step_name}: {duration:.3f}s")
+
+            if len(matches) > 0:
+                print(
+                    f"    Best match: {matches[0].track.artists} - {matches[0].track.title} ({matches[0].confidence:.3f})")
 
         return matches
 
