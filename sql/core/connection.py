@@ -192,9 +192,6 @@ class DatabaseConnection:
                 timeout=30.0  # Reasonable timeout
             )
 
-            # Enable query profiling
-            connection.set_trace_callback(lambda stmt: print(f"SQL: {stmt}"))
-
             # Basic optimizations only
             cursor = connection.cursor()
 
