@@ -2,7 +2,7 @@ import hashlib
 import os
 import sqlite3
 from datetime import datetime
-from typing import Optional, Dict, Set
+from typing import Optional, Dict, Set, Any, List
 
 from sql.models.file_track_mapping import FileTrackMapping
 from sql.repositories.base_repository import BaseRepository
@@ -244,14 +244,154 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
         rows_affected = cursor.execute(query, (os.path.normpath(file_path), spotify_uri)).rowcount
         return rows_affected > 0
 
-    @staticmethod
-    def _calculate_file_hash(file_path: str) -> str:
-        """Calculate file hash for integrity checking."""
-        hash_sha256 = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                hash_sha256.update(chunk)
-        return hash_sha256.hexdigest()
+    def delete_all_and_reset(self):
+        """Delete all records AND reset auto-increment counter."""
+        rows_deleted = self.delete_all()
+
+        # Reset SQLite sequence counter
+        cursor = self.connection.cursor()
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name='FileTrackMappings'")
+        cursor.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('FileTrackMappings', 0)")
+        self.connection.commit()
+
+        return rows_deleted
+
+    def batch_add_mappings_by_uri(self, mappings: List[Dict[str, Any]]) -> int:
+        """
+        OPTIMIZED: Add multiple file mappings with lightweight hashing.
+
+        Args:
+            mappings: List of dicts with 'file_path' and 'uri' keys
+
+        Returns:
+            Number of mappings successfully inserted
+        """
+        if not mappings:
+            return 0
+
+        import time
+
+        print(f"  Starting batch insert for {len(mappings)} mappings...")
+        prep_start = time.time()
+
+        # Prepare batch data with fast hashing
+        batch_data = []
+        hash_time_total = 0
+        stat_time_total = 0
+
+        for i, mapping in enumerate(mappings):
+            file_path = mapping['file_path']
+            uri = mapping['uri']
+
+            try:
+                # Get file stats (very fast)
+                stat_start = time.time()
+                file_stats = os.stat(file_path)
+                stat_time_total += time.time() - stat_start
+
+                # Calculate lightweight hash (much faster than full file hash)
+                hash_start = time.time()
+                fast_hash = self._calculate_file_hash(file_path, file_stats.st_size)
+                hash_time_total += time.time() - hash_start
+
+                batch_data.append((
+                    os.path.normpath(file_path),
+                    fast_hash,
+                    uri,
+                    file_stats.st_size,
+                    datetime.fromtimestamp(file_stats.st_mtime)
+                ))
+
+                # Progress indicator for large batches
+                if (i + 1) % 200 == 0:
+                    print(f"    Processed {i + 1}/{len(mappings)} files...")
+
+            except Exception as e:
+                print(f"Error preparing batch data for {file_path}: {e}")
+                continue
+
+        prep_time = time.time() - prep_start
+
+        if not batch_data:
+            return 0
+
+        # Batch insert (very fast)
+        insert_start = time.time()
+        query = """
+            INSERT INTO FileTrackMappings 
+            (FilePath, FileHash, Uri, FileSize, LastModified, CreatedAt, IsActive)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), 1)
+        """
+
+        cursor = self.connection.cursor()
+        cursor.executemany(query, batch_data)
+
+        insert_time = time.time() - insert_start
+
+        print(f"  Batch insert timing breakdown:")
+        print(f"    File stats: {stat_time_total:.3f}s")
+        print(f"    Fast hashing: {hash_time_total:.3f}s ({hash_time_total / len(mappings) * 1000:.1f}ms per file)")
+        print(f"    Database insert: {insert_time:.3f}s")
+        print(f"    Total prep time: {prep_time:.3f}s")
+        print(f"    Successfully prepared {len(batch_data)}/{len(mappings)} mappings")
+
+        return len(batch_data)
+
+    def _calculate_file_hash(self, file_path: str, file_size: int) -> str:
+        """
+        Ultra-minimal file hash using only 8KB from start + metadata.
+        Fastest possible while still detecting file changes.
+        """
+        import hashlib
+
+        hash_obj = hashlib.md5()
+
+        try:
+            with open(file_path, "rb") as f:
+                # Read only first 8KB (extremely fast)
+                chunk = f.read(8192)  # 8KB
+                hash_obj.update(chunk)
+        except Exception:
+            pass  # Fall back to metadata-only hash
+
+        # Include metadata
+        hash_obj.update(str(file_size).encode())
+        hash_obj.update(os.path.basename(file_path).encode())
+
+        try:
+            mtime = os.path.getmtime(file_path)
+            hash_obj.update(str(int(mtime)).encode())
+        except:
+            pass
+
+        return hash_obj.hexdigest()
+
+    def get_uri_mappings_batch(self, file_paths: List[str]) -> Dict[str, str]:
+        """
+        OPTIMIZED: Get URI mappings for multiple file paths in one query.
+
+        Args:
+            file_paths: List of file paths to check
+
+        Returns:
+            Dictionary mapping file_path to uri for existing mappings
+        """
+        if not file_paths:
+            return {}
+
+        # Normalize all paths
+        normalized_paths = [os.path.normpath(path) for path in file_paths]
+
+        # Use parameterized query
+        placeholders = ','.join(['?' for _ in normalized_paths])
+        query = f"""
+            SELECT FilePath, Uri 
+            FROM FileTrackMappings 
+            WHERE FilePath IN ({placeholders}) AND IsActive = 1
+        """
+
+        results = self.fetch_all(query, normalized_paths)
+        return {row['FilePath']: row['Uri'] for row in results}
 
     def _map_to_model(self, row: sqlite3.Row) -> FileTrackMapping:
         """
