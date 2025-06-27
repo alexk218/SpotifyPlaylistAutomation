@@ -26,6 +26,7 @@ def clear_db():
         uow.track_playlist_repository.delete_all()  # Clear associations first (foreign keys)
         uow.playlist_repository.delete_all()  # Clear playlists next
         uow.track_repository.delete_all()  # Clear tracks last
+        uow.file_track_mapping_repository.delete_all()
 
     db_logger.info("All tables cleared successfully")
     print("All tables cleared successfully.")

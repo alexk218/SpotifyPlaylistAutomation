@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 import traceback
 from api.services import track_service
 from api.services.duplicate_track_service import get_duplicate_tracks_report, detect_and_cleanup_duplicate_tracks
+from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
 
 bp = Blueprint('tracks', __name__, url_prefix='/api/tracks')
@@ -326,4 +327,27 @@ def apply_duplicate_selections():
             "success": False,
             "message": "Internal server error during duplicate cleanup with selections",
             "error": str(e)
+        }), 500
+
+
+@bp.route('/cleanup-mappings', methods=['DELETE'])
+def clear_all_file_mappings():
+    """Clear all file mappings and reset auto-increment counter."""
+    try:
+        with UnitOfWork() as uow:
+            deleted_count = uow.file_track_mapping_repository.delete_all_and_reset()
+
+        return jsonify({
+            "success": True,
+            "message": f"Cleared {deleted_count} file mappings and reset counter",
+            "deleted_count": deleted_count
+        })
+    except Exception as e:
+        error_str = traceback.format_exc()
+        print(f"Error clearing file mappings: {e}")
+        print(error_str)
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "traceback": error_str
         }), 500
