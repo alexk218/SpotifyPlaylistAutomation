@@ -182,19 +182,24 @@ def validate_master_tracks(master_tracks_dir: str) -> Dict[str, int]:
             f.write("\nMissing Downloads (Sorted by Spotify Addition Date):\n")
             f.write("============================================\n")
             for track in missing_downloads:
-                date_str = track['added_at'].strftime("%Y-%m-%d %H:%M:%S") if track['added_at'] else "Unknown date"
+                # Handle both datetime objects and string dates
+                if track['added_at']:
+                    if isinstance(track['added_at'], str):
+                        try:
+                            # Parse the string datetime
+                            parsed_date = datetime.fromisoformat(track['added_at'].replace('Z', '+00:00'))
+                            date_str = parsed_date.strftime("%Y-%m-%d %H:%M:%S")
+                        except (ValueError, TypeError):
+                            date_str = str(track['added_at'])  # Fallback to string representation
+                    else:
+                        # It's already a datetime object
+                        date_str = track['added_at'].strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    date_str = "Unknown date"
+
                 f.write(f"• {track['artist']} - {track['title']}\n")
                 f.write(f"  Added to Spotify: {date_str}\n")
                 f.write(f"  Expected TrackId: {track['track_id']}\n")
-
-                if track['file_exists']:
-                    if track['actual_track_id']:
-                        f.write(f"  File exists but has wrong TrackId: {track['actual_track_id']}\n")
-                    else:
-                        f.write(f"  File exists but has no TrackId\n")
-                else:
-                    f.write(f"  File not found: {track['artist']} - {track['title']}.mp3\n")
-                f.write("\n")
 
         if files_without_trackid:
             f.write("\nFiles Without TrackId:\n")
