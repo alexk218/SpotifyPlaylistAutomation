@@ -331,7 +331,7 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
 
     return {
         "total_files": total_files,
-        "files_without_mappings": len(files_requiring_user_input),
+        "files_without_mappings": len(files_without_mappings),
         "files_requiring_user_input": files_requiring_user_input,
         "auto_matched_files": auto_matched_files,
         "needs_confirmation": len(files_requiring_user_input) > 0,
