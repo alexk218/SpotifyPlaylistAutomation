@@ -17,7 +17,7 @@ class FileTrackMappingRepository(BaseRepository[FileTrackMapping]):
     def add_mapping_by_uri(self, file_path: str, spotify_uri: str):
         """Add file mapping using Spotify URI."""
         file_stats = os.stat(file_path)
-        file_hash = self._calculate_file_hash(file_path)
+        file_hash = self._calculate_file_hash(file_path, file_stats.st_size)
 
         query = """
             INSERT INTO FileTrackMappings 

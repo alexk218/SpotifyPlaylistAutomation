@@ -297,9 +297,9 @@ def get_playlist_track_counts_batch(
 
         playlist_uris = {}
         for row in results:
-            if row.PlaylistId not in playlist_uris:
-                playlist_uris[row.PlaylistId] = []
-            playlist_uris[row.PlaylistId].append(row.Uri)
+            if row['PlaylistId'] not in playlist_uris:
+                playlist_uris[row['PlaylistId']] = []
+            playlist_uris[row['PlaylistId']].append(row['Uri'])
 
         # Count tracks for each playlist
         for playlist_id, uris in playlist_uris.items():
