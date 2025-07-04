@@ -173,10 +173,15 @@ class FuzzyMatcher:
         """
         init_start = time.time()
 
+        print(f"[DEBUG] FuzzyMatcher created with {len(tracks)} tracks")
+        print(f"[DEBUG] Existing mappings: {len(existing_mappings) if existing_mappings else 0}")
+        print(
+            f"[DEBUG] Session assigned URIs: {len(self.session_assigned_uris) if hasattr(self, 'session_assigned_uris') else 0}")
+
         self.tracks = tracks
         self.existing_mappings = existing_mappings or {}
-        # NEW: Track URIs assigned during this matching session
-        self.session_assigned_uris = {}  # uri -> {'file_path': str, 'confidence': float, 'filename': str}
+        # Track URIs assigned during this matching session
+        self.session_assigned_uris = {}  # uri -> {'file_path': str, 'confidence': float, 'file_name': str}
 
         # Precompute normalized data for performance
         self.preprocessed_regular_tracks = []
@@ -310,7 +315,7 @@ class FuzzyMatcher:
         return [candidate[0] for candidate in duration_candidates[:max_candidates]]
 
     def find_matches(self,
-                     filename: str,
+                     file_name: str,
                      threshold: float = 0.6,
                      max_matches: int = 8,
                      exclude_track_id: str = None,
@@ -325,18 +330,18 @@ class FuzzyMatcher:
 
         # Extract artist/title
         step_start = time.time()
-        filename_no_ext = os.path.splitext(filename)[0]
-        artist, title = self._extract_artist_title(filename_no_ext)
+        file_name_no_ext = os.path.splitext(file_name)[0]
+        artist, title = self._extract_artist_title(file_name_no_ext)
         steps['extract'] = time.time() - step_start
 
         if DEBUG_PERFORMANCE:
-            fuzzy_logger.info(f"Matching file: {filename} -> Artist: '{artist}', Title: '{title}'")
+            fuzzy_logger.info(f"Matching file: {file_name} -> Artist: '{artist}', Title: '{title}'")
 
         all_matches = []
 
         # 1. Try exact local file matches first
         step_start = time.time()
-        local_matches = self._find_exact_local_matches_optimized(filename, filename_no_ext, file_path)
+        local_matches = self._find_exact_local_matches_optimized(file_name, file_name_no_ext, file_path)
         steps['local_exact'] = time.time() - step_start
         all_matches.extend(local_matches)
 
@@ -348,7 +353,7 @@ class FuzzyMatcher:
 
         # 3. Try fuzzy matching with local tracks
         step_start = time.time()
-        local_fuzzy_matches = self._find_local_fuzzy_matches_optimized(filename_no_ext, exclude_track_id, file_path)
+        local_fuzzy_matches = self._find_local_fuzzy_matches_optimized(file_name_no_ext, exclude_track_id, file_path)
         steps['local_fuzzy'] = time.time() - step_start
         all_matches.extend(local_fuzzy_matches)
 
@@ -370,7 +375,7 @@ class FuzzyMatcher:
 
         # Performance logging for slow matches
         if total_time > 0.05:  # > 50ms
-            print(f"SLOW MATCH {filename}: {total_time:.3f}s total")
+            print(f"SLOW MATCH {file_name}: {total_time:.3f}s total")
             for step_name, duration in steps.items():
                 if duration > 0.01:  # > 10ms
                     print(f"  {step_name}: {duration:.3f}s")
@@ -382,15 +387,19 @@ class FuzzyMatcher:
         return unique_matches[:max_matches]
 
     def find_best_match(self,
-                        filename: str,
+                        file_name: str,
                         threshold: float = 0.75,
                         exclude_track_id: str = None,
                         file_path: str = None,
                         prevent_duplicates: bool = True) -> Optional[FuzzyMatchResult]:
         """Find the single best match for a filename with duplicate prevention."""
 
+        # DEBUG: Log session state before matching
+        if prevent_duplicates and len(self.session_assigned_uris) > 0:
+            print(f"[DEBUG] Matching {file_name}: {len(self.session_assigned_uris)} URIs already assigned this session")
+
         matches = self.find_matches(
-            filename=filename,
+            file_name=file_name,
             threshold=threshold,
             max_matches=10,  # Get more matches to handle duplicates
             exclude_track_id=exclude_track_id,
@@ -400,25 +409,27 @@ class FuzzyMatcher:
         if not matches:
             return None
 
-        # NEW: Filter out already-assigned URIs if duplicate prevention is enabled
+        # Filter out already-assigned URIs if duplicate prevention is enabled
         if prevent_duplicates:
             available_matches = []
+            blocked_matches = []
             for match in matches:
                 uri = match.track.uri
 
                 # Skip if this URI is already assigned in this session
                 if uri in self.session_assigned_uris:
                     existing_assignment = self.session_assigned_uris[uri]
+                    blocked_matches.append((match, existing_assignment))
 
                     # Only consider replacing if our confidence is significantly higher
-                    confidence_threshold = 0.1  # Must be 10% higher to replace
-                    if match.confidence > existing_assignment['confidence'] + confidence_threshold:
+                    confidence_threshold_diff = 0.1  # Must be 10% higher to replace
+                    if match.confidence > existing_assignment['confidence'] + confidence_threshold_diff:
                         # This is a better match - we'll handle the replacement later
                         available_matches.append(match)
 
                         # Add metadata about the potential replacement
                         match.replacement_candidate = {
-                            'replaces_file': existing_assignment['filename'],
+                            'replaces_file': existing_assignment['file_name'],
                             'replaces_confidence': existing_assignment['confidence'],
                             'confidence_improvement': match.confidence - existing_assignment['confidence']
                         }
@@ -429,14 +440,22 @@ class FuzzyMatcher:
                     # URI is available
                     available_matches.append(match)
 
+            # DEBUG: Log duplicate prevention actions
+            if blocked_matches:
+                print(f"[DEBUG] File '{file_name}': {len(blocked_matches)} matches blocked by session duplicates")
+                for blocked_match, existing in blocked_matches:
+                    print(
+                        f"[DEBUG]   - Blocked URI {blocked_match.track.uri} (conf: {blocked_match.confidence:.3f}) already assigned to '{existing['file_name']}' (conf: {existing['confidence']:.3f})")
+
             if not available_matches:
+                print(f"[DEBUG] File '{file_name}': NO available matches after duplicate filtering")
                 return None
 
             best_match = available_matches[0]
         else:
             best_match = matches[0]
 
-        # NEW: Track this assignment for duplicate prevention
+        # Track this assignment for duplicate prevention
         if prevent_duplicates and best_match.confidence >= threshold:
             uri = best_match.track.uri
 
@@ -449,28 +468,32 @@ class FuzzyMatcher:
             self.session_assigned_uris[uri] = {
                 'file_path': file_path,
                 'confidence': best_match.confidence,
-                'filename': filename
+                'file_name': file_name
             }
+
+            # DEBUG: Log assignment
+            print(
+                f"[DEBUG] Assigned URI {uri} to '{file_name}' (conf: {best_match.confidence:.3f}). Session total: {len(self.session_assigned_uris)}")
 
         return best_match if best_match.confidence >= threshold else None
 
-    def _extract_artist_title(self, filename: str) -> Tuple[str, str]:
+    def _extract_artist_title(self, file_name: str) -> Tuple[str, str]:
         """Extract artist and title from filename with better handling."""
         # Try standard "Artist - Title" format first
-        if " - " in filename:
-            parts = filename.split(" - ", 1)
+        if " - " in file_name:
+            parts = file_name.split(" - ", 1)
             return parts[0].strip(), parts[1].strip()
 
         # Try other common separators
         for separator in [" – ", " — ", " by "]:
-            if separator in filename:
-                parts = filename.split(separator, 1)
+            if separator in file_name:
+                parts = file_name.split(separator, 1)
                 return parts[0].strip(), parts[1].strip()
 
         # If no separator, treat whole filename as title
-        return "", filename.strip()
+        return "", file_name.strip()
 
-    def _find_exact_local_matches_optimized(self, filename: str, filename_no_ext: str, file_path: str = None) -> List[
+    def _find_exact_local_matches_optimized(self, file_name: str, file_name_no_ext: str, file_path: str = None) -> List[
         FuzzyMatchResult]:
         """Optimized exact local matches using preprocessed data."""
         matches = []
@@ -479,7 +502,7 @@ class FuzzyMatcher:
             track = preprocessed.track
 
             # Try exact filename match
-            if track.title == filename or track.title == filename_no_ext:
+            if track.title == file_name or track.title == file_name_no_ext:
                 matches.append(FuzzyMatchResult(
                     track=track,
                     confidence=1.0 * preprocessed.mapping_penalty,
@@ -488,10 +511,10 @@ class FuzzyMatcher:
                 continue
 
             # Try normalized match
-            normalized_filename = self._normalize_text(filename_no_ext)
+            normalized_file_name = self._normalize_text(file_name_no_ext)
             normalized_title = self._normalize_text(track.title)
 
-            if normalized_title and normalized_filename == normalized_title:
+            if normalized_title and normalized_file_name == normalized_title:
                 matches.append(FuzzyMatchResult(
                     track=track,
                     confidence=0.95 * preprocessed.mapping_penalty,
@@ -621,7 +644,7 @@ class FuzzyMatcher:
 
         return matches
 
-    def _find_local_fuzzy_matches_optimized(self, filename_no_ext: str, exclude_track_id: str = None,
+    def _find_local_fuzzy_matches_optimized(self, file_name_no_ext: str, exclude_track_id: str = None,
                                             file_path: str = None) -> List[FuzzyMatchResult]:
         """Optimized local fuzzy matches using preprocessed data."""
         matches = []
@@ -633,7 +656,7 @@ class FuzzyMatcher:
                 continue
 
             # Calculate similarity using precomputed normalized title
-            similarity = Levenshtein.ratio(filename_no_ext.lower(), preprocessed.normalized_title)
+            similarity = Levenshtein.ratio(file_name_no_ext.lower(), preprocessed.normalized_title)
 
             # Apply precomputed penalty
             final_similarity = similarity * preprocessed.mapping_penalty
@@ -848,22 +871,22 @@ class FuzzyMatcher:
 
 
 # Convenience functions for backwards compatibility
-def find_fuzzy_matches(filename: str, tracks: List[Track], threshold: float = 0.6,
+def find_fuzzy_matches(file_name: str, tracks: List[Track], threshold: float = 0.6,
                        max_matches: int = 8, exclude_track_id: str = None,
                        existing_mappings: Dict[str, str] = None,
                        file_path: str = None) -> List[Dict[str, Any]]:
     """Find fuzzy matches and return as dictionaries."""
     matcher = FuzzyMatcher(tracks, existing_mappings)
-    matches = matcher.find_matches(filename, threshold, max_matches, exclude_track_id, file_path)
+    matches = matcher.find_matches(file_name, threshold, max_matches, exclude_track_id, file_path)
     return [match.to_dict() for match in matches]
 
 
-def find_best_match(filename: str, tracks: List[Track], threshold: float = 0.75,
+def find_best_match(file_name: str, tracks: List[Track], threshold: float = 0.75,
                     exclude_track_id: str = None, existing_mappings: Dict[str, str] = None,
                     file_path: str = None) -> Optional[Dict[str, Any]]:
     """Find the best match and return as dictionary."""
     matcher = FuzzyMatcher(tracks, existing_mappings)
-    match = matcher.find_best_match(filename, threshold, exclude_track_id, file_path)
+    match = matcher.find_best_match(file_name, threshold, exclude_track_id, file_path)
     return match.to_dict() if match else None
 
 

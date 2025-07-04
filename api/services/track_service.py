@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from api.constants.file_extensions import SUPPORTED_AUDIO_EXTENSIONS
 from api.services.duplicate_track_service import detect_duplicate_file_mappings, resolve_duplicate_mappings, \
     analyze_existing_duplicate_mappings
-from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, find_best_match, FuzzyMatcher, \
+from helpers.fuzzy_match_helper import search_tracks, find_fuzzy_matches, FuzzyMatcher, \
     print_levenshtein_stats, reset_levenshtein_stats
 from sql.core.unit_of_work import UnitOfWork
 from utils.logger import setup_logger
@@ -48,11 +48,11 @@ def search_tracks_file_system(master_tracks_dir, query):
             if file_ext not in SUPPORTED_AUDIO_EXTENSIONS:
                 continue
 
-            file_path = os.path.join(root, file)
-            filename_no_ext = os.path.splitext(file)[0].lower()
+            file_path = os.path.join(str(root), str(file))
+            file_name_no_ext = os.path.splitext(file)[0].lower()
 
             # Check if query is in filename
-            if query in filename_no_ext:
+            if query in file_name_no_ext:
                 # Look up URI and track info from FileTrackMappings
                 normalized_path = os.path.normpath(file_path)
                 mapping = mapping_by_path.get(normalized_path)
@@ -74,7 +74,7 @@ def search_tracks_file_system(master_tracks_dir, query):
                         try:
                             # Use improved fuzzy matching with existing mappings
                             fuzzy_matches = find_fuzzy_matches(
-                                filename=file,
+                                file_name=file,
                                 tracks=all_tracks,
                                 threshold=0.0,
                                 max_matches=10,
@@ -106,7 +106,7 @@ def search_tracks_file_system(master_tracks_dir, query):
                     'uri': uri,
                     'track_id': track_id,
                     'track_info': track_info,
-                    'filename': filename_no_ext,
+                    'file_name': file_name_no_ext,
                     'confidence': confidence,
                     'full_path': file_path,
                     'has_mapping': mapping is not None,
@@ -148,7 +148,7 @@ def fuzzy_match_track(file_name, current_track_id=None):
 
     # Use fuzzy matching
     matches = find_fuzzy_matches(
-        filename=file_name,
+        file_name=file_name,
         tracks=tracks_db,
         threshold=0.45,  # Lower threshold for showing more options
         max_matches=8,
@@ -157,12 +157,12 @@ def fuzzy_match_track(file_name, current_track_id=None):
     )
 
     # Extract artist and title for display
-    filename_no_ext = os.path.splitext(file_name)[0]
-    if " - " in filename_no_ext:
-        artist, track_title = filename_no_ext.split(" - ", 1)
+    file_name_no_ext = os.path.splitext(file_name)[0]
+    if " - " in file_name_no_ext:
+        artist, track_title = file_name_no_ext.split(" - ", 1)
     else:
         artist = ""
-        track_title = filename_no_ext
+        track_title = file_name_no_ext
 
     return {
         "file_name": file_name,
@@ -200,7 +200,7 @@ def analyze_file_mappings_with_duplicate_detection(master_tracks_dir: str,
             'file_path': auto_match['file_path'],
             'uri': auto_match['uri'],
             'confidence': auto_match['confidence'],
-            'filename': auto_match['file_name'],
+            'file_name': auto_match['file_name'],
             'source': 'auto_match',
             'track_info': auto_match.get('track_info', '')
         })
@@ -214,7 +214,7 @@ def analyze_file_mappings_with_duplicate_detection(master_tracks_dir: str,
                     'file_path': mapping.file_path,
                     'uri': mapping.uri,
                     'confidence': 1.0,  # Existing mappings are 100% confident
-                    'filename': os.path.basename(mapping.file_path),
+                    'file_name': os.path.basename(mapping.file_path),
                     'source': 'existing_database',
                     'track_info': f"Existing mapping: {mapping.uri}"
                 })
@@ -240,7 +240,7 @@ def analyze_file_mappings_with_duplicate_detection(master_tracks_dir: str,
                 if mapping['source'] == 'auto_match':  # Skip existing DB mappings
                     user_input_entry = {
                         'file_path': mapping['file_path'],
-                        'file_name': mapping['filename'],
+                        'file_name': mapping['file_name'],
                         'duplicate_conflict': True,
                         'conflicting_uri': group['uri'],
                         'conflicting_track_info': group['track_info'],
@@ -308,7 +308,7 @@ def create_file_mappings_with_duplicate_resolution(master_tracks_dir: str,
         for auto_match in precomputed_changes['auto_matched_files']:
             proposed_mappings.append({
                 'file_path': auto_match['file_path'],
-                'filename': auto_match.get('file_name', auto_match.get('filename', '')),
+                'file_name': auto_match.get('file_name', auto_match.get('file_name', '')),
                 'uri': auto_match['uri'],
                 'confidence': auto_match['confidence'],
                 'source': 'auto_match'
@@ -318,14 +318,14 @@ def create_file_mappings_with_duplicate_resolution(master_tracks_dir: str,
     for selection in user_selections:
         file_path = selection.get('file_path')
         if not file_path:
-            filename = selection.get('file_name', selection.get('filename', ''))
-            if filename:
-                file_path = _find_file_path_in_directory(filename, master_tracks_dir)
+            file_name = selection.get('file_name', selection.get('file_name', ''))
+            if file_name:
+                file_path = _find_file_path_in_directory(file_name, master_tracks_dir)
 
         if file_path and selection.get('uri'):
             proposed_mappings.append({
                 'file_path': file_path,
-                'filename': selection.get('file_name', selection.get('filename', os.path.basename(file_path))),
+                'file_name': selection.get('file_name', selection.get('file_name', os.path.basename(file_path))),
                 'uri': selection['uri'],
                 'confidence': selection.get('confidence', 0.0),
                 'source': 'user_selection'
@@ -466,45 +466,8 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     processed_count = 0
     slow_file_count = 0
     total_matching_time = 0
-    total_duration_time = 0
 
     match_start = time.time()
-
-    # Run performance test on first 50 files if we have many files
-    if len(unmapped_files) > 100:
-        print(f"\n=== RUNNING PERFORMANCE TEST ON FIRST 50 FILES ===")
-        test_start = time.time()
-
-        for i, (file_path, file) in enumerate(unmapped_files[:50]):
-            if i % 10 == 0:
-                print(f"Testing file {i + 1}/50...")
-
-            file_start = time.time()
-            best_match = fuzzy_matcher.find_best_match(
-                filename=file,
-                threshold=confidence_threshold,
-                file_path=file_path
-            )
-            file_time = time.time() - file_start
-
-            if file_time > 0.1:
-                print(f"SLOW TEST FILE: {file} took {file_time:.3f}s")
-
-        test_time = time.time() - test_start
-        avg_per_file = test_time / 50
-        projected_total = avg_per_file * len(unmapped_files)
-
-        print(f"\n=== PERFORMANCE TEST RESULTS ===")
-        print(f"50 files processed in: {test_time:.2f}s")
-        print(f"Average per file: {avg_per_file * 1000:.1f}ms")
-        print(f"Projected total time: {projected_total:.1f}s ({projected_total / 60:.1f} minutes)")
-
-        # Print duration cache stats
-        fuzzy_matcher.duration_extractor.print_cache_stats()
-        print_levenshtein_stats()
-
-        print(f"\n=== CONTINUING WITH FULL ANALYSIS ===")
-        reset_levenshtein_stats()  # Reset for full run
 
     # Process all files
     for file_path, file in unmapped_files:
@@ -523,7 +486,7 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
 
         # Find best match
         best_match = fuzzy_matcher.find_best_match(
-            filename=file,
+            file_name=file,
             threshold=confidence_threshold,
             file_path=file_path
         )
@@ -545,7 +508,7 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             else:
                 # Requires user input - get multiple matches
                 all_matches = fuzzy_matcher.find_matches(
-                    filename=file,
+                    file_name=file,
                     threshold=0.3,
                     max_matches=5,
                     file_path=file_path
@@ -630,14 +593,14 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     }
 
 
-def _find_best_match_for_file(filename: str, local_tracks: List, regular_tracks: List,
+def _find_best_match_for_file(file_name: str, local_tracks: List, regular_tracks: List,
                               confidence_threshold: float, existing_mappings: Dict[str, str] = None,
                               file_path: str = None) -> Optional[Dict[str, Any]]:
     all_tracks = local_tracks + regular_tracks
 
     matcher = FuzzyMatcher(all_tracks, existing_mappings)
     match = matcher.find_best_match(
-        filename=filename,
+        file_name=file_name,
         threshold=confidence_threshold,
         file_path=file_path
     )
@@ -712,7 +675,7 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
     for auto_match in auto_matched_files:
         all_mappings.append({
             'file_path': auto_match['file_path'],
-            'filename': auto_match.get('file_name', auto_match.get('filename', '')),
+            'file_name': auto_match.get('file_name', auto_match.get('file_name', '')),
             'uri': auto_match['uri'],
             'confidence': auto_match['confidence'],
             'source': 'auto_match'
@@ -723,14 +686,14 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
         file_path = selection.get('file_path')
         if not file_path:
             # Try to construct file path from filename if not provided
-            filename = selection.get('file_name', selection.get('filename', ''))
-            if filename:
-                file_path = _find_file_path_in_directory(filename, master_tracks_dir)
+            file_name = selection.get('file_name', selection.get('file_name', ''))
+            if file_name:
+                file_path = _find_file_path_in_directory(file_name, master_tracks_dir)
 
         if file_path and selection.get('uri'):
             all_mappings.append({
                 'file_path': file_path,
-                'filename': selection.get('file_name', selection.get('filename', os.path.basename(file_path))),
+                'file_name': selection.get('file_name', selection.get('file_name', os.path.basename(file_path))),
                 'uri': selection['uri'],
                 'confidence': selection.get('confidence', 0.0),
                 'source': 'user_selection'
@@ -758,7 +721,7 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
         else:
             failed_mappings += 1
             results.append({
-                'filename': mapping['filename'],
+                'file_name': mapping['file_name'],
                 'uri': mapping['uri'],
                 'success': False,
                 'reason': 'File not found'
@@ -812,13 +775,13 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
         for mapping in valid_mappings:
             file_path = mapping['file_path']
             uri = mapping['uri']
-            filename = mapping['filename']
+            file_name = mapping['file_name']
 
             # Check if URI exists in tracks table
             if uri not in existing_track_uris:
                 failed_mappings += 1
                 results.append({
-                    'filename': filename,
+                    'file_name': file_name,
                     'uri': uri,
                     'success': False,
                     'reason': 'Track URI not found in database'
@@ -833,7 +796,7 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
                     # Same mapping already exists - consider it successful
                     successful_mappings += 1
                     results.append({
-                        'filename': filename,
+                        'file_name': file_name,
                         'uri': uri,
                         'success': True,
                         'reason': 'Mapping already exists',
@@ -841,25 +804,25 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
                         'source': mapping['source'],
                         'track_info': track_info_by_uri.get(uri, 'Unknown track')
                     })
-                    mapping_logger.debug(f"Mapping already exists: {filename} -> {uri}")
+                    mapping_logger.debug(f"Mapping already exists: {file_name} -> {uri}")
                     continue
                 else:
                     # Different mapping exists - this is a conflict
                     failed_mappings += 1
                     results.append({
-                        'filename': filename,
+                        'file_name': file_name,
                         'uri': uri,
                         'success': False,
                         'reason': f'File already mapped to different track: {existing_uri}'
                     })
-                    mapping_logger.warning(f"Mapping conflict for {filename}: existing={existing_uri}, new={uri}")
+                    mapping_logger.warning(f"Mapping conflict for {file_name}: existing={existing_uri}, new={uri}")
                     continue
 
             # Add to batch insert list
             mappings_to_insert.append({
                 'file_path': file_path,
                 'uri': uri,
-                'filename': filename,
+                'file_name': file_name,
                 'confidence': mapping.get('confidence', 0.0),
                 'source': mapping['source']
             })
@@ -872,7 +835,7 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
             for mapping in mappings_to_insert:
                 successful_mappings += 1
                 results.append({
-                    'filename': mapping['filename'],
+                    'file_name': mapping['file_name'],
                     'uri': mapping['uri'],
                     'success': True,
                     'confidence': mapping['confidence'],
@@ -903,16 +866,16 @@ def create_file_mappings_batch(master_tracks_dir: str, user_selections: List[Dic
     }
 
 
-def _is_supported_audio_file(filename: str) -> bool:
+def _is_supported_audio_file(file_name: str) -> bool:
     """Check if file is a supported audio format."""
-    return os.path.splitext(filename)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS
+    return os.path.splitext(file_name)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS
 
 
-def _find_file_path_in_directory(filename: str, directory: str) -> str:
+def _find_file_path_in_directory(file_name: str, directory: str) -> str | None:
     """Find the full path of a file in the directory tree."""
     for root, _, files in os.walk(directory):
-        if filename in files:
-            return os.path.join(root, filename)
+        if file_name in files:
+            return os.path.join(root, file_name)
     return None
 
 
@@ -921,10 +884,10 @@ def delete_file(file_path):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    filename = os.path.basename(file_path)
+    file_name = os.path.basename(file_path)
     os.remove(file_path)
 
-    return filename
+    return file_name
 
 
 def direct_tracks_compare(master_tracks_dir):
@@ -963,7 +926,7 @@ def direct_tracks_compare(master_tracks_dir):
             mapped_uris.add(mapping.uri)
             local_tracks_info.append({
                 'path': mapping.file_path,
-                'filename': mapping.get_filename(),
+                'file_name': mapping.get_filename(),
                 'uri': mapping.uri,
                 'track_id': mapping.get_track_id(),
                 'size': mapping.file_size or (
@@ -1013,7 +976,6 @@ def download_and_map_track(uri: str, download_dir: str):
             raise ValueError(f"Track URI '{uri}' not found in database")
 
     # Extract track ID for Spotify URL construction
-    track_id = None
     if uri.startswith('spotify:track:'):
         track_id = uri.split(':')[2]
     elif uri.startswith('spotify:local:'):
