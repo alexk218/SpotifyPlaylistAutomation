@@ -116,6 +116,7 @@ def search_tracks_file_system(master_tracks_dir, query):
     # Sort results by relevance (higher confidence first, then by filename match position)
     results.sort(key=lambda x: (-x['confidence'], x['file'].lower().find(query)))
 
+    print(results)
     return results
 
 
@@ -204,53 +205,63 @@ def analyze_file_mappings_with_duplicate_detection(master_tracks_dir: str,
             'track_info': auto_match.get('track_info', '')
         })
 
+    with UnitOfWork() as uow:
+        all_mappings = uow.file_track_mapping_repository.get_all()
+        existing_mappings = []
+        for mapping in all_mappings:
+            if mapping.is_active:
+                existing_mappings.append({
+                    'file_path': mapping.file_path,
+                    'uri': mapping.uri,
+                    'confidence': 1.0,  # Existing mappings are 100% confident
+                    'filename': os.path.basename(mapping.file_path),
+                    'source': 'existing_database',
+                    'track_info': f"Existing mapping: {mapping.uri}"
+                })
+
     # Detect duplicates
-    duplicate_detection = detect_duplicate_file_mappings(proposed_mappings)
+    all_mappings_to_check = proposed_mappings + existing_mappings
+    duplicate_detection = detect_duplicate_file_mappings(all_mappings_to_check)
 
     if duplicate_detection['needs_user_resolution']:
-        # Move conflicting files to require user input
-        clean_auto_matches = duplicate_detection['clean_mappings_data']
+        # *** FIX: Filter to only include NEW proposed mappings ***
+        clean_auto_matches = [
+            mapping for mapping in duplicate_detection['clean_mappings_data']
+            if mapping['source'] == 'auto_match'  # Only new auto-matches, not existing DB entries
+        ]
+
         duplicate_groups = duplicate_detection['duplicate_groups_data']
 
         # Convert duplicate groups to files requiring user input
         additional_user_input_files = []
         for group in duplicate_groups:
             for mapping in group['mappings']:
-                # Create user input entry with all options for this URI
-                user_input_entry = {
-                    'file_path': mapping['file_path'],
-                    'file_name': mapping['filename'],
-                    'duplicate_conflict': True,
-                    'conflicting_uri': group['uri'],
-                    'conflicting_track_info': group['track_info'],
-                    'potential_matches': [
-                        {
-                            'uri': m['uri'],
-                            'confidence': m['confidence'],
-                            'track_info': group['track_info'],
-                            'is_recommended': m == group['recommended_mapping']
-                        } for m in group['mappings']
-                    ],
-                    'top_match': {
-                        'uri': group['recommended_mapping']['uri'],
-                        'confidence': group['recommended_mapping']['confidence'],
-                        'track_info': group['track_info'],
-                        'match_type': 'auto_match_with_conflict'
+                # *** ONLY process NEW proposed mappings in conflicts ***
+                if mapping['source'] == 'auto_match':  # Skip existing DB mappings
+                    user_input_entry = {
+                        'file_path': mapping['file_path'],
+                        'file_name': mapping['filename'],
+                        'duplicate_conflict': True,
+                        'conflicting_uri': group['uri'],
+                        'conflicting_track_info': group['track_info'],
+                        # ... rest of the logic
                     }
-                }
-                additional_user_input_files.append(user_input_entry)
+                    additional_user_input_files.append(user_input_entry)
 
         # Update the analysis results
         updated_analysis = {
             **standard_analysis,
-            'auto_matched_files': clean_auto_matches,
+            'auto_matched_files': clean_auto_matches,  # Now only contains NEW auto-matches
             'files_requiring_user_input': standard_analysis['files_requiring_user_input'] + additional_user_input_files,
             'duplicate_detection': {
                 'performed': True,
                 'conflicts_found': duplicate_detection['duplicate_groups'],
-                'clean_mappings': duplicate_detection['clean_mappings'],
+                'clean_mappings': len(clean_auto_matches),  # Count only NEW clean mappings
                 'needs_resolution': True,
-                'duplicate_groups': duplicate_groups
+                'duplicate_groups': [
+                    group for group in duplicate_groups
+                    if any(m['source'] == 'auto_match' for m in group['mappings'])  # Only groups with NEW mappings
+                ]
             }
         }
 
@@ -386,10 +397,15 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     with UnitOfWork() as uow:
         all_tracks = uow.track_repository.get_all()
         all_mappings = uow.file_track_mapping_repository.get_all()
-        existing_mappings = {mapping.file_path: mapping.uri for mapping in all_mappings if mapping.is_active}
+        existing_mappings = {
+            os.path.normpath(os.path.abspath(mapping.file_path)): mapping.uri
+            for mapping in all_mappings if mapping.is_active
+        }
     db_time = time.time() - db_start
 
     mapping_logger.info(
+        f"Loaded {len(all_tracks)} tracks and {len(existing_mappings)} existing mappings in {db_time:.2f}s")
+    print(
         f"Loaded {len(all_tracks)} tracks and {len(existing_mappings)} existing mappings in {db_time:.2f}s")
 
     # Scan for all audio files
@@ -400,30 +416,31 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
             file_ext = os.path.splitext(file)[1].lower()
             if file_ext in SUPPORTED_AUDIO_EXTENSIONS:
                 file_path = os.path.join(root, file)
-                all_audio_files.append((file_path, file))
+                normalized_path = os.path.normpath(os.path.abspath(file_path))
+                all_audio_files.append((normalized_path, file))
     scan_time = time.time() - scan_start
 
     total_files = len(all_audio_files)
     mapping_logger.info(f"Found {total_files} total audio files in {scan_time:.2f}s")
+    print(f"Found {total_files} total audio files in {scan_time:.2f}s")
 
     # Filter out files that already have mappings
     filter_start = time.time()
-    files_needing_mapping = []
-    files_with_existing_mappings = 0
+    unmapped_files = []
+    mapped_file_count = 0
 
     for file_path, file in all_audio_files:
-        normalized_path = os.path.normpath(file_path)
-        if normalized_path in existing_mappings:
-            files_with_existing_mappings += 1
+        if file_path in existing_mappings:
+            mapped_file_count += 1
         else:
-            files_needing_mapping.append((file_path, file))
+            unmapped_files.append((file_path, file))
     filter_time = time.time() - filter_start
 
-    print(f"Files with existing mappings: {files_with_existing_mappings}")
-    print(f"Files needing mapping: {len(files_needing_mapping)}")
+    print(f"Files with existing mappings: {mapped_file_count}")
+    print(f"Files needing mapping: {len(unmapped_files)}")
 
     # Early exit if no files need mapping
-    if not files_needing_mapping:
+    if not unmapped_files:
         mapping_logger.info("All files already have mappings, exiting early")
         return {
             "total_files": total_files,
@@ -454,11 +471,11 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     match_start = time.time()
 
     # Run performance test on first 50 files if we have many files
-    if len(files_needing_mapping) > 100:
+    if len(unmapped_files) > 100:
         print(f"\n=== RUNNING PERFORMANCE TEST ON FIRST 50 FILES ===")
         test_start = time.time()
 
-        for i, (file_path, file) in enumerate(files_needing_mapping[:50]):
+        for i, (file_path, file) in enumerate(unmapped_files[:50]):
             if i % 10 == 0:
                 print(f"Testing file {i + 1}/50...")
 
@@ -475,7 +492,7 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
 
         test_time = time.time() - test_start
         avg_per_file = test_time / 50
-        projected_total = avg_per_file * len(files_needing_mapping)
+        projected_total = avg_per_file * len(unmapped_files)
 
         print(f"\n=== PERFORMANCE TEST RESULTS ===")
         print(f"50 files processed in: {test_time:.2f}s")
@@ -490,19 +507,19 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
         reset_levenshtein_stats()  # Reset for full run
 
     # Process all files
-    for file_path, file in files_needing_mapping:
+    for file_path, file in unmapped_files:
         specific_match_start = time.time()
         processed_count += 1
 
         if processed_count % 100 == 0:
             elapsed = time.time() - match_start
             rate = processed_count / elapsed
-            remaining = len(files_needing_mapping) - processed_count
+            remaining = len(unmapped_files) - processed_count
             eta = remaining / rate if rate > 0 else 0
 
-            mapping_logger.info(f"Processed {processed_count}/{len(files_needing_mapping)} files")
+            mapping_logger.info(f"Processed {processed_count}/{len(unmapped_files)} files")
             print(
-                f"Processed {processed_count}/{len(files_needing_mapping)} files ({rate:.1f} files/sec, ETA: {eta:.0f}s)")
+                f"Processed {processed_count}/{len(unmapped_files)} files ({rate:.1f} files/sec, ETA: {eta:.0f}s)")
 
         # Find best match
         best_match = fuzzy_matcher.find_best_match(
@@ -581,20 +598,25 @@ def analyze_file_mappings(master_tracks_dir: str, confidence_threshold: float = 
     print(f"  Filtering: {filter_time:.2f}s")
     print(f"  Matcher creation: {matcher_time:.2f}s")
     print(f"  Total matching: {match_time:.2f}s")
-    print(f"  Average per file: {match_time / len(files_needing_mapping) * 1000:.1f}ms")
+    print(f"  Average per file: {match_time / len(unmapped_files) * 1000:.1f}ms")
     print(f"  Files >100ms: {slow_file_count}")
     print(f"  Total files: {total_files}")
     print(
-        f"  Files with existing mappings: {files_with_existing_mappings} ({files_with_existing_mappings / total_files * 100:.1f}%)")
+        f"  Files with existing mappings: {mapped_file_count} ({mapped_file_count / total_files * 100:.1f}%)")
     print(f"  Files without mappings: {len(files_without_mappings)}")
     print(f"  Auto-matched files: {len(auto_matched_files)}")
     print(f"  Files requiring user input: {len(files_requiring_user_input)}")
-    print(f"  Performance: {len(files_needing_mapping) / match_time:.1f} files/second")
+    print(f"  Performance: {len(unmapped_files) / match_time:.1f} files/second")
 
     # Print detailed cache and operation stats
     print(f"\n=== DETAILED STATS ===")
     fuzzy_matcher.duration_extractor.print_cache_stats()
     print_levenshtein_stats()
+
+    auto_matched_files.sort(key=lambda x: x['confidence'], reverse=True)
+
+    print(f'FILES REQUIRING USER INPUT {files_requiring_user_input}')
+    print(f'FILES REQUIRING USER INPUT {len(files_requiring_user_input)}')
 
     mapping_logger.info(f"Analysis completed in {elapsed_time:.2f} seconds")
 
