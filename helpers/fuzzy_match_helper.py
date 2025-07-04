@@ -803,8 +803,9 @@ class FuzzyMatcher:
         # Split query into words for word-level matching
         query_words = set(query_lower.split())
 
-        # Search through preprocessed regular tracks
-        for preprocessed in self.preprocessed_regular_tracks:
+        # Search through all regular & local tracks
+        all_preprocessed_tracks = self.preprocessed_regular_tracks + self.preprocessed_local_tracks
+        for preprocessed in all_preprocessed_tracks:
             track = preprocessed.track
 
             scores = []
